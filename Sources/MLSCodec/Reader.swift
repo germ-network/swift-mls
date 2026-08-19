@@ -2,15 +2,16 @@ import Foundation
 
 extension MLS {
     /// Consumes an RFC 9420 presentation-language encoding.
+    ///
+    /// A throwing read still consumes whatever bytes it read before the
+    /// failure — `Reader` does not roll back. Snapshot the reader (it is a
+    /// value type) before a speculative decode, such as trying message
+    /// variants in turn, if you need to retry from the same position.
     public struct Reader: Sendable {
         private var remaining: ArraySlice<UInt8>
 
         public init(_ bytes: some Collection<UInt8>) {
             remaining = ArraySlice(Array(bytes))
-        }
-
-        private init(slice: ArraySlice<UInt8>) {
-            remaining = slice
         }
 
         public var bytesRemaining: Int { remaining.count }
@@ -23,12 +24,16 @@ extension MLS {
             }
         }
 
-        public mutating func readBytes(_ count: Int) throws -> ArraySlice<UInt8> {
+        // Returns [UInt8] rather than ArraySlice<UInt8>: a slice from partway
+        // through a message keeps its parent's indices, so `slice[0]` traps.
+        // That is silent at the call site and only surfaces once a caller
+        // reads a field that isn't first — worth the copy to avoid.
+        public mutating func readBytes(_ count: Int) throws -> [UInt8] {
             guard remaining.count >= count else {
                 throw CodecError.truncated(needed: count, available: remaining.count)
             }
             defer { remaining = remaining.dropFirst(count) }
-            return remaining.prefix(count)
+            return Array(remaining.prefix(count))
         }
 
         public mutating func readUInt8() throws -> UInt8 {
@@ -75,7 +80,7 @@ extension MLS {
         }
 
         /// `opaque x<V>`
-        public mutating func readOpaque() throws -> ArraySlice<UInt8> {
+        public mutating func readOpaque() throws -> [UInt8] {
             let count = try readVarint()
             return try readBytes(Int(count))
         }
@@ -86,7 +91,7 @@ extension MLS {
 
         /// `T x<V>` — decodes until the length-delimited region is exhausted.
         public mutating func decodeVector<T: MLSDecodable>(_ type: T.Type = T.self) throws -> [T] {
-            var contents = Reader(slice: try readOpaque())
+            var contents = Reader(try readOpaque())
             var values: [T] = []
             while !contents.isEmpty {
                 let before = contents.bytesRemaining

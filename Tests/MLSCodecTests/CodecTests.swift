@@ -135,6 +135,40 @@ struct CodecTests {
         }
     }
 
+    // Every read primitive needs this independently: each has its own
+    // bounds check, so covering one does not cover the others.
+    @Test("every read primitive rejects truncated input, not only readUInt32")
+    func truncationAtEveryPrimitive() {
+        #expect(throws: MLS.CodecError.truncated(needed: 1, available: 0)) {
+            var reader = MLS.Reader([UInt8]())
+            _ = try reader.readUInt8()
+        }
+        #expect(throws: MLS.CodecError.truncated(needed: 2, available: 1)) {
+            var reader = MLS.Reader([UInt8(0)])
+            _ = try reader.readUInt16()
+        }
+        #expect(throws: MLS.CodecError.truncated(needed: 8, available: 3)) {
+            var reader = MLS.Reader([UInt8](repeating: 0, count: 3))
+            _ = try reader.readUInt64()
+        }
+        #expect(throws: MLS.CodecError.truncated(needed: 5, available: 2)) {
+            var reader = MLS.Reader([UInt8](repeating: 0, count: 2))
+            _ = try reader.readBytes(5)
+        }
+    }
+
+    // RFC 9420 §2.1.2: a decoder must not let a length header overrun
+    // available storage. A header claiming the 2^30-1 ceiling over a
+    // near-empty buffer must fail fast on the length check, not attempt
+    // to allocate anything close to a gigabyte.
+    @Test("an opaque length header far beyond the input fails immediately, not by allocating")
+    func opaqueOversizedHeader() {
+        var reader = MLS.Reader([UInt8(0xBF), 0xFF, 0xFF, 0xFF]) // declares 2^30 - 1 bytes
+        #expect(throws: MLS.CodecError.truncated(needed: Int(MLS.Varint.maxValue), available: 0)) {
+            _ = try reader.readOpaque()
+        }
+    }
+
     @Test("a vector whose contents overrun its header is rejected")
     func vectorOverrun() {
         // header says 6 bytes; UInt32 elements consume 4, leaving 2 dangling
@@ -144,9 +178,80 @@ struct CodecTests {
         }
     }
 
+    // A vector element that consumes zero bytes would otherwise loop
+    // forever on malformed input — this is the guard's actual trigger,
+    // distinct from `vectorOverrun` above (an ordinary short count).
+    @Test("a vector element that consumes zero bytes is rejected, not looped on")
+    func vectorZeroByteElement() {
+        struct ZeroByteElement: MLSDecodable {
+            init(from reader: inout MLS.Reader) throws {}
+        }
+        var reader = MLS.Reader([UInt8(3), 0, 0, 0]) // 3-byte region, nothing consumes it
+        #expect(throws: MLS.CodecError.vectorNotFullyConsumed(remaining: 3)) {
+            _ = try reader.decodeVector(ZeroByteElement.self)
+        }
+    }
+
+    // A synthetic Collection whose `count` lies about how much storage it
+    // holds, so this exercises the oversized-length path without actually
+    // allocating a gigabyte-scale buffer in the test.
+    private struct OversizedCollection: Collection {
+        let count: Int
+        var startIndex: Int { 0 }
+        var endIndex: Int { count }
+        func index(after i: Int) -> Int { i + 1 }
+        subscript(position: Int) -> UInt8 { 0 }
+    }
+
+    @Test("writeOpaque rejects a collection larger than the varint ceiling can express")
+    func writeOpaqueOversized() {
+        var writer = MLS.Writer()
+        let tooLarge = Int(MLS.Varint.maxValue) + 1
+        #expect(throws: MLS.CodecError.lengthTooLarge(UInt64(tooLarge))) {
+            try writer.writeOpaque(OversizedCollection(count: tooLarge))
+        }
+    }
+
+    private struct NestedSample: MLSCodable, Equatable {
+        var id: UInt8
+        var values: [UInt16]
+
+        func encode(to writer: inout MLS.Writer) throws {
+            writer.writeUInt8(id)
+            try writer.encodeVector(values)
+        }
+
+        init(from reader: inout MLS.Reader) throws {
+            id = try reader.readUInt8()
+            values = try reader.decodeVector()
+        }
+
+        init(id: UInt8, values: [UInt16]) {
+            (self.id, self.values) = (id, values)
+        }
+    }
+
+    // The byte-count-not-element-count semantics compound across nesting
+    // levels — a vector of structs that themselves contain vectors is
+    // exactly where a one-level-deep test like `vectorLengthIsBytes` would
+    // miss a bug in the outer length calculation.
+    @Test("a vector of structs containing their own vectors round-trips")
+    func nestedVectorRoundTrip() throws {
+        let samples = [
+            NestedSample(id: 1, values: []),
+            NestedSample(id: 2, values: [10, 20, 30]),
+            NestedSample(id: 3, values: [0xFFFF]),
+        ]
+        var writer = MLS.Writer()
+        try writer.encodeVector(samples)
+        var reader = MLS.Reader(writer.bytes)
+        #expect(try reader.decodeVector(NestedSample.self) == samples)
+        try reader.finish()
+    }
+
     @Test("random structures survive an encode/decode/re-encode cycle")
     func randomRoundTrip() throws {
-        var generator = SystemRandomNumberGenerator()
+        var generator = SeededGenerator(seed: 0xC0DE_C0DE_1234_5678)
         for _ in 0..<500 {
             let sample = Sample(
                 tag: .random(in: .min ... .max, using: &generator),
@@ -161,5 +266,32 @@ struct CodecTests {
             #expect(try Sample(mlsEncoded: encoded) == sample)
             #expect(try Sample(mlsEncoded: encoded).mlsEncoded() == encoded)
         }
+    }
+
+    // The property that actually protects signatures and hashes: for
+    // arbitrary bytes, decoding either throws or the decoded value
+    // re-encodes to exactly the bytes given. A decoder that "fixes up"
+    // malformed input, or that accepts two different byte strings as the
+    // same value, breaks every signature computed over this codec's output.
+    @Test("mutated bytes either fail to decode or round-trip exactly")
+    func decodeOrRoundTrip() throws {
+        var generator = SeededGenerator(seed: 0xFEED_FACE_9999_0001)
+        let seeds = [
+            Sample(tag: 0, payload: [], counts: [], note: nil),
+            Sample(tag: 0x1234, payload: Array(repeating: 0xAB, count: 40), counts: [1, 2, 3], note: 9),
+        ]
+        var violations = 0
+        for seed in seeds {
+            var bytes = Array(try seed.mlsEncoded())
+            for _ in 0..<3_000 {
+                let index = Int.random(in: 0..<bytes.count, using: &generator)
+                bytes[index] = UInt8.random(in: .min ... .max, using: &generator)
+
+                if let decoded = try? Sample(mlsEncoded: bytes) {
+                    if (try? Array(decoded.mlsEncoded())) != bytes { violations += 1 }
+                }
+            }
+        }
+        #expect(violations == 0)
     }
 }

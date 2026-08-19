@@ -45,6 +45,21 @@ extension UInt32: MLSCodable {
     public init(from reader: inout MLS.Reader) throws { self = try reader.readUInt32() }
 }
 
+// Lets `optional<T>` compose inside a vector — RFC 9420's
+// `optional<Node> ratchet_tree<V>` needs `[Node?]` to be a plain
+// `[some MLSCodable]` so `encodeVector`/`decodeVector` accept it directly.
+extension Optional: MLSEncodable where Wrapped: MLSEncodable {
+    public func encode(to writer: inout MLS.Writer) throws {
+        try writer.encodeOptional(self)
+    }
+}
+
+extension Optional: MLSDecodable where Wrapped: MLSDecodable {
+    public init(from reader: inout MLS.Reader) throws {
+        self = try reader.decodeOptional(Wrapped.self)
+    }
+}
+
 extension UInt64: MLSCodable {
     public func encode(to writer: inout MLS.Writer) throws { writer.writeUInt64(self) }
     public init(from reader: inout MLS.Reader) throws { self = try reader.readUInt64() }

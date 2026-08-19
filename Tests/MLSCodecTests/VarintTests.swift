@@ -75,4 +75,18 @@ struct VarintTests {
             try decodedVarint([0x80, 0x00])
         }
     }
+
+    @Test("rejects the reserved prefix even as a single byte with no continuation")
+    func reservedPrefixAlone() {
+        #expect(throws: MLS.CodecError.reservedVarintPrefix) {
+            try decodedVarint([0xC0])
+        }
+    }
+
+    @Test("rejects UInt32.max, not only the value one past the ceiling")
+    func ceilingFarAboveMax() {
+        #expect(throws: MLS.CodecError.lengthTooLarge(UInt64(UInt32.max))) {
+            try encodedVarint(UInt32.max)
+        }
+    }
 }

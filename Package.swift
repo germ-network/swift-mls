@@ -10,5 +10,6 @@ let package = Package(
     targets: [
         .target(name: "MLSCodec"),
         .testTarget(name: "MLSCodecTests", dependencies: ["MLSCodec"]),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )
