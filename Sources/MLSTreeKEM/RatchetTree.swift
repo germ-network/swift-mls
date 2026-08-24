@@ -30,6 +30,12 @@ extension MLS.TreeKEM {
 
 		public var nodeCount: UInt32 { MLS.TreeMath.nodeCount(leafCount: leafCount) }
 
+		/// The backing array's actual current length — possibly less than
+		/// `nodeCount` (trailing blanks trimmed), possibly more (before a
+		/// caller has trimmed a just-edited tree). This is what a byte-exact
+		/// re-serialization must iterate, not the padded `nodeCount`.
+		public var physicalNodeCount: UInt32 { UInt32(nodes.count) }
+
 		/// Validates the array's length implies a valid padded leaf count
 		/// (throwing `MLS.TreeMathError.invalidLeafCount` otherwise) but
 		/// does not otherwise check the array's contents — node-kind/slot
@@ -105,17 +111,25 @@ extension MLS.TreeKEM {
 			while nodes.last == .some(nil) { nodes.removeLast() }
 		}
 
-		/// Blanks a leaf and every node on its direct path (not the
-		/// sibling/copath nodes — RFC 9420's Remove and the receiving side
-		/// of Update both blank only the ancestor chain, leaving copath
-		/// nodes' contents untouched).
-		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) throws {
-			setLeaf(index, to: nil)
+		/// Blanks every node on `index`'s direct path — the ancestor chain
+		/// only, never the sibling/copath nodes, and never `index`'s own
+		/// leaf slot. This is what Update blanks: the leaf itself gets the
+		/// *new* `LeafNode` installed instead of going blank, since Update
+		/// changes a member's content without removing them.
+		public mutating func blankDirectPath(of index: MLS.LeafIndex) throws {
 			for step in try MLS.TreeMath.directPath(
 				from: 2 * index.value, leafCount: leafCount)
 			{
 				setNode(at: step.path, to: nil)
 			}
+		}
+
+		/// Blanks a leaf and every node on its direct path — what Remove
+		/// does: the member is gone, so both the leaf and the ancestor
+		/// chain (which nobody can re-derive without them) go blank.
+		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) throws {
+			setLeaf(index, to: nil)
+			try blankDirectPath(of: index)
 		}
 
 		/// The leftmost blank leaf at or after `hint` (wrapping is not

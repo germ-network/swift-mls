@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSTreeKEM
+import MLSTreeMath
 
 extension MLS.RFC9420.LeafNode {
 	var record: MLS.TreeKEM.LeafRecord {
@@ -35,5 +36,27 @@ extension MLS.TreeKEM.RatchetTree {
 				case .parent(let parentNode): return .parent(parentNode)
 				}
 			})
+	}
+
+	/// The reverse of `init(_:)` — decodes each leaf's `LeafRecord.encoded`
+	/// bytes back into a real `LeafNode`, over exactly the tree's current
+	/// physical array (`physicalNodeCount`, not the padded `nodeCount`),
+	/// so a tree left un-trimmed round-trips its actual blanks and a
+	/// trimmed one round-trips its actual shorter length.
+	public var nodes: [MLS.RFC9420.Node?] {
+		get throws {
+			try (0..<physicalNodeCount).map { i in
+				if MLS.TreeMath.isLeaf(i) {
+					guard let record = leaf(at: .init(value: i / 2)) else {
+						return nil
+					}
+					return .leaf(
+						try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+					)
+				}
+				guard let parentNode = parent(at: i) else { return nil }
+				return .parent(parentNode)
+			}
+		}
 	}
 }
