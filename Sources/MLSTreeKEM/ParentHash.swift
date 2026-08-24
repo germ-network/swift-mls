@@ -44,7 +44,15 @@ extension MLS.TreeKEM.RatchetTree {
 			from: 2 * leafIndex.value, leafCount: leafCount)
 		for step in path.reversed() {
 			guard !resolution(of: step.sibling).isEmpty else { continue }
-			guard var parentNode = parent(at: step.path) else { continue }
+			// Both current callers (`beginCommitPath`, `applyUpdatePath`)
+			// always install a parent at every unfiltered position before
+			// reaching here -- a blank one at this point is a caller
+			// contract violation, not a legitimate "nothing to do" case
+			// (mls-rs's `borrow_as_parent_mut` errors here too, it doesn't
+			// skip).
+			guard var parentNode = parent(at: step.path) else {
+				throw MLS.TreeKEM.TreeError.notAMember
+			}
 			let siblingHash = try treeHash(at: step.sibling, provider)
 			let calculated = try MLS.TreeKEM.parentHash(
 				publicKey: parentNode.encryptionKey, parentHash: hash,

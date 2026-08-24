@@ -55,6 +55,10 @@ struct TreeMathTests {
 	/// parent-chain loop climbing without ever reaching that count's root.
 	@Test(
 		"directPath rejects a non-power-of-two leafCount instead of hanging",
+		// The pre-fix failure mode is a hang, not a thrown error -- without
+		// this, a regression here wedges the whole test run instead of
+		// failing it. Swift Testing only accepts whole minutes.
+		.timeLimit(.minutes(1)),
 		arguments: [
 			3, 5, 6, 7, 9,
 		])

@@ -23,9 +23,20 @@ extension MLS.TreeKEM.RatchetTree {
 	/// merges this path in. Only `installPathSecrets` (a joiner processing
 	/// a `Welcome`, with no wire update-path to compare against) checks
 	/// against the tree instead.
+	///
+	/// `excluding` must be the exact set the sender encrypted around
+	/// (`finishCommitPath`'s own `excluding`) — a leaf added in this same
+	/// commit has no key the path could have been encrypted under, so its
+	/// node index is dropped from both the ciphertext-count expectation
+	/// and every copath resolution used to find a ciphertext's position.
+	/// Getting this wrong doesn't silently decrypt the wrong thing — the
+	/// position lookup below is computed identically, so an inconsistent
+	/// `excluding` fails structurally (`wrongCiphertextCount` or
+	/// `notAMember`) rather than producing a wrong secret.
 	public func decapCommitPath(
 		heldSecretKeys: [UInt32: MLS.HpkeSecretKey], sender: MLS.LeafIndex,
 		pathNodes: [MLS.TreeKEM.PathNode], groupContext: Data,
+		excluding: Set<MLS.LeafIndex> = [],
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> Data {
 		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
@@ -33,14 +44,17 @@ extension MLS.TreeKEM.RatchetTree {
 		try validatePathStructure(
 			sender: sender,
 			nodeCiphertextCounts: pathNodes.map { $0.encryptedPathSecrets.count },
-			excluding: [])
+			excluding: excluding)
 
+		let excludedNodeIndices = Set(excluding.map { 2 * $0.value })
 		let unfilteredSteps = zip(path, filtered).filter { !$0.1 }.map(\.0)
 
 		var decryptLevel: Int?
 		var heldNode: UInt32?
 		for (level, step) in unfilteredSteps.enumerated() {
-			let resolutionAtLevel = resolution(of: step.sibling)
+			let resolutionAtLevel = resolution(of: step.sibling).filter {
+				!excludedNodeIndices.contains($0)
+			}
 			if let match = resolutionAtLevel.first(where: { heldSecretKeys[$0] != nil })
 			{
 				decryptLevel = level
@@ -52,7 +66,10 @@ extension MLS.TreeKEM.RatchetTree {
 			throw MLS.TreeKEM.TreeError.notAMember
 		}
 
-		let resolutionAtLevel = resolution(of: unfilteredSteps[decryptLevel].sibling)
+		let resolutionAtLevel = resolution(of: unfilteredSteps[decryptLevel].sibling).filter
+		{
+			!excludedNodeIndices.contains($0)
+		}
 		guard let position = resolutionAtLevel.firstIndex(of: heldNode) else {
 			throw MLS.TreeKEM.TreeError.notAMember
 		}
