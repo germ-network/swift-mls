@@ -41,4 +41,27 @@ extension MLS {
 		public var data: Data
 		public init(_ data: Data) { self.data = data }
 	}
+
+	/// `struct { opaque kem_output<V>; opaque ciphertext<V>; } HPKECiphertext;`
+	/// — the result of `EncryptWithLabel`/HPKE seal, as it appears embedded
+	/// in other wire structures (e.g. `UpdatePathNode`, `EncryptedGroupSecrets`).
+	public struct HpkeCiphertext: Hashable, Sendable, MLSCodable {
+		public var kemOutput: Data
+		public var ciphertext: Data
+
+		public init(kemOutput: Data, ciphertext: Data) {
+			self.kemOutput = kemOutput
+			self.ciphertext = ciphertext
+		}
+
+		public func encode(to writer: inout MLS.Writer) throws {
+			try writer.writeOpaque(kemOutput)
+			try writer.writeOpaque(ciphertext)
+		}
+
+		public init(from reader: inout MLS.Reader) throws {
+			kemOutput = Data(try reader.readOpaque())
+			ciphertext = Data(try reader.readOpaque())
+		}
+	}
 }

@@ -28,3 +28,8 @@ extension MLS {
 		public static let p384Aes256 = CipherSuite(id: 7)
 	}
 }
+
+extension MLS.CipherSuite: MLSCodable {
+	public func encode(to writer: inout MLS.Writer) throws { writer.writeUInt16(id) }
+	public init(from reader: inout MLS.Reader) throws { id = try reader.readUInt16() }
+}
