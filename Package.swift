@@ -67,8 +67,14 @@ let package = Package(
             dependencies: ["MLSTreeMath", "MLSVectorSupport"]
         ),
         .testTarget(
+            // MLSFraming only for its SenderData/SenderDataAAD wire types
+            // and senderDataKeyNonce, to check secret-tree.json's
+            // `sender_data` field alongside the rest of the same vector's
+            // per-leaf entries rather than fragmenting one vector's
+            // coverage across two test targets. The dedicated
+            // sender-data-key vector's own test lives in MLSFramingTests.
             name: "MLSKeySchedTests",
-            dependencies: ["MLSKeySchedule", "MLSCrypto", "MLSVectorSupport"]
+            dependencies: ["MLSKeySchedule", "MLSCrypto", "MLSFraming", "MLSVectorSupport"]
         ),
         .testTarget(
             // Deliberately does not link MLSProfileRFC9420. Framing's

@@ -9,18 +9,22 @@ import MLSCrypto
 /// secret computation and belongs here instead.
 extension MLS.KeySchedule {
 	/// `struct { PreSharedKeyID id; uint16 index; uint16 count; } PSKLabel;`
-	/// where `PreSharedKeyID` is `uint8 psktype (1 = external) ++ opaque
-	/// psk_id<V> ++ opaque psk_nonce<V>` — RFC 9420 only defines external
-	/// and resumption PSKs, and this component only ever sees an opaque id
-	/// and nonce (never a resumption PSK's group id / epoch), so `psktype`
-	/// is fixed to `1` here rather than modeled as an open enum. A caller
-	/// that needs resumption PSKs is a `MLSFraming`/profile concern, not
-	/// this component's.
-	static func pskLabel(id: Data, nonce: Data, index: UInt16, count: UInt16) throws -> Data {
+	///
+	/// Takes `id` already encoded, not built here: `PreSharedKeyID` itself
+	/// (`uint8 psktype ++ select(psktype){...} ++ opaque psk_nonce<V>`) is
+	/// a real wire type with two shapes — external and resumption — and
+	/// this component has "no wire types" as an explicit design goal (see
+	/// `germ-swift-mls/docs/plan.md`). An earlier version of this function
+	/// built `PreSharedKeyID` inline with `psktype` fixed to external,
+	/// which meant this component could not compute a correct PSK secret
+	/// for a resumption PSK at all — caught once `MLSProfileRFC9420`
+	/// defined `PreSharedKeyIdentifier` for real and had no way to reach
+	/// this function's external-only assumption. The caller (a profile)
+	/// now encodes its own `PreSharedKeyID`-shaped type and passes the
+	/// bytes straight through.
+	static func pskLabel(encodedID: Data, index: UInt16, count: UInt16) -> Data {
 		var writer = MLS.Writer()
-		writer.writeUInt8(1)  // PSKType.external
-		try writer.writeOpaque(id)
-		try writer.writeOpaque(nonce)
+		writer.writeBytes(encodedID)
 		writer.writeUInt16(index)
 		writer.writeUInt16(count)
 		return writer.data
