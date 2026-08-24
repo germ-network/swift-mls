@@ -22,12 +22,20 @@ extension MLS.RFC9420 {
 			self.auth = auth
 		}
 
-		public func encode(paddedToLength length: Int) throws -> Data {
+		/// `paddingLength` is extra zero bytes appended beyond this
+		/// structure's own (content + auth) encoding — not a target length
+		/// against some other structure's size. An earlier version computed
+		/// the target from `FramedContent`'s encoded length, a different
+		/// structure carrying fields (`group_id`, `authenticated_data`) this
+		/// one doesn't, which could silently produce zero padding or force
+		/// far more than requested.
+		public func encode(paddingLength: Int) throws -> Data {
 			var writer = MLS.Writer()
 			try content.encodeBody(to: &writer)
 			try auth.encodeRequiringSignature(
 				contentType: content.contentType, to: &writer)
-			return MLS.Framing.padded(Data(writer.bytes), toLength: length)
+			return MLS.Framing.padded(
+				Data(writer.bytes), toLength: writer.bytes.count + paddingLength)
 		}
 
 		public static func decode(_ plaintext: Data, contentType: MLS.ContentType) throws
@@ -173,7 +181,14 @@ extension MLS.RFC9420.Message: MLSEncodable {
 
 extension MLS.RFC9420.Message: MLSDecodable {
 	public init(from reader: inout MLS.Reader) throws {
-		_ = try MLS.ProtocolVersion(from: &reader)
+		// This profile only ever emits `mls10`; a message carrying any other
+		// version is rejected here rather than silently reinterpreted as
+		// mls10 on re-encode — this dispatcher is the one place per §4.3
+		// that validates.
+		let version = try MLS.ProtocolVersion(from: &reader)
+		guard version == .mls10 else {
+			throw MLS.RFC9420.WireError.unsupportedProtocolVersion(version)
+		}
 		let wireFormat = try MLS.WireFormat(from: &reader)
 		switch wireFormat {
 		case .publicMessage:

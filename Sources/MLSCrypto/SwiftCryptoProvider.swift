@@ -316,7 +316,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		case .p521Aes256:
 			var recipient = try HPKE.Recipient(
 				privateKey: try P521.KeyAgreement.PrivateKey(
-					rawRepresentation: secretKey.data),
+					rawRepresentation: p521Padded(secretKey.data)),
 				ciphersuite: suite, info: info, encapsulatedKey: enc
 			)
 			return try open(&recipient, aad: aad, ciphertext: ciphertext)

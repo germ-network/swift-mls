@@ -150,7 +150,7 @@ struct MessageProtectionTests {
 			provider, keySource: keySource, message: decodedPriv, groupContext: context,
 			verificationKey: { _ in verificationKey(record) },
 			senderDataSecret: record.senderDataSecret.bytes)
-		#expect(unprotected.content == content)
+		#expect(unprotected.content.content == content)
 
 		// Re-protecting via the secret tree round-trips.
 		let reprivate = try MLS.RFC9420.protectPrivate(
@@ -163,7 +163,7 @@ struct MessageProtectionTests {
 			provider, keySource: keySource, message: reprivate, groupContext: context,
 			verificationKey: { _ in verificationKey(record) },
 			senderDataSecret: record.senderDataSecret.bytes)
-		#expect(reopened.content == content)
+		#expect(reopened.content.content == content)
 	}
 
 	private func checkApplication(
@@ -193,7 +193,7 @@ struct MessageProtectionTests {
 			provider, keySource: keySource, message: decodedPriv, groupContext: context,
 			verificationKey: { _ in verificationKey(record) },
 			senderDataSecret: record.senderDataSecret.bytes)
-		#expect(unprotected.content == .application(application))
+		#expect(unprotected.content.content == .application(application))
 
 		let reprivate = try MLS.RFC9420.protectPrivate(
 			provider, keySource: keySource, content: framedContent,
@@ -205,6 +205,6 @@ struct MessageProtectionTests {
 			provider, keySource: keySource, message: reprivate, groupContext: context,
 			verificationKey: { _ in verificationKey(record) },
 			senderDataSecret: record.senderDataSecret.bytes)
-		#expect(reopened.content == .application(application))
+		#expect(reopened.content.content == .application(application))
 	}
 }

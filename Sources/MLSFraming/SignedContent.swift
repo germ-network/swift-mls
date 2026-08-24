@@ -15,8 +15,7 @@ extension MLS.Framing {
 	/// to avoid a circular signature dependency) is this same assembly
 	/// over a *different byte string* — no new API. A struct that owned a
 	/// typed `FramedContent` could only ever emit that one type's one
-	/// encoding. Same reasoning as `EncodedPathNodes` in
-	/// `MLSProfileRFC9420` carrying bytes instead of typed nodes.
+	/// encoding.
 	public struct SignedContent: Sendable {
 		public var protocolVersion: MLS.ProtocolVersion
 		public var wireFormat: MLS.WireFormat

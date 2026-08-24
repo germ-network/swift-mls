@@ -78,6 +78,16 @@ extension MLS.RFC9420 {
 		groupContext: GroupContext,
 		verificationKey: MLS.SignaturePublicKey, membershipKey: Data
 	) throws -> Bool {
+		// §6.1's MUST-NOT is a receive-side rule as much as a send-side one:
+		// `PublicMessage`'s own decoder must still accept an
+		// application-content message handed to it (e.g. by
+		// `messages.json`'s own `public_message_application` records,
+		// testing that shape in isolation) — but verifying one as legitimate
+		// would defeat the rule `protectPublic` enforces on the way out.
+		if case .application = message.content.content {
+			throw MLS.FramingError.applicationContentMustNotBePublic
+		}
+
 		let signedContent = MLS.Framing.SignedContent(
 			protocolVersion: .mls10, wireFormat: .publicMessage,
 			encodedContent: try message.content.mlsEncoded(),
@@ -112,8 +122,7 @@ extension MLS.RFC9420 {
 		senderDataSecret: Data, reuseGuard: MLS.Framing.ReuseGuard, paddingLength: Int
 	) throws -> PrivateMessage {
 		guard case .member(let leafIndex) = content.sender else {
-			// only members send private messages
-			throw MLS.FramingError.unknownSenderType(0)
+			throw MLS.FramingError.privateMessageRequiresMemberSender
 		}
 
 		let signedContent = MLS.Framing.SignedContent(
@@ -128,7 +137,7 @@ extension MLS.RFC9420 {
 		let auth = MLS.FramedContentAuthData(
 			signature: signature, confirmationTag: confirmationTag)
 		let plaintext = try PrivateMessageContent(content: content.content, auth: auth)
-			.encode(paddedToLength: content.mlsEncoded().count + paddingLength)
+			.encode(paddingLength: paddingLength)
 
 		let (key, nonce) = try keySource.key(
 			for: leafIndex, generation: generation,
@@ -170,7 +179,7 @@ extension MLS.RFC9420 {
 		groupContext: GroupContext,
 		verificationKey: (MLS.LeafIndex) throws -> MLS.SignaturePublicKey,
 		senderDataSecret: Data
-	) throws -> FramedContent {
+	) throws -> AuthenticatedContent {
 		let senderDataAAD = MLS.Framing.SenderDataAAD(
 			groupID: message.groupID, epoch: message.epoch,
 			contentType: message.contentType)
@@ -218,6 +227,7 @@ extension MLS.RFC9420 {
 			content: try signedContent.toBeSigned(), signature: signature.data)
 		guard signatureValid else { throw MLS.CryptoError.signatureVerificationFailed }
 
-		return content
+		return AuthenticatedContent(
+			wireFormat: .privateMessage, content: content, auth: messageContent.auth)
 	}
 }
