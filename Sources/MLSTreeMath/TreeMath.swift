@@ -102,6 +102,34 @@ extension MLS {
 			}
 			return result
 		}
+
+		/// The padded leaf count implied by a node array's length —
+		/// `(nodeArrayCount / 2 + 1)` rounded up to the next power of two.
+		///
+		/// The wire array is *not* always exactly `2n - 1` long: RFC 9420
+		/// trims trailing blank slots before serializing (load-bearing for
+		/// `tree-operations.json`'s byte-exact `tree_after` check), so a
+		/// shorter array — anywhere from empty up to `2n - 1` — is valid
+		/// and still resolves to the same padded leaf count `n`. This
+		/// matches mls-rs's `NodeVec::total_leaf_count`
+		/// (`(len / 2 + 1).next_power_of_two()`) exactly; there is no
+		/// "malformed length" to reject here, only an oversized result.
+		public static func paddedLeafCount(nodeArrayCount: Int) throws -> UInt32 {
+			guard nodeArrayCount >= 0, let count = UInt32(exactly: nodeArrayCount)
+			else {
+				throw MLS.TreeMathError.invalidLeafCount(
+					UInt32(clamping: nodeArrayCount))
+			}
+			let n = nextPowerOfTwo(count / 2 + 1)
+			guard n < MLS.LeafIndex.ceiling else {
+				throw MLS.TreeMathError.invalidLeafCount(n)
+			}
+			return n
+		}
+
+		private static func nextPowerOfTwo(_ x: UInt32) -> UInt32 {
+			x <= 1 ? 1 : UInt32(1) << (UInt32.bitWidth - (x - 1).leadingZeroBitCount)
+		}
 	}
 }
 

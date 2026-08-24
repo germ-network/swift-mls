@@ -17,6 +17,7 @@ let package = Package(
         .library(name: "MLSTreeMath", targets: ["MLSTreeMath"]),
         .library(name: "MLSKeySchedule", targets: ["MLSKeySchedule"]),
         .library(name: "MLSFraming", targets: ["MLSFraming"]),
+        .library(name: "MLSTreeKEM", targets: ["MLSTreeKEM"]),
         .library(name: "MLSProfileRFC9420", targets: ["MLSProfileRFC9420"]),
     ],
     dependencies: [
@@ -43,13 +44,30 @@ let package = Package(
             dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
         ),
         .target(
+            // Does not depend on MLSKeySchedule, and must not: the key
+            // schedule is the anchor every evolution mechanism lands on,
+            // and TreeKEM is one such mechanism among several a profile
+            // might substitute (SlimMLS's non-tree KEM is exactly this).
+            // It produces a commit_secret as plain Data -- MLS.KeySchedule
+            // .advance's `commitSecret` parameter -- and consumes nothing
+            // from it.
+            //
+            // Does not depend on MLSProfileRFC9420 either: the ratchet tree
+            // stores a leaf *projection* (encryption key, parent hash, and
+            // the leaf's encoded bytes), not MLS.RFC9420.LeafNode itself,
+            // so MLS.Slim can reuse the tree unchanged. See
+            // Sources/MLSTreeKEM/LeafRecord.swift.
+            name: "MLSTreeKEM",
+            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
+        ),
+        .target(
             // Does not depend on MLSKeySchedule: the RFC 9420 profile's
             // types and codecs are independent of how its secrets are
             // derived. MLSKeySchedule is linked by the *test* target only,
             // to drive real secrets through Protect.swift's unprotect path
             // (message-protection.json needs the secret tree ratchet).
             name: "MLSProfileRFC9420",
-            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming"]
+            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming", "MLSTreeKEM"]
         ),
         .target(
             name: "MLSVectorSupport",
@@ -87,9 +105,26 @@ let package = Package(
             dependencies: ["MLSFraming", "MLSCrypto", "MLSVectorSupport"]
         ),
         .testTarget(
+            // Deliberately does not link MLSProfileRFC9420 or
+            // MLSKeySchedule -- same mechanical-isolation argument as
+            // MLSFramingTests above. The official tree vectors
+            // (tree-validation.json, tree-operations.json, treekem.json)
+            // need a ratchet_tree *decoder*, and a LeafNode has no length
+            // prefix on the wire so it can't be skipped without parsing --
+            // that decoder is profile policy, so those vectors run in
+            // MLSProfileRFC9420Tests instead. What runs here is everything
+            // provable against synthetic leaf payloads: resolution,
+            // filtered direct path, tree-hash input assembly, the
+            // path-secret chain, and the structural mutation tests that
+            // need no wire format at all.
+            name: "MLSTreeKEMTests",
+            dependencies: ["MLSTreeKEM", "MLSCrypto", "MLSTreeMath", "MLSVectorSupport"]
+        ),
+        .testTarget(
             name: "MLSProfileRFC9420Tests",
             dependencies: [
-                "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSVectorSupport",
+                "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
+                "MLSVectorSupport",
             ]
         ),
     ],

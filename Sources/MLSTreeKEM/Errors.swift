@@ -1,0 +1,44 @@
+import MLSCodec
+
+extension MLS.TreeKEM {
+	public enum TreeError: Error, Sendable, Equatable {
+		/// A tree slot's node type doesn't match its array position's
+		/// parity (a leaf at an odd index, or a parent at an even one).
+		case wrongNodeKind(index: UInt32)
+		/// `UpdatePath.nodes.count` didn't equal the sender's filtered
+		/// direct-path length -- in either direction. RFC 9420 defines the
+		/// filtered direct path deterministically from the tree the sender
+		/// and receiver both already agree on, so this count is never
+		/// ambiguous; a mismatch means a malformed or malicious `Commit`.
+		case wrongPathNodeCount(expected: Int, actual: Int)
+		/// One `UpdatePathNode`'s ciphertext count didn't equal its
+		/// copath resolution's size (minus any leaves excluded because
+		/// they were added in this same commit). Checked explicitly here
+		/// because nothing upstream of tree processing can check it --
+		/// this is exactly the validation `Commit.path`'s wire types were
+		/// split out to require, per GER-2295.
+		case wrongCiphertextCount(pathIndex: Int, expected: Int, actual: Int)
+		/// A derived HPKE public key didn't match the key it was checked
+		/// against -- the wire `UpdatePathNode.encryptionKey` during
+		/// decap, or the tree's own stored key while installing a
+		/// `Welcome`'s path secrets. Either way: the sender and receiver
+		/// disagree about the tree, or the path secret was tampered with.
+		case publicKeyMismatch
+		case parentHashMismatch
+		/// A parent's `parent_hash` was checked against more than one
+		/// non-blank leaf's chain -- every non-blank parent with a
+		/// non-empty parent hash must be covered by exactly one leaf.
+		case parentHashCoveredTwice
+		case treeHashMismatch
+		case unmergedLeavesNotSorted
+		case unmergedLeafNotAtExpectedPosition
+		case duplicateUnmergedLeaf
+		/// The tree has trailing blank leaves -- RFC 9420 requires
+		/// trimming after every edit, so a well-formed tree never ends
+		/// with a blank.
+		case trailingBlankLeaves
+		case emptyTree
+		/// The receiver's own leaf isn't in this tree at all, or is blank.
+		case notAMember
+	}
+}

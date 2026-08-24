@@ -63,4 +63,41 @@ struct TreeMathTests {
 			_ = try MLS.TreeMath.directPath(from: 0, leafCount: leafCount)
 		}
 	}
+
+	@Test(
+		"paddedLeafCount recovers n from a valid 2n-1 node array length, for every tree-math.json size"
+	)
+	func paddedLeafCountMatchesVector() throws {
+		for record in Self.records {
+			#expect(
+				try MLS.TreeMath.paddedLeafCount(nodeArrayCount: Int(record.nNodes))
+					== record.nLeaves)
+		}
+	}
+
+	/// Trimming means a trailing-blanks-removed array is shorter than the
+	/// full `2n - 1` and still valid — there is no "malformed length" to
+	/// reject at this layer, only an oversized result.
+	@Test(
+		"paddedLeafCount recovers n from an array shorter than 2n-1, as if trailing blanks were trimmed",
+		arguments: [(0, 1), (1, 1), (2, 2), (3, 2), (4, 4), (5, 4), (6, 4), (9, 8)]
+	)
+	func paddedLeafCountHandlesTrimmedArrays(_ pair: (nodeArrayCount: Int, expected: UInt32))
+		throws
+	{
+		#expect(
+			try MLS.TreeMath.paddedLeafCount(nodeArrayCount: pair.nodeArrayCount)
+				== pair.expected)
+	}
+
+	/// `nodeArrayCount` is a plain `Int`, not an actual array — the ceiling
+	/// check is O(1) arithmetic, so this is cheap to exercise directly
+	/// rather than skip as "would need an implausible array."
+	@Test("paddedLeafCount rejects a result at or beyond LeafIndex.ceiling")
+	func paddedLeafCountRejectsCeilingOverflow() {
+		#expect(throws: MLS.TreeMathError.invalidLeafCount(MLS.LeafIndex.ceiling)) {
+			_ = try MLS.TreeMath.paddedLeafCount(
+				nodeArrayCount: Int(MLS.LeafIndex.ceiling) * 2 - 1)
+		}
+	}
 }
