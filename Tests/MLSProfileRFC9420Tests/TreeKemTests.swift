@@ -89,12 +89,12 @@ struct TreeKemTests {
 
 			for (leafIndex, heldKeys) in heldKeysByLeaf where leafIndex != sender {
 				guard tree.leaf(at: leafIndex) != nil else { continue }
-				let commitSecret = try tree.decapCommitPath(
+				let result = try tree.decapCommitPath(
 					heldSecretKeys: heldKeys, sender: sender,
 					pathNodes: pathNodes,
 					groupContext: groupContext, provider)
 				#expect(
-					commitSecret == update.commitSecret.bytes,
+					result.commitSecret == update.commitSecret.bytes,
 					"leaf \(leafIndex.value) decapsulating sender \(sender.value)'s path"
 				)
 			}

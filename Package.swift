@@ -61,13 +61,20 @@ let package = Package(
             dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
         ),
         .target(
-            // Does not depend on MLSKeySchedule: the RFC 9420 profile's
-            // types and codecs are independent of how its secrets are
-            // derived. MLSKeySchedule is linked by the *test* target only,
-            // to drive real secrets through Protect.swift's unprotect path
-            // (message-protection.json needs the secret tree ratchet).
+            // The wire structures and codecs in this target are
+            // independent of how secrets are derived -- that part of the
+            // original comment here still holds. `MLS.RFC9420.Group`
+            // (phase 5) is the one place the independence stops: a group
+            // is the composed protocol, and running the key schedule is
+            // what "processing a commit" or "joining via Welcome" means.
+            // `docs/plan.md`'s one-target-per-profile design puts exactly
+            // this composition at the profile layer, not a new target, so
+            // the dependency belongs here rather than being routed around.
             name: "MLSProfileRFC9420",
-            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming", "MLSTreeKEM"]
+            dependencies: [
+                "MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming", "MLSTreeKEM",
+                "MLSKeySchedule",
+            ]
         ),
         .target(
             name: "MLSVectorSupport",

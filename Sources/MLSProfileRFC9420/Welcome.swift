@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSFraming
+import MLSKeySchedule
 
 extension MLS.RFC9420 {
 	/// `struct { opaque joiner_secret<V>; optional<PathSecret> path_secret;
@@ -80,6 +81,55 @@ extension MLS.RFC9420 {
 			secrets = try reader.decodeVector()
 			encryptedGroupInfo = Data(try reader.readOpaque())
 		}
+	}
+}
+
+extension MLS.RFC9420.Welcome {
+	/// RFC 9420 §12.4.3.1: HPKE-decrypt the `GroupSecrets` entry matching
+	/// `keyPackageRef`. The HPKE context is this `Welcome`'s own
+	/// `encryptedGroupInfo` field, not empty -- `DecryptWithLabel(init_key_priv,
+	/// "Welcome", encrypted_group_info, kem_output, ciphertext)` binds the
+	/// two together, so an attacker can't splice a `GroupSecrets` ciphertext
+	/// from one Welcome onto another's `encrypted_group_info`.
+	public func decryptGroupSecrets(
+		_ provider: any MLS.CipherSuiteProvider,
+		keyPackageRef: MLS.HashReference, initKey: MLS.HpkeSecretKey
+	) throws -> MLS.RFC9420.GroupSecrets {
+		guard let entry = secrets.first(where: { $0.newMember == keyPackageRef }) else {
+			throw MLS.RFC9420.GroupError.noMatchingWelcomeSecret
+		}
+		let plaintext = try MLS.decryptWithLabel(
+			provider, privateKey: initKey, label: "Welcome",
+			context: encryptedGroupInfo,
+			enc: entry.encryptedGroupSecrets.kemOutput,
+			ciphertext: entry.encryptedGroupSecrets.ciphertext)
+		return try MLS.RFC9420.GroupSecrets(mlsEncoded: plaintext)
+	}
+
+	/// RFC 9420 §12.4.3.1: AEAD-decrypt `encryptedGroupInfo`. `welcome_key`/
+	/// `welcome_nonce` only need `joinerSecret`/`pskSecret` -- not the group
+	/// context, which doesn't exist from a joiner's perspective until this
+	/// call succeeds -- so `MLS.KeySchedule.welcomeKeyNonce` derives them
+	/// directly rather than through `fromJoinerSecret`'s full fan-out. Once
+	/// `GroupInfo` (and therefore the real group context) is in hand, the
+	/// full `Epoch` is derived properly via `fromJoinerSecret`; the AEAD
+	/// associated data is empty, per RFC 9420.
+	public func decryptGroupInfo(
+		_ provider: any MLS.CipherSuiteProvider,
+		joinerSecret: Data, pskSecret: Data
+	) throws -> (groupInfo: MLS.RFC9420.GroupInfo, epoch: MLS.KeySchedule.Epoch) {
+		let epochSeed = try provider.kdfExtract(salt: joinerSecret, ikm: pskSecret)
+		let welcomeSecret = try MLS.deriveSecret(
+			provider, secret: epochSeed, label: "welcome")
+		let (key, nonce) = try MLS.KeySchedule.welcomeKeyNonce(
+			provider, welcomeSecret: welcomeSecret)
+		let plaintext = try provider.aeadOpen(
+			key: key, nonce: nonce, aad: nil, ciphertext: encryptedGroupInfo)
+		let groupInfo = try MLS.RFC9420.GroupInfo(mlsEncoded: plaintext)
+		let epoch = try MLS.KeySchedule.fromJoinerSecret(
+			provider, joinerSecret: joinerSecret, pskSecret: pskSecret,
+			groupContext: try groupInfo.groupContext.mlsEncoded())
+		return (groupInfo, epoch)
 	}
 }
 

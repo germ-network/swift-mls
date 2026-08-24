@@ -3,10 +3,29 @@ import MLSCodec
 import MLSCrypto
 import MLSTreeMath
 
+extension MLS.TreeKEM {
+	/// What a receiver gets out of decap: the `commit_secret` for the key
+	/// schedule, and the node secret keys it must retain to decrypt the
+	/// *next* commit. A member that processed commit N and holds only its
+	/// own leaf key can be locked out of commit N+1: after N merges an
+	/// `UpdatePath`, the receiver's covering ancestor is non-blank and
+	/// freshly keyed, so N+1's ciphertext at that level targets the
+	/// ancestor, not the leaf. `installPathSecrets` (the Welcome-joiner
+	/// twin) already returns its derived keys for the same reason; this
+	/// mirrors that shape deliberately. Root-ward order, one entry per
+	/// unfiltered direct-path position from the decrypt level up to and
+	/// including the root.
+	public struct DecapResult: Sendable {
+		public let commitSecret: Data
+		public let nodeSecretKeys: [(node: UInt32, secretKey: MLS.HpkeSecretKey)]
+	}
+}
+
 extension MLS.TreeKEM.RatchetTree {
 	/// Decap: the receiver decrypts whichever `pathNodes` entry it can
 	/// reach, derives forward through the remaining levels toward the
-	/// root, and returns the resulting `commit_secret`.
+	/// root, and returns the resulting `commit_secret` plus every node
+	/// secret key derived along the way (see `MLS.TreeKEM.DecapResult`).
 	///
 	/// `heldSecretKeys` is every HPKE secret key the receiver currently
 	/// holds, keyed by node index — not just its own leaf. A receiver's
@@ -38,7 +57,7 @@ extension MLS.TreeKEM.RatchetTree {
 		pathNodes: [MLS.TreeKEM.PathNode], groupContext: Data,
 		excluding: Set<MLS.LeafIndex> = [],
 		_ provider: any MLS.CipherSuiteProvider
-	) throws -> Data {
+	) throws -> MLS.TreeKEM.DecapResult {
 		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
 		try validatePathStructure(
@@ -84,19 +103,22 @@ extension MLS.TreeKEM.RatchetTree {
 			context: groupContext, enc: ciphertext.kemOutput,
 			ciphertext: ciphertext.ciphertext)
 
+		var nodeSecretKeys: [(node: UInt32, secretKey: MLS.HpkeSecretKey)] = []
 		for level in decryptLevel..<pathNodes.count {
-			let derivedPublicKey = try MLS.TreeKEM.nodeKeyPair(
-				provider, pathSecret: secret
-			)
-			.publicKey
-			guard derivedPublicKey == pathNodes[level].encryptionKey else {
+			let derivedKeyPair = try MLS.TreeKEM.nodeKeyPair(
+				provider, pathSecret: secret)
+			guard derivedKeyPair.publicKey == pathNodes[level].encryptionKey else {
 				throw MLS.TreeKEM.TreeError.publicKeyMismatch
 			}
+			nodeSecretKeys.append(
+				(unfilteredSteps[level].path, derivedKeyPair.secretKey))
 			if level < pathNodes.count - 1 {
 				secret = try MLS.TreeKEM.nextPathSecret(provider, from: secret)
 			}
 		}
 
-		return try MLS.TreeKEM.commitSecret(provider, rootPathSecret: secret)
+		let commitSecret = try MLS.TreeKEM.commitSecret(provider, rootPathSecret: secret)
+		return MLS.TreeKEM.DecapResult(
+			commitSecret: commitSecret, nodeSecretKeys: nodeSecretKeys)
 	}
 }

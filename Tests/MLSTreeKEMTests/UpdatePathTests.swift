@@ -75,7 +75,7 @@ struct UpdatePathTests {
 				heldSecretKeys: heldKeys, sender: sender, pathNodes: pathNodes,
 				groupContext: groupContext, provider)
 			#expect(
-				decapped == commitSecret,
+				decapped.commitSecret == commitSecret,
 				"leaf \(leaf) decapsulating sender 0's fresh path")
 		}
 	}

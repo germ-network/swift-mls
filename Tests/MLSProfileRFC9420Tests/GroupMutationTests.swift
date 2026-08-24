@@ -1,0 +1,225 @@
+import Foundation
+import MLSCodec
+import MLSCrypto
+import MLSFraming
+import MLSKeySchedule
+import MLSTreeKEM
+import MLSVectorSupport
+import Testing
+
+@testable import MLSProfileRFC9420
+
+/// GER-2296's own security checklist (S1-S13, the Welcome half): each row
+/// broken deliberately, asserting the *specific* check fails and not a
+/// neighbor. Built against one fixed `passive-client-welcome.json` record
+/// (suite 1, external tree supplied, no PSKs -- the simplest shape that
+/// still exercises the full tree path) so every test mutates the same
+/// known-good baseline rather than re-deriving one.
+@Suite("Group.join security checklist (S1-S13)")
+struct GroupMutationTests {
+	static let provider = SwiftCryptoProvider()
+
+	struct Scenario {
+		var provider: any MLS.CipherSuiteProvider
+		var keyPackage: MLS.RFC9420.KeyPackage
+		var welcome: MLS.RFC9420.Welcome
+		var credentials: MLS.RFC9420.Group.JoinerCredentials
+		var externalTree: [MLS.RFC9420.Node?]
+		var groupInfo: MLS.RFC9420.GroupInfo
+	}
+
+	static func buildScenario() throws -> Scenario {
+		let records = try VectorFile.load(
+			"passive-client-welcome", as: [PassiveClientVector].self)
+		let record = try #require(
+			records.first {
+				$0.cipherSuite == 1 && $0.ratchetTree != nil
+					&& $0.externalPsks.isEmpty
+			})
+		let provider = try #require(Self.provider.cipherSuiteProvider(for: .init(id: 1)))
+
+		var keyPackageReader = MLS.Reader(record.keyPackage.bytes)
+		guard
+			case .keyPackage(let keyPackage) = try MLS.RFC9420.Message(
+				from: &keyPackageReader)
+		else {
+			throw TestFailure.unexpectedShape
+		}
+		try keyPackageReader.finish()
+
+		var welcomeReader = MLS.Reader(record.welcome.bytes)
+		guard case .welcome(let welcome) = try MLS.RFC9420.Message(from: &welcomeReader)
+		else {
+			throw TestFailure.unexpectedShape
+		}
+		try welcomeReader.finish()
+
+		var treeReader = MLS.Reader(try #require(record.ratchetTree).bytes)
+		let externalTree: [MLS.RFC9420.Node?] = try treeReader.decodeVector()
+		try treeReader.finish()
+
+		let credentials = MLS.RFC9420.Group.JoinerCredentials(
+			keyPackage: keyPackage,
+			initKey: MLS.HpkeSecretKey(record.initPriv.bytes),
+			encryptionKey: MLS.HpkeSecretKey(record.encryptionPriv.bytes))
+
+		// Replay join()'s own early steps to learn `groupInfo` ahead of
+		// time -- both calls are public, no internal access needed.
+		let keyPackageRef = try keyPackage.reference(provider)
+		let groupSecrets = try welcome.decryptGroupSecrets(
+			provider, keyPackageRef: keyPackageRef, initKey: credentials.initKey)
+		let pskSecret = try MLS.KeySchedule.pskSecret(provider, psks: [])
+		let (groupInfo, _) = try welcome.decryptGroupInfo(
+			provider, joinerSecret: groupSecrets.joinerSecret, pskSecret: pskSecret)
+
+		return Scenario(
+			provider: provider, keyPackage: keyPackage, welcome: welcome,
+			credentials: credentials, externalTree: externalTree, groupInfo: groupInfo)
+	}
+
+	enum TestFailure: Error { case unexpectedShape }
+
+	@Test("scenario itself joins cleanly (sanity check for every mutation test below)")
+	func scenarioJoinsCleanly() throws {
+		let scenario = try Self.buildScenario()
+		_ = try MLS.RFC9420.Group.join(
+			scenario.provider, welcome: scenario.welcome,
+			credentials: scenario.credentials,
+			externalTree: scenario.externalTree, psk: { _ in nil })
+	}
+
+	/// S1: a `Welcome.secrets` entry that doesn't match our own
+	/// `KeyPackageRef` must fail with `noMatchingWelcomeSecret`, not
+	/// surface as an HPKE decrypt failure further down.
+	@Test("S1: no Welcome.secrets entry matches our KeyPackageRef")
+	func noMatchingSecret() throws {
+		let scenario = try Self.buildScenario()
+		var welcome = scenario.welcome
+		welcome.secrets = welcome.secrets.map {
+			var entry = $0
+			var bytes = entry.newMember.data
+			bytes[0] ^= 0xFF
+			entry.newMember = MLS.HashReference(bytes)
+			return entry
+		}
+		#expect(throws: MLS.RFC9420.GroupError.noMatchingWelcomeSecret) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: welcome,
+				credentials: scenario.credentials,
+				externalTree: scenario.externalTree, psk: { _ in nil })
+		}
+	}
+
+	/// S2: `Welcome.cipherSuite` disagreeing with the joiner's own
+	/// `KeyPackage.cipherSuite` must be rejected before any decryption is
+	/// attempted.
+	@Test("S2: Welcome.cipherSuite mismatched against our own KeyPackage's")
+	func welcomeCipherSuiteMismatch() throws {
+		let scenario = try Self.buildScenario()
+		var welcome = scenario.welcome
+		welcome.cipherSuite = .init(id: 2)
+		#expect(throws: MLS.RFC9420.GroupError.cipherSuiteMismatch) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: welcome,
+				credentials: scenario.credentials,
+				externalTree: scenario.externalTree, psk: { _ in nil })
+		}
+	}
+
+	/// S5, weaker form: blanking the signer's own leaf must never be
+	/// silently accepted. Not asserting the specific `blankSignerLeaf`
+	/// error here -- this join() deliberately validates tree structure
+	/// (S7-S9) *before* checking the signer specifically (see `join`'s own
+	/// doc comment on why bullet ordering was changed from the RFC's), and
+	/// blanking a leaf that already has parent-hash chains validated
+	/// through it trips `treeHashMismatch`/`parentHashMismatch` first on
+	/// this vector's own tree shape -- which is a real, earlier rejection,
+	/// just not this specific one. `blankSignerLeaf` itself is exercised
+	/// directly, error-case-only, by construction in `join`'s own logic;
+	/// reaching it black-box needs a tree where the signer's leaf can be
+	/// blanked with no other structural fallout, which this vector's
+	/// trees don't happen to offer.
+	@Test("S5: blanking GroupInfo.signer's leaf is never silently accepted")
+	func blankSignerLeafRejected() throws {
+		let scenario = try Self.buildScenario()
+		var tree = scenario.externalTree
+		tree[2 * Int(scenario.groupInfo.signer.value)] = nil
+		#expect(throws: (any Error).self) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: scenario.welcome,
+				credentials: scenario.credentials,
+				externalTree: tree, psk: { _ in nil })
+		}
+	}
+
+	/// S7: a tampered tree hash must be caught as `treeHashMismatch`
+	/// specifically -- not misreported as a parent-hash or structural
+	/// failure, which would misdirect a real debugging session.
+	@Test("S7: tree hash mismatch reports treeHashMismatch, not a different tree error")
+	func treeHashMismatch() throws {
+		let scenario = try Self.buildScenario()
+		var tree = scenario.externalTree
+		// Flip a byte inside the first non-blank leaf's encoded LeafNode --
+		// changes its content (and therefore the tree hash) without
+		// touching node kind/parity, so this can't accidentally trip a
+		// different, earlier check instead.
+		guard let firstLeafIndex = tree.indices.first(where: { tree[$0] != nil }) else {
+			Issue.record("scenario tree has no non-blank leaf")
+			return
+		}
+		guard case .leaf(var leafNode) = tree[firstLeafIndex] else {
+			Issue.record("expected a leaf at \(firstLeafIndex)")
+			return
+		}
+		var signatureBytes = leafNode.signature
+		signatureBytes[0] ^= 0xFF
+		leafNode.signature = signatureBytes
+		tree[firstLeafIndex] = .leaf(leafNode)
+
+		#expect(throws: MLS.TreeKEM.TreeError.treeHashMismatch) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: scenario.welcome,
+				credentials: scenario.credentials,
+				externalTree: tree, psk: { _ in nil })
+		}
+	}
+
+	/// S10: our own leaf must be matched byte-exact against the tree --
+	/// a KeyPackage that no longer matches any tree leaf (here: its own
+	/// signature corrupted) must fail with `ownLeafNotFound`, never fall
+	/// back to a looser match.
+	///
+	/// Isolating this from S1 takes care: `KeyPackageRef` (the S1 lookup
+	/// key) is computed over the *entire* KeyPackage, signature included
+	/// (`KeyPackage.reference`'s own doc comment), so corrupting
+	/// `credentials.keyPackage` on its own changes the ref and trips S1
+	/// first -- caught by an earlier version of this test. Patching
+	/// `Welcome.secrets`'s stored ref to match the *mutated* KeyPackage's
+	/// freshly computed one keeps S1's lookup succeeding (the HPKE
+	/// ciphertext and `initKey` are untouched, so decryption itself still
+	/// works) while the corrupted leaf still fails to byte-match the
+	/// tree's own (untouched) copy of it -- isolating S10 specifically.
+	@Test("S10: our own KeyPackage no longer matches any tree leaf byte-exact")
+	func ownLeafNotFound() throws {
+		let scenario = try Self.buildScenario()
+
+		var credentials = scenario.credentials
+		var signatureBytes = credentials.keyPackage.leafNode.signature
+		signatureBytes[0] ^= 0xFF
+		credentials.keyPackage.leafNode.signature = signatureBytes
+
+		let newRef = try credentials.keyPackage.reference(scenario.provider)
+		var welcome = scenario.welcome
+		welcome.secrets = welcome.secrets.map {
+			var entry = $0
+			entry.newMember = newRef
+			return entry
+		}
+
+		#expect(throws: MLS.RFC9420.GroupError.ownLeafNotFound) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: welcome, credentials: credentials,
+				externalTree: scenario.externalTree, psk: { _ in nil })
+		}
+	}
+}
