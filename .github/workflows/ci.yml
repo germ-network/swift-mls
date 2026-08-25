@@ -48,7 +48,16 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      # Scheme is swift-mls-Package (the umbrella scheme), not swift-mls:
-      # SwiftPM only auto-generates a same-named scheme with exactly one
-      # library product, and this package has several.
-      - run: xcodebuild build -scheme swift-mls-Package -destination 'generic/platform=iOS'
+      # SwiftPM names the auto-generated scheme differently by product count:
+      # "swift-mls-Package" (the umbrella, builds every product) once there are
+      # several library products, but a single same-named "swift-mls" when
+      # there is exactly one. phase-0 has one (MLSCodec); later phases have
+      # several. This one CI file serves every phase branch, so pick whichever
+      # scheme the current branch actually generated.
+      - run: |
+          if xcodebuild -list 2>/dev/null | grep -q swift-mls-Package; then
+            scheme=swift-mls-Package
+          else
+            scheme=swift-mls
+          fi
+          xcodebuild build -scheme "$scheme" -destination 'generic/platform=iOS'
