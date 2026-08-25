@@ -1,0 +1,54 @@
+name: CI
+
+# Pull-request-scoped only: `main` is a bare bootstrap skeleton (empty
+# Package.swift, no Sources/Tests) until the phase PR stack merges, so a
+# push-to-main run would have nothing to lint or test. Every phase PR runs
+# this against its own populated branch, which is the gate that actually
+# matters here. Re-add `push: branches: [main]` once the stack has landed
+# and main carries real sources.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+      # --strict: warnings fail the job too, not only errors — .swift-format
+      # here matches AtprotoTypes/jxl-encoder-swift's config exactly, but
+      # unlike those two repos this is actually enforced in CI, not merely
+      # present.
+      - run: swift format lint --recursive --configuration .swift-format --strict Sources Tests
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+      - run: swift test
+
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  ios-build:
+    # The library must build for iOS even though CI can only exercise its
+    # tests on macOS/Linux — swift test does not run on a simulator here.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      # Scheme is swift-mls-Package (the umbrella scheme), not swift-mls:
+      # SwiftPM only auto-generates a same-named scheme with exactly one
+      # library product, and this package has several.
+      - run: xcodebuild build -scheme swift-mls-Package -destination 'generic/platform=iOS'
