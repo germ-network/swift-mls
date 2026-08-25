@@ -33,52 +33,54 @@ public protocol MLSClosedEnum: MLSCodable, RawRepresentable, Sendable
 where RawValue: MLSCodable & FixedWidthInteger & UnsignedInteger {}
 
 extension MLSClosedEnum {
-    public func encode(to writer: inout MLS.Writer) throws {
-        try rawValue.encode(to: &writer)
-    }
+	public func encode(to writer: inout MLS.Writer) throws {
+		try rawValue.encode(to: &writer)
+	}
 
-    public init(from reader: inout MLS.Reader) throws {
-        let raw = try RawValue(from: &reader)
-        guard let value = Self(rawValue: raw) else {
-            throw MLS.CodecError.unknownEnumValue(UInt64(raw))
-        }
-        self = value
-    }
+	public init(from reader: inout MLS.Reader) throws {
+		let raw = try RawValue(from: &reader)
+		guard let value = Self(rawValue: raw) else {
+			throw MLS.CodecError.unknownEnumValue(UInt64(raw))
+		}
+		self = value
+	}
 }
 
 extension MLS {
-    /// An RFC 9420 extensible enum: a known case, or an unrecognized raw
-    /// value carried through unchanged. See ``MLSClosedEnum`` for why this
-    /// must not simply reject unknown values.
-    public enum ExtensibleEnum<Known>: Sendable, Equatable, Hashable
-    where Known: RawRepresentable & Sendable & Equatable & Hashable,
-          Known.RawValue: FixedWidthInteger & UnsignedInteger & Sendable {
-        case known(Known)
-        case unknown(Known.RawValue)
+	/// An RFC 9420 extensible enum: a known case, or an unrecognized raw
+	/// value carried through unchanged. See ``MLSClosedEnum`` for why this
+	/// must not simply reject unknown values.
+	public enum ExtensibleEnum<Known>: Sendable, Equatable, Hashable
+	where
+		Known: RawRepresentable & Sendable & Equatable & Hashable,
+		Known.RawValue: FixedWidthInteger & UnsignedInteger & Sendable
+	{
+		case known(Known)
+		case unknown(Known.RawValue)
 
-        public var rawValue: Known.RawValue {
-            switch self {
-            case .known(let value): value.rawValue
-            case .unknown(let raw): raw
-            }
-        }
+		public var rawValue: Known.RawValue {
+			switch self {
+			case .known(let value): value.rawValue
+			case .unknown(let raw): raw
+			}
+		}
 
-        public init(_ known: Known) { self = .known(known) }
+		public init(_ known: Known) { self = .known(known) }
 
-        public init(rawValue: Known.RawValue) {
-            self = Known(rawValue: rawValue).map(Self.known) ?? .unknown(rawValue)
-        }
-    }
+		public init(rawValue: Known.RawValue) {
+			self = Known(rawValue: rawValue).map(Self.known) ?? .unknown(rawValue)
+		}
+	}
 }
 
 extension MLS.ExtensibleEnum: MLSEncodable where Known.RawValue: MLSEncodable {
-    public func encode(to writer: inout MLS.Writer) throws {
-        try rawValue.encode(to: &writer)
-    }
+	public func encode(to writer: inout MLS.Writer) throws {
+		try rawValue.encode(to: &writer)
+	}
 }
 
 extension MLS.ExtensibleEnum: MLSDecodable where Known.RawValue: MLSDecodable {
-    public init(from reader: inout MLS.Reader) throws {
-        self.init(rawValue: try Known.RawValue(from: &reader))
-    }
+	public init(from reader: inout MLS.Reader) throws {
+		self.init(rawValue: try Known.RawValue(from: &reader))
+	}
 }
