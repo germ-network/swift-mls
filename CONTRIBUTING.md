@@ -30,3 +30,11 @@ swift test
 Every wire-format change needs a test that pins the bytes, not only the
 round-trip: re-encoding must be byte-identical, because signatures and hashes
 are taken over these encodings.
+
+## Documenting wire structures
+
+Pin the exact TLS presentation-language syntax next to the Swift type or
+function it encodes, in a doc comment, e.g. `` /// `opaque x<V>` `` or
+`` /// `T x<V>` ``. Draft and RFC text is written from this syntax, so keeping
+it literally present in the source means a spec section can be produced by
+reading the code, not by re-deriving it from memory.
