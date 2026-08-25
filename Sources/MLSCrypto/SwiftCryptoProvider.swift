@@ -116,10 +116,11 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 				.isValidSignature(signature, for: content)
 		case .p256Aes128:
 			// NIST Signing.PublicKey's `rawRepresentation` is the bare X||Y
-			// pair with no format byte; RFC 9420's SignaturePublicKey wire
-			// bytes are the X9.63 uncompressed form (0x04 || X || Y) — the
-			// same convention used for HPKE keys below. Must deserialize
-			// with `x963Representation`, not `rawRepresentation`.
+			// pair with no format byte; RFC 9420 §5.1.1 encodes an ECDSA
+			// SignaturePublicKey as an UncompressedPointRepresentation
+			// (RFC 8446 §4.2.8.2) — 0x04 || X || Y, the same convention used
+			// for HPKE keys below. Must deserialize with `x963Representation`,
+			// not `rawRepresentation`.
 			try P256.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P256.Signing.ECDSASignature(derRepresentation: signature),
@@ -160,10 +161,10 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 				guard let combined = sealed.combined else {
 					throw MLS.CryptoError.aeadSealFailed
 				}
-				// `combined` is nonce || ciphertext || tag; RFC 9420's AEAD
-				// ciphertext field is ciphertext || tag only — the nonce
-				// travels separately (it's `sender_data_nonce`, derived by
-				// the caller, not carried per-message).
+				// `combined` is nonce || ciphertext || tag; MLS's AEAD
+				// ciphertext fields carry ciphertext || tag only — the nonce
+				// is derived by the caller and supplied separately, never
+				// prepended to the ciphertext — so strip the leading nonce.
 				return combined.dropFirst(aeadNonceSize)
 			case .curve25519ChaCha:
 				let sealed = try ChaChaPoly.seal(
