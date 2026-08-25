@@ -1,19 +1,34 @@
-/// RFC 9420 splits its enums into two policies (§17.1), and getting this
-/// wrong breaks interop in opposite directions:
+/// Two decode behaviors for an enumerated wire value. Which one a type
+/// needs is a property of the *field* it appears in, not of the type.
 ///
-/// - **Closed** — `WireFormat`, `ContentType`, `SenderType`, `NodeType`.
-///   Every value is defined by the RFC; a decoder MUST reject anything
-///   else. Conform to ``MLSClosedEnum``.
-/// - **Extensible** — `ProposalType`, `ExtensionType`, `CredentialType`,
-///   `ProtocolVersion`. New values are expected (that is the whole point
-///   of `required_capabilities` and GREASE-style forward compatibility),
-///   so a decoder MUST preserve an unrecognized value rather than reject
-///   it — rejecting would make an unrelated future extension unparsable.
-///   Use ``MLS/ExtensibleEnum``.
+/// RFC 9420 §2.1 adopts the TLS presentation language, whose default
+/// (RFC 8446 §3.5) is permissive: implementations "parse and ignore
+/// unknown values unless the definition of the field states otherwise."
+/// Rejecting is the exception, and needs a reason.
+///
+/// - ``MLSClosedEnum`` rejects an unrecognized value. The reason that
+///   actually applies is skippability: where the value is a `select`
+///   discriminant over variants carrying no length prefix of their own,
+///   an unknown one leaves the rest of the struct unparseable, so there
+///   is nothing to skip to.
+/// - ``MLS/ExtensibleEnum`` carries the raw value through. A code point
+///   that only tags a self-delimiting field — sitting beside an
+///   `opaque<V>` payload, or as a bare entry in a capabilities list —
+///   leaves the bytes parseable either way, so whether an unsupported
+///   value is *tolerated* is a protocol-layer call this target has no
+///   business making. RFC 9420 §13.4 requires ignoring unknown
+///   capability and extension entries; §13.5 names four fields where an
+///   unsupported value instead rejects the enclosing message. Both
+///   answers need the raw value preserved to be reachable at all.
 ///
 /// A `RawRepresentable` enum with a plain `MLSCodable` conformance is
-/// neither of these — it would silently pick the closed policy by
-/// throwing on decode, which is wrong for half of RFC 9420's enums.
+/// neither — it takes the rejecting path silently, which is the case
+/// needing justification, not the default.
+///
+/// Deliberately no list of which RFC 9420 types land where: this target
+/// defines none of them, and one code point can need both behaviors — a
+/// proposal type is fatal as `Proposal`'s own discriminant, ignorable as
+/// an entry in `Capabilities.proposals`.
 public protocol MLSClosedEnum: MLSCodable, RawRepresentable, Sendable
 where RawValue: MLSCodable & FixedWidthInteger & UnsignedInteger {}
 

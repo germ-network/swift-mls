@@ -18,11 +18,10 @@ extension MLS {
         case trailingBytes(Int)
         /// An `optional<T>` presence byte was neither 0 nor 1.
         case invalidOptionalPresence(UInt8)
-        /// A closed enum (RFC 9420 §17.1's non-extensible kind — e.g.
-        /// `WireFormat`, `ContentType`) decoded a raw value with no case.
-        /// Reserved for enums that must reject unknown values; an
-        /// extensible enum (`ProposalType`, `ExtensionType`, …) must
-        /// instead preserve the raw value — see ``MLS/ExtensibleEnum``.
+        /// An ``MLSClosedEnum`` decoded a raw value with no case. Only
+        /// reachable for values whose field genuinely cannot tolerate an
+        /// unknown one; see ``MLSClosedEnum`` for when that holds and
+        /// when the raw value must be carried through instead.
         case unknownEnumValue(UInt64)
     }
 }
