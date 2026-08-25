@@ -71,10 +71,6 @@ struct SecretTreeTests {
 		#expect(nonce == record.senderData.nonce.bytes)
 	}
 
-	/// Without this bounds check, an out-of-range `leafIndex` walks a
-	/// zero-length `directPath` and falls out of `leafSecret`'s loop
-	/// unchanged — silently handing the caller the tree's root secret
-	/// instead of failing.
 	@Test("an out-of-range leafIndex throws rather than returning the root secret")
 	func leafSecretRejectsOutOfRangeIndex() throws {
 		let provider = try #require(

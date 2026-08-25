@@ -51,10 +51,8 @@ struct TreeMathTests {
 		}
 	}
 
-	/// A non-power-of-two `leafCount` used to hang `directPath` forever
-	/// (a real DoS on an attacker-controlled tree shape, not a
-	/// hypothetical) — confirmed by running it. Now it throws immediately
-	/// instead.
+	/// An unguarded non-power-of-two `leafCount` sends `directPath`'s
+	/// parent-chain loop climbing without ever reaching that count's root.
 	@Test(
 		"directPath rejects a non-power-of-two leafCount instead of hanging",
 		arguments: [

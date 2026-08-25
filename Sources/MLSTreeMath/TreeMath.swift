@@ -26,13 +26,10 @@ extension MLS {
 		/// the difference concrete (16 leaves → 31 slots, root at index 15,
 		/// not 30 — node 30 is a leaf, the tree's rightmost).
 		///
-		/// `n - 1` only equals the RFC's general root index when `n` is a
-		/// power of two — true of every tree this protocol constructs
-		/// (RFC 9420 §4.1: "Every tree used in this protocol is a perfect
-		/// binary tree"). `directPath` is where an invalid count is
-		/// actually caught (it's the one that hangs rather than just
-		/// returning a wrong-but-terminating value); this function stays
-		/// unguarded rather than duplicating that check.
+		/// Only equals the RFC's general root index when `n` is a power of
+		/// two — true of every tree this protocol constructs (RFC 9420
+		/// §4.1: "Every tree used in this protocol is a perfect binary
+		/// tree"); `directPath` is what guards against an invalid count.
 		public static func root(leafCount: UInt32) -> UInt32 {
 			leafCount == 0 ? 0 : leafCount - 1
 		}
@@ -87,13 +84,9 @@ extension MLS {
 		/// which is what deriving a secret-tree leaf's secret from the
 		/// shared root secret needs (`MLSKeySchedule`).
 		///
-		/// `leafCount` must be 0 or a power of two — RFC 9420's array
-		/// encoding always pads to one, and every function in this file
-		/// assumes that padding already happened. Checked once here,
-		/// throwing, rather than left to the loop below: for an invalid
-		/// count the parent chain never reaches that count's (wrong) root
-		/// and grows without bound — a hang, not a wrong answer, on an
-		/// attacker-controlled tree shape.
+		/// `leafCount` must be 0 or a power of two (RFC 9420 §4.1) — an
+		/// invalid count sends the loop below climbing without ever
+		/// reaching that count's root: a hang, not a wrong answer.
 		public static func directPath(from node: UInt32, leafCount: UInt32) throws -> [(
 			path: UInt32, sibling: UInt32
 		)] {
@@ -113,10 +106,7 @@ extension MLS {
 
 	public enum TreeMathError: Error, Sendable, Equatable {
 		/// A tree's leaf count must be 0 or a power of two — see
-		/// `TreeMath.directPath`. Not previously enforced anywhere;
-		/// existing callers (`MLSKeySchedule/SecretTree.swift`) only ever
-		/// pass already-valid power-of-two counts, so this is unreachable
-		/// for them, not a behavior change.
+		/// `TreeMath.directPath`.
 		case invalidLeafCount(UInt32)
 	}
 }
