@@ -21,6 +21,11 @@ extension MLS.KeySchedule {
 		leafIndex: UInt32,
 		numLeaves: UInt32
 	) throws -> Data {
+		// Out of range must not fall through: with no path to walk, the
+		// loop below would silently hand back `encryptionSecret` itself —
+		// the tree's root secret — instead of failing.
+		guard leafIndex < numLeaves else { throw MLS.CryptoError.invalidKey }
+
 		let leafNode = 2 * leafIndex
 		let nodes =
 			MLS.TreeMath.directPath(from: leafNode, leafCount: numLeaves).reversed()

@@ -99,7 +99,7 @@ extension MLS {
 			)
 		}
 
-		/// RFC 9420 §8.4's MLS-Exporter: `ExpandWithLabel(DeriveSecret(
+		/// RFC 9420 §8.5's MLS-Exporter: `ExpandWithLabel(DeriveSecret(
 		/// exporterSecret, label), "exported", Hash(context), length)`.
 		public static func exportSecret(
 			_ provider: any CipherSuiteProvider,
@@ -116,7 +116,7 @@ extension MLS {
 				length: length)
 		}
 
-		/// RFC 9420 §9.1's PSK secret: each PSK is folded in with an
+		/// RFC 9420 §8.4's PSK secret: each PSK is folded in with an
 		/// independent `Extract`, in order, over an all-zero starting
 		/// accumulator — never a plain concatenation, so no PSK's
 		/// contribution can be inferred without knowing every other one.

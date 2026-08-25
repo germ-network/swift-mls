@@ -1,10 +1,11 @@
 import MLSCodec
 
-/// RFC 9420 §4.2's array-based encoding of a complete binary tree: `n`
-/// leaves live at even indices `0, 2, 4, ...`, internal nodes at odd
-/// indices, packed into `2n - 1` array slots so no pointers or explicit
-/// parent/child links are needed — a node's position alone determines its
-/// neighbors.
+/// RFC 9420 Appendix C's array-based encoding of a complete binary tree
+/// (§4.1 points here; §4.1 itself states MLS places no requirements on a
+/// tree's internal representation): `n` leaves live at even indices
+/// `0, 2, 4, ...`, internal nodes at odd indices, packed into `2n - 1`
+/// array slots so no pointers or explicit parent/child links are needed —
+/// a node's position alone determines its neighbors.
 ///
 /// This is pure index arithmetic with no relationship to *what* a tree
 /// holds. RFC 9420 uses it twice — the secret tree (`MLSKeySchedule`) and
@@ -24,8 +25,19 @@ extension MLS {
 		/// count the two coincide only at `n = 1`; every other size makes
 		/// the difference concrete (16 leaves → 31 slots, root at index 15,
 		/// not 30 — node 30 is a leaf, the tree's rightmost).
+		///
+		/// `n - 1` only equals the RFC's general root index when `n` is a
+		/// power of two — true of every tree this protocol constructs
+		/// (RFC 9420 §4.1: "Every tree used in this protocol is a perfect
+		/// binary tree"). A non-power-of-two `leafCount` isn't just wrong
+		/// here, it makes `directPath` loop without terminating, so it's a
+		/// trapped precondition rather than a silently-wrong result.
 		public static func root(leafCount: UInt32) -> UInt32 {
-			leafCount == 0 ? 0 : leafCount - 1
+			precondition(
+				leafCount == 0 || leafCount.nonzeroBitCount == 1,
+				"leafCount must be 0 or a power of two — RFC 9420 §4.1 trees are perfect binary trees"
+			)
+			return leafCount == 0 ? 0 : leafCount - 1
 		}
 
 		public static func isLeaf(_ node: UInt32) -> Bool { node & 1 == 0 }
@@ -72,9 +84,9 @@ extension MLS {
 
 		/// The path from `node` up to the root, as `(path, sibling)` pairs
 		/// ordered leaf-to-root — `path[0]` is `node`'s immediate parent,
-		/// the last entry is the root's own child on this side. Reverse it
-		/// to walk root-down, which is what deriving a secret-tree leaf's
-		/// secret from the shared root secret needs (`MLSKeySchedule`).
+		/// the last entry's `path` is the root itself. Reverse it to walk
+		/// root-down, which is what deriving a secret-tree leaf's secret
+		/// from the shared root secret needs (`MLSKeySchedule`).
 		public static func directPath(from node: UInt32, leafCount: UInt32) -> [(
 			path: UInt32, sibling: UInt32
 		)] {
