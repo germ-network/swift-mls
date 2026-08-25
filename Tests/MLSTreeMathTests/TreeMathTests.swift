@@ -33,10 +33,10 @@ struct TreeMathTests {
 	@Test(
 		"directPath, reversed, walks root to a leaf via the same nodes tree-math.json's parent chain gives"
 	)
-	func directPathMatchesParentChain() {
+	func directPathMatchesParentChain() throws {
 		for record in Self.records where record.nLeaves > 1 {
 			for leaf in stride(from: UInt32(0), to: 2 * record.nLeaves, by: 2) {
-				let path = MLS.TreeMath.directPath(
+				let path = try MLS.TreeMath.directPath(
 					from: leaf, leafCount: record.nLeaves)
 				// Walking the vector's own `parent` array from `leaf` up must
 				// produce exactly the `.path` sequence `directPath` returns.
@@ -48,6 +48,21 @@ struct TreeMathTests {
 				}
 				#expect(path.map(\.path) == expected)
 			}
+		}
+	}
+
+	/// A non-power-of-two `leafCount` used to hang `directPath` forever
+	/// (a real DoS on an attacker-controlled tree shape, not a
+	/// hypothetical) — confirmed by running it. Now it throws immediately
+	/// instead.
+	@Test(
+		"directPath rejects a non-power-of-two leafCount instead of hanging",
+		arguments: [
+			3, 5, 6, 7, 9,
+		])
+	func directPathRejectsInvalidLeafCount(_ leafCount: UInt32) {
+		#expect(throws: MLS.TreeMathError.invalidLeafCount(leafCount)) {
+			_ = try MLS.TreeMath.directPath(from: 0, leafCount: leafCount)
 		}
 	}
 }

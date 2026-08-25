@@ -29,15 +29,12 @@ extension MLS {
 		/// `n - 1` only equals the RFC's general root index when `n` is a
 		/// power of two — true of every tree this protocol constructs
 		/// (RFC 9420 §4.1: "Every tree used in this protocol is a perfect
-		/// binary tree"). A non-power-of-two `leafCount` isn't just wrong
-		/// here, it makes `directPath` loop without terminating, so it's a
-		/// trapped precondition rather than a silently-wrong result.
+		/// binary tree"). `directPath` is where an invalid count is
+		/// actually caught (it's the one that hangs rather than just
+		/// returning a wrong-but-terminating value); this function stays
+		/// unguarded rather than duplicating that check.
 		public static func root(leafCount: UInt32) -> UInt32 {
-			precondition(
-				leafCount == 0 || leafCount.nonzeroBitCount == 1,
-				"leafCount must be 0 or a power of two — RFC 9420 §4.1 trees are perfect binary trees"
-			)
-			return leafCount == 0 ? 0 : leafCount - 1
+			leafCount == 0 ? 0 : leafCount - 1
 		}
 
 		public static func isLeaf(_ node: UInt32) -> Bool { node & 1 == 0 }
@@ -84,12 +81,25 @@ extension MLS {
 
 		/// The path from `node` up to the root, as `(path, sibling)` pairs
 		/// ordered leaf-to-root — `path[0]` is `node`'s immediate parent,
-		/// the last entry's `path` is the root itself. Reverse it to walk
-		/// root-down, which is what deriving a secret-tree leaf's secret
-		/// from the shared root secret needs (`MLSKeySchedule`).
-		public static func directPath(from node: UInt32, leafCount: UInt32) -> [(
+		/// the last entry is the root itself (`parentAndSibling` returns
+		/// `nil` only once `current == root`, and that final value is
+		/// appended before the loop exits). Reverse it to walk root-down,
+		/// which is what deriving a secret-tree leaf's secret from the
+		/// shared root secret needs (`MLSKeySchedule`).
+		///
+		/// `leafCount` must be 0 or a power of two — RFC 9420's array
+		/// encoding always pads to one, and every function in this file
+		/// assumes that padding already happened. Checked once here,
+		/// throwing, rather than left to the loop below: for an invalid
+		/// count the parent chain never reaches that count's (wrong) root
+		/// and grows without bound — a hang, not a wrong answer, on an
+		/// attacker-controlled tree shape.
+		public static func directPath(from node: UInt32, leafCount: UInt32) throws -> [(
 			path: UInt32, sibling: UInt32
 		)] {
+			guard leafCount == 0 || leafCount.nonzeroBitCount == 1 else {
+				throw MLS.TreeMathError.invalidLeafCount(leafCount)
+			}
 			guard isInTree(node, root: root(leafCount: leafCount)) else { return [] }
 			var result: [(UInt32, UInt32)] = []
 			var current = node
@@ -99,6 +109,15 @@ extension MLS {
 			}
 			return result
 		}
+	}
+
+	public enum TreeMathError: Error, Sendable, Equatable {
+		/// A tree's leaf count must be 0 or a power of two — see
+		/// `TreeMath.directPath`. Not previously enforced anywhere;
+		/// existing callers (`MLSKeySchedule/SecretTree.swift`) only ever
+		/// pass already-valid power-of-two counts, so this is unreachable
+		/// for them, not a behavior change.
+		case invalidLeafCount(UInt32)
 	}
 }
 

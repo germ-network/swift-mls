@@ -28,7 +28,7 @@ extension MLS.KeySchedule {
 
 		let leafNode = 2 * leafIndex
 		let nodes =
-			MLS.TreeMath.directPath(from: leafNode, leafCount: numLeaves).reversed()
+			try MLS.TreeMath.directPath(from: leafNode, leafCount: numLeaves).reversed()
 			.map(\.path) + [leafNode]
 
 		var secret = encryptionSecret
