@@ -139,6 +139,32 @@ struct RatchetTreeTests {
 			try tree.addUnmergedLeaf(.init(value: 2), to: 1)
 		}
 	}
+
+	@Test("validateUnmergedLeaves accepts a tree with no unmerged leaves at all")
+	func validateUnmergedLeavesAcceptsEmpty() throws {
+		let tree = try MLS.TreeKEM.RatchetTree(
+			nodes: [
+				.leaf(syntheticLeaf(0)), .parent(syntheticParent(1)),
+				.leaf(syntheticLeaf(2)),
+			]
+		)
+		#expect(throws: Never.self) { try tree.validateUnmergedLeaves() }
+	}
+
+	@Test("validateNoDuplicateEncryptionKeys rejects two nodes sharing one HPKE key")
+	func rejectsDuplicateEncryptionKey() throws {
+		// Two distinct leaves, same tag -- `syntheticLeaf` derives the
+		// encryption key from the tag, so this is the same key at two
+		// different nodes (index 0 and index 2).
+		let tree = try MLS.TreeKEM.RatchetTree(
+			nodes: [
+				.leaf(syntheticLeaf(9)), .parent(syntheticParent(1)),
+				.leaf(syntheticLeaf(9)),
+			])
+		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 2)) {
+			try tree.validateNoDuplicateEncryptionKeys()
+		}
+	}
 }
 
 @Suite("Resolution and filtered direct path")

@@ -134,4 +134,22 @@ extension MLS.RFC9420.LeafNode {
 		}
 		return Data(writer.bytes)
 	}
+
+	/// RFC 9420 §7.3: verify this leaf's own signature under
+	/// `SignWithLabel`'s "LeafNodeTBS" label -- the half of leaf validation
+	/// that's authenticity, not policy (contrast lifetime bounds,
+	/// capability/extension consistency, `required_capabilities`
+	/// satisfaction, which stay deferred). `groupContext` supplies
+	/// `(group_id, leaf_index)` for `update`/`commit`-sourced leaves, nil
+	/// for `key_package`-sourced ones -- see `toBeSigned`'s own doc
+	/// comment.
+	public func verifySignature(
+		_ provider: any MLS.CipherSuiteProvider,
+		groupContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
+	) throws {
+		let valid = try MLS.verifyWithLabel(
+			provider, publicKey: signatureKey, label: "LeafNodeTBS",
+			content: try toBeSigned(groupContext: groupContext), signature: signature)
+		guard valid else { throw MLS.CryptoError.signatureVerificationFailed }
+	}
 }

@@ -67,7 +67,7 @@ let package = Package(
             // (phase 5) is the one place the independence stops: a group
             // is the composed protocol, and running the key schedule is
             // what "processing a commit" or "joining via Welcome" means.
-            // `docs/plan.md`'s one-target-per-profile design puts exactly
+            // This project's one-target-per-profile design puts exactly
             // this composition at the profile layer, not a new target, so
             // the dependency belongs here rather than being routed around.
             name: "MLSProfileRFC9420",

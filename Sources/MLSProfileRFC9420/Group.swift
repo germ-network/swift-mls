@@ -9,9 +9,8 @@ import MLSTreeMath
 extension MLS.RFC9420 {
 	/// A member's view of one RFC 9420 group: the tree, the current
 	/// `GroupContext`, and everything needed to process the next Welcome
-	/// or Commit. Value type per `docs/plan.md`'s "no actors, no shared
-	/// mutable objects" rule — the app owns storage, this owns nothing but
-	/// its own fields.
+	/// or Commit. Value type, no actors or shared mutable state — the app
+	/// owns storage, this owns nothing but its own fields.
 	public struct Group: Sendable {
 		public private(set) var context: GroupContext
 		public private(set) var tree: MLS.TreeKEM.RatchetTree
@@ -28,8 +27,8 @@ extension MLS.RFC9420 {
 
 		/// `resumption_psk` for every epoch this member has held, keyed
 		/// by epoch. Grows without bound — retention policy is an
-		/// application concern (`docs/plan.md`'s "no storage-provider
-		/// protocol"), not fixed here.
+		/// application concern (this library has no storage-provider
+		/// protocol of its own), not fixed here.
 		var resumptionPsks: [UInt64: Data]
 	}
 }
@@ -92,9 +91,18 @@ extension MLS.RFC9420.Group {
 		let groupSecrets = try welcome.decryptGroupSecrets(
 			provider, keyPackageRef: keyPackageRef, initKey: credentials.initKey)
 
-		// bullet 3
+		// bullet 3. Resumption PSKs with usage reinit/branch carry their
+		// own uniqueness and `GroupInfo.epoch == 1` rules -- meaningless
+		// without ReInit/branching support, which this project defers
+		// project-wide. Rejected outright rather than silently accepted
+		// with those RFC-mandated checks unenforced.
 		var resolvedPsks: [(encodedID: Data, psk: Data)] = []
 		for id in groupSecrets.psks {
+			if case .resumption(let resumption, _) = id,
+				resumption.usage != .application
+			{
+				throw MLS.RFC9420.GroupError.unsupportedResumptionUsage
+			}
 			guard let secret = try psk(id) else {
 				throw MLS.RFC9420.GroupError.unresolvedPreSharedKey
 			}
@@ -117,10 +125,13 @@ extension MLS.RFC9420.Group {
 		}
 		let tree = try MLS.TreeKEM.RatchetTree(nodes)
 
-		// bullet 8 (tree-integrity sub-bullets) -- structural half only;
-		// LeafNode policy validation (lifetime, capabilities,
-		// required_capabilities) is phase 6's, per this phase's own
-		// scope decision.
+		// bullet 8 (tree-integrity sub-bullets, plus every non-blank
+		// leaf's own signature -- §7.3's authenticity half). §7.3's
+		// *policy* half (lifetime bounds, capability/extension
+		// consistency, `required_capabilities` satisfaction) is phase 6's,
+		// per this phase's own explicit scope decision -- unlike a
+		// signature, policy needs the group's current extensions/time,
+		// which aren't this function's job to adjudicate.
 		try tree.validateNodeKinds()
 		try tree.validateNoTrailingBlank()
 		try tree.validateParentHashChain(provider)
@@ -128,6 +139,16 @@ extension MLS.RFC9420.Group {
 		try tree.validateNoDuplicateEncryptionKeys()
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch
+		}
+		for (leafIndex, record) in tree.nonBlankLeaves() {
+			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			let leafContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
+			switch leafNode.source {
+			case .keyPackage: leafContext = nil
+			case .update, .commit:
+				leafContext = (groupInfo.groupContext.groupID, leafIndex)
+			}
+			try leafNode.verifySignature(provider, groupContext: leafContext)
 		}
 
 		// bullet 7

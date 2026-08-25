@@ -37,6 +37,12 @@ extension MLS.RFC9420 {
 		/// S13: a `GroupSecrets`/commit PSK proposal named an id the
 		/// caller's `psk` closure couldn't resolve.
 		case unresolvedPreSharedKey
+		/// RFC 9420 §12.4.3.1's `reinit`/`branch` resumption-PSK rules
+		/// (uniqueness among the Welcome's PSKs, `GroupInfo.epoch == 1`)
+		/// are out of scope — ReInit and branching are deferred
+		/// project-wide. Rejected outright rather than silently accepted
+		/// without those checks.
+		case unsupportedResumptionUsage
 		/// S12/S25: a `confirmation_tag` didn't match the locally
 		/// recomputed value.
 		case confirmationTagMismatch
