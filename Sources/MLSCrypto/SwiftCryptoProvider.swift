@@ -2,15 +2,10 @@ import Crypto
 import Foundation
 import MLSCodec
 
-/// The default `MLS.CryptoProvider`, backing the five cipher suites
-/// buildable on swift-crypto alone: 1, 2, 3, 5, 7. Suites 4 and 6 need
-/// Ed448/X448, which swift-crypto implements on no platform — confirmed by
-/// reading its `Crypto` and `_CryptoExtras` sources, not by absence from its
-/// docs. Implementing Ed448/X448 ourselves would mean implementing our own
-/// elliptic curve, which is exactly what "we are not implementing crypto"
-/// rules out. An adopter who needs 4/6 — or a private-range PQ suite this
-/// package doesn't know about — supplies their own `CipherSuiteProvider`;
-/// nothing here has to change to admit one.
+/// The default `MLS.CryptoProvider`, backing the five suites swift-crypto can
+/// build: 1, 2, 3, 5, 7. Suites 4 and 6 need Ed448/X448, which swift-crypto
+/// has on no platform; an adopter who needs those, or a PQ suite, supplies
+/// their own `CipherSuiteProvider`.
 public struct SwiftCryptoProvider: MLS.CryptoProvider {
 	public init() {}
 
@@ -115,12 +110,10 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 			try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
 				.isValidSignature(signature, for: content)
 		case .p256Aes128:
-			// NIST Signing.PublicKey's `rawRepresentation` is the bare X||Y
-			// pair with no format byte; RFC 9420 §5.1.1 encodes an ECDSA
-			// SignaturePublicKey as an UncompressedPointRepresentation
-			// (RFC 8446 §4.2.8.2) — 0x04 || X || Y, the same convention used
-			// for HPKE keys below. Must deserialize with `x963Representation`,
-			// not `rawRepresentation`.
+			// MLS encodes an ECDSA public key as an uncompressed point
+			// (RFC 9420 §5.1.1 / RFC 8446 §4.2.8.2), 0x04 || X || Y —
+			// swift-crypto's `rawRepresentation` omits the 0x04, so decode
+			// with `x963Representation`.
 			try P256.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P256.Signing.ECDSASignature(derRepresentation: signature),
@@ -161,10 +154,9 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 				guard let combined = sealed.combined else {
 					throw MLS.CryptoError.aeadSealFailed
 				}
-				// `combined` is nonce || ciphertext || tag; MLS's AEAD
-				// ciphertext fields carry ciphertext || tag only — the nonce
-				// is derived by the caller and supplied separately, never
-				// prepended to the ciphertext — so strip the leading nonce.
+				// `combined` is nonce || ciphertext || tag; MLS carries only
+				// ciphertext || tag (the nonce is supplied separately), so
+				// drop the leading nonce.
 				return combined.dropFirst(aeadNonceSize)
 			case .curve25519ChaCha:
 				let sealed = try ChaChaPoly.seal(
@@ -229,8 +221,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 			HPKE.Ciphersuite(
 				kem: .P521_HKDF_SHA512, kdf: .HKDF_SHA512, aead: .AES_GCM_256)
 		default:
-			// Unreachable: every caller of `hpkeCiphersuite` is itself guarded
-			// by the same switch's `throw` case below.
+			// Unreachable: every caller is guarded by this switch's `throw`.
 			HPKE.Ciphersuite(
 				kem: .Curve25519_HKDF_SHA256, kdf: .HKDF_SHA256, aead: .AES_GCM_128)
 		}
