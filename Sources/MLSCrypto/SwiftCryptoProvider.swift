@@ -340,4 +340,134 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 			try recipient.open(ciphertext)
 		}
 	}
+
+	// MARK: - DeriveKeyPair (RFC 9180 §7.1.3)
+	//
+	// The one HPKE operation this provider implements directly rather than
+	// delegates — swift-crypto's DH key types expose no deterministic-keygen
+	// entry point at all (confirmed by reading HPKEDiffieHellmanPrivateKeyGeneration:
+	// only `generate()`, no seed-based initializer). Built directly over this
+	// same type's own `kdfExtract`/`kdfExpand` (RFC 5869 Extract/Expand),
+	// which the delegated HPKE path never needed exposed at this level but
+	// this one does.
+
+	/// RFC 9180 §3's `I2OSP(n, w)`: "Convert non-negative integer n to a
+	/// w-length, big-endian byte string." Every use in this file has
+	/// `w == 2`, so the width is pinned to `UInt16` rather than taken as a
+	/// parameter.
+	private func i2osp(_ value: UInt16) -> Data {
+		var bigEndian = value.bigEndian
+		return withUnsafeBytes(of: &bigEndian) { Data($0) }
+	}
+
+	/// RFC 9180 §4.1: `suite_id = concat("KEM", I2OSP(kem_id, 2))`, this
+	/// suite's KEM half only — DeriveKeyPair never touches the combined
+	/// HPKE suite_id (KEM+KDF+AEAD), only the KEM's own.
+	private var kemSuiteID: Data {
+		Data("KEM".utf8) + i2osp(hpkeKemID)
+	}
+
+	private var hpkeKemID: UInt16 {
+		switch cipherSuite {
+		case .curve25519Aes128, .curve25519ChaCha: 0x0020  // DHKEM(X25519, HKDF-SHA256)
+		case .p256Aes128: 0x0010  // DHKEM(P-256, HKDF-SHA256)
+		case .p384Aes256: 0x0011  // DHKEM(P-384, HKDF-SHA384)
+		case .p521Aes256: 0x0012  // DHKEM(P-521, HKDF-SHA512)
+		default: 0
+		}
+	}
+
+	private var hpkeSecretKeySize: Int {
+		switch cipherSuite {
+		case .curve25519Aes128, .curve25519ChaCha, .p256Aes128: 32
+		case .p384Aes256: 48
+		case .p521Aes256: 66
+		default: 0
+		}
+	}
+
+	/// `0xFF` for P-256/P-384, `0x01` for P-521 (RFC 9180 Table 2's
+	/// bitmask column — applied to the first byte of a DeriveKeyPair
+	/// candidate before validating it), `nil` where no rejection sampling
+	/// is needed (X25519: any clamped 32 bytes is a valid scalar).
+	private var hpkeRejectionSamplingBitmask: UInt8? {
+		switch cipherSuite {
+		case .curve25519Aes128, .curve25519ChaCha: nil
+		case .p256Aes128, .p384Aes256: 0xFF
+		case .p521Aes256: 0x01
+		default: nil
+		}
+	}
+
+	/// RFC 9180 §4: `LabeledExtract`/`LabeledExpand` scoped to the KEM's own
+	/// suite_id — the general HPKE-level versions (which additionally fold
+	/// in KDF/AEAD ids) live nowhere in this file because nothing else here
+	/// needs them; swift-crypto's own HPKE type does that composition
+	/// internally for `hpkeSeal`/`hpkeOpen`.
+	private func kemLabeledExtract(salt: Data, label: String, ikm: Data) throws -> Data {
+		try kdfExtract(
+			salt: salt, ikm: Data("HPKE-v1".utf8) + kemSuiteID + Data(label.utf8) + ikm)
+	}
+
+	private func kemLabeledExpand(prk: Data, label: String, info: Data, length: Int) throws
+		-> Data
+	{
+		let labeledInfo =
+			i2osp(UInt16(length)) + Data("HPKE-v1".utf8) + kemSuiteID + Data(label.utf8)
+			+ info
+		return try kdfExpand(prk: prk, info: labeledInfo, length: length)
+	}
+
+	/// The public key for a raw private-key byte string. Used only by
+	/// `hpkeDeriveKeyPair`: it both computes the final public key and,
+	/// for the NIST curves, doubles as the rejection-sampling candidate's
+	/// validity check — an out-of-range scalar throws here rather than
+	/// silently producing a point that isn't actually on the curve.
+	private func hpkePublicKey(for secretKey: MLS.HpkeSecretKey) throws -> MLS.HpkePublicKey {
+		switch cipherSuite {
+		case .curve25519Aes128, .curve25519ChaCha:
+			.init(
+				try Curve25519.KeyAgreement.PrivateKey(
+					rawRepresentation: secretKey.data
+				).publicKey.rawRepresentation)
+		case .p256Aes128:
+			.init(
+				try P256.KeyAgreement.PrivateKey(rawRepresentation: secretKey.data)
+					.publicKey.x963Representation)
+		case .p384Aes256:
+			.init(
+				try P384.KeyAgreement.PrivateKey(rawRepresentation: secretKey.data)
+					.publicKey.x963Representation)
+		case .p521Aes256:
+			.init(
+				try P521.KeyAgreement.PrivateKey(rawRepresentation: secretKey.data)
+					.publicKey.x963Representation)
+		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+		}
+	}
+
+	func hpkeDeriveKeyPair(ikm: Data) throws -> (MLS.HpkeSecretKey, MLS.HpkePublicKey) {
+		let dkpPrk = try kemLabeledExtract(salt: Data(), label: "dkp_prk", ikm: ikm)
+
+		guard let bitmask = hpkeRejectionSamplingBitmask else {
+			// X25519: no candidate loop: any clamped 32 bytes is valid.
+			let sk = try kemLabeledExpand(
+				prk: dkpPrk, label: "sk", info: Data(), length: hpkeSecretKeySize)
+			return (.init(sk), try hpkePublicKey(for: .init(sk)))
+		}
+
+		// NIST curves: RFC 9180 gives 255 attempts to land inside the
+		// curve's order; each candidate's leading byte is masked down to
+		// the curve's real bit width before validating it as a scalar.
+		for counter in UInt8(0)...254 {
+			var candidate = try kemLabeledExpand(
+				prk: dkpPrk, label: "candidate", info: Data([counter]),
+				length: hpkeSecretKeySize)
+			candidate[0] &= bitmask
+			if let publicKey = try? hpkePublicKey(for: .init(candidate)) {
+				return (.init(candidate), publicKey)
+			}
+		}
+		throw MLS.CryptoError.invalidKey
+	}
 }

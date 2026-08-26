@@ -14,6 +14,8 @@ let package = Package(
     products: [
         .library(name: "MLSCodec", targets: ["MLSCodec"]),
         .library(name: "MLSCrypto", targets: ["MLSCrypto"]),
+        .library(name: "MLSTreeMath", targets: ["MLSTreeMath"]),
+        .library(name: "MLSKeySchedule", targets: ["MLSKeySchedule"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0")
@@ -29,6 +31,11 @@ let package = Package(
                 .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
+        .target(name: "MLSTreeMath", dependencies: ["MLSCodec"]),
+        .target(
+            name: "MLSKeySchedule",
+            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
+        ),
         .target(
             name: "MLSVectorSupport",
             dependencies: [],
@@ -39,6 +46,14 @@ let package = Package(
         .testTarget(
             name: "MLSCryptoTests",
             dependencies: ["MLSCrypto", "MLSVectorSupport"]
+        ),
+        .testTarget(
+            name: "MLSTreeMathTests",
+            dependencies: ["MLSTreeMath", "MLSVectorSupport"]
+        ),
+        .testTarget(
+            name: "MLSKeySchedTests",
+            dependencies: ["MLSKeySchedule", "MLSCrypto", "MLSVectorSupport"]
         ),
     ],
     swiftLanguageModes: [.v6]

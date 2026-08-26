@@ -65,6 +65,13 @@ extension MLS {
 			enc: Data, secretKey: HpkeSecretKey, info: Data, aad: Data?,
 			ciphertext: Data
 		) throws -> Data
+
+		/// RFC 9180 §7.1.3 `DeriveKeyPair(ikm)` — deterministic HPKE keygen
+		/// from seed bytes. Most HPKE keys in MLS (KeyPackage/LeafNode) are
+		/// randomly generated, but the key schedule's `external_secret →
+		/// external_pub` step (RFC 9420 §8) is exactly this operation —
+		/// `kem_derive` in mls-rs's own naming — so it belongs in the seam.
+		func hpkeDeriveKeyPair(ikm: Data) throws -> (HpkeSecretKey, HpkePublicKey)
 	}
 
 	/// Looks up the `CipherSuiteProvider` for a suite id. An app composes
