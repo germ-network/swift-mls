@@ -343,7 +343,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 
 	// MARK: - DeriveKeyPair (RFC 9180 §7.1.3)
 	//
-	// The one piece of HPKE composition this provider hand-rolls rather than
+	// The one HPKE operation this provider implements directly rather than
 	// delegates — swift-crypto's DH key types expose no deterministic-keygen
 	// entry point at all (confirmed by reading HPKEDiffieHellmanPrivateKeyGeneration:
 	// only `generate()`, no seed-based initializer). Built directly over this
