@@ -11,14 +11,44 @@ Refresh with `Scripts/fetch-vectors.sh` and commit the diff.
 | `tree-math.json` | `mlswg/mls-implementations` `test-vectors/tree-math.json` | yes |
 | `key-schedule.json` | `mlswg/mls-implementations` `test-vectors/key-schedule.json` | yes |
 | `secret-tree.json` | `mlswg/mls-implementations` `test-vectors/secret-tree.json` | yes |
-| `mls-rs-psk-secret.json` | mirrored from `mls-rs-pq/mls-rs/test_data/psk_secret.json` | **no** — exercises the PSK-secret accumulation (`§8.4`) across 1–10 external PSKs per suite; independently useful because `key-schedule.json`'s own `psk_secret` field is a plain opaque input, not something it derives itself |
 | `mls-rs-sender-data-key.json` | mirrored from `mls-rs-pq/mls-rs/test_data/sender_data_key_test_vector.json` | **no** — exercises §6.3.2's sender-data key/nonce derivation and the AEAD seal built on it, at three ciphertext-sample-boundary sizes per suite |
+| `psk_secret.json` | `mlswg/mls-implementations` `test-vectors/psk_secret.json` | yes — exercises PSK-secret accumulation (`§8.4`) across 0–10 external PSKs per suite; `key-schedule.json`'s own `psk_secret` field is a plain opaque input, not something it derives itself |
+| `message-protection.json` | `mlswg/mls-implementations` `test-vectors/message-protection.json` | yes — public/private message protect+unprotect round trip, membership tag, sender-data seal; **not** the same file as `mls-rs-pq/mls-rs/test_data/framing.json`, which carries an extra `confirmation_tag` key and different data — that mirror file is not used here |
+| `transcript-hashes.json` | `mlswg/mls-implementations` `test-vectors/transcript-hashes.json` | yes |
+| `messages.json` | `mlswg/mls-implementations` `test-vectors/messages.json` | yes — decode/re-encode byte-identity for every top-level RFC 9420 structure (Welcome, GroupInfo, KeyPackage, ratchet_tree, GroupSecrets, all seven proposal bodies, Commit, three PublicMessage shapes, PrivateMessage); vendored in full (2.7 MB) rather than trimmed like `hpke-base-mode.json` — that file's trim removed genuinely redundant KEM/KDF/AEAD combinations, this one's 300 records don't have an equivalent redundant axis to filter on, and 2.7 MB is not large enough to be worth losing coverage over |
+| `welcome.json` | `mlswg/mls-implementations` `test-vectors/welcome.json` | yes — structural only for now; full decrypt-and-verify needs the welcome key/nonce derivation `MLSKeySchedule` doesn't have yet (phase 5) |
+| `deserialization.json` | `mlswg/mls-implementations` `test-vectors/deserialization.json` | yes — pure varint-header decode, consumed by `MLSCodecTests` rather than a phase-3 target |
+| `key_package_ref.json` | mirrored from `mls-rs-pq/mls-rs/test_data/key_package_ref.json` | **no** — self-contained (`input` is a serialized `KeyPackage`, `output` its `RefHash`); doubles as a `HashReference` test before any wire structure exists and a `KeyPackage` round-trip test once one does |
+| `proposal_ref.json` | mirrored from `mls-rs-pq/mls-rs/test_data/proposal_ref.json` | **no** — self-contained (`input` is a serialized `AuthenticatedContent`), same dual use as `key_package_ref.json` |
+| `reuse_guard.json` | mirrored from `mls-rs-pq/mls-rs/test_data/reuse_guard.json` | **no** — self-contained; schema gotcha: `nonce`/`guard`/`result` are JSON arrays of integers, not hex strings |
+
+**Correction (this phase):** the PSK-secret vector was previously vendored as
+`mls-rs-psk-secret.json`, mislabeled non-official — `psk_secret.json` is in fact
+published under `mlswg/mls-implementations` (77 records, `psk_id`/`psk_nonce` field
+names, vs. the mirror's 70 records and `id`/`nonce`). Swapped in the official file
+under its upstream name; `PskSecretVector`'s `CodingKeys` updated to match.
+
+**Not vendored, and not just omitted — actively wrong to use for this phase's proof
+gate**, despite appearing as vectors of similar names in the `mls-rs-pq` mirror or an
+earlier version of this project's plan:
+- `framing.json` / `interop_transcript_hashes.json` — neither exists upstream under
+  those names; `message-protection.json` and `transcript-hashes.json` are the real
+  official files, and `framing.json` specifically is not even the same *data* as
+  `message-protection.json` (see the row above).
+- `membership_tag.json` — carries only `{cipher_suite, tag}`, unusable without
+  hand-reconstructing mls-rs's private test fixture; `message-protection.json` covers
+  membership tags with self-contained data instead.
+- `message_padding_test_vector.json` — tests `PaddingMode::StepFunction`
+  (`mls-rs/src/group/padding.rs`), which is mls-rs's own padding policy, not an RFC
+  9420 requirement. RFC 9420 only specifies "append zero bytes; reject non-zero
+  padding on decode" — this vector is non-normative, not merely non-official.
 
 Verified byte-identical to the local `mls-rs-pq` checkout's copy at fetch time
 (2026-08-18): `crypto-basics.json` ≡ `basic_crypto.json`, `tree-math.json` ⊇ `tree_math.json`
 (official has more leaf-count cases), `key-schedule.json` ≡ `key_schedule_test_vector.json`,
 `secret-tree.json` ≡ `secret_tree_interop.json` (the file literally named `secret_tree.json`
-in that checkout is an older, non-standard mls-rs-internal fixture — not vendored here).
+in that checkout is an older, non-standard mls-rs-internal fixture — not vendored here),
+`transcript-hashes.json` ≡ `interop_transcript_hashes.json`.
 
 `epoch_secret_exporter_test_vector.json`, present in the `mls-rs-pq` checkout, is
 **not** vendored here: it is referenced by no test anywhere in mls-rs's own current

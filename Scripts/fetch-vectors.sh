@@ -33,6 +33,22 @@ for v in vectors:
 json.dump(kept, sys.stdout, indent=2)
 ' > "$DEST/hpke-base-mode.json"
 
-echo "Done. mls-rs-signatures.json is NOT fetched here — it is not an official"
-echo "mlswg vector (no equivalent exists in mlswg/mls-implementations), only a"
-echo "supplementary one mirrored from the mls-rs test suite. See Vectors/README.md."
+echo "Fetching phase-2 official vectors (mlswg/mls-implementations)..."
+for name in tree-math key-schedule secret-tree; do
+    curl -sSfL "https://raw.githubusercontent.com/mlswg/mls-implementations/main/test-vectors/${name}.json" \
+        -o "$DEST/${name}.json"
+done
+
+echo "Fetching phase-3 official vectors (mlswg/mls-implementations)..."
+for name in psk_secret message-protection transcript-hashes messages welcome deserialization; do
+    curl -sSfL "https://raw.githubusercontent.com/mlswg/mls-implementations/main/test-vectors/${name}.json" \
+        -o "$DEST/${name}.json"
+done
+
+echo "Done. Not fetched here — no official mlswg equivalent exists (see Vectors/README.md"
+echo "for what each is and why it's still vendored, or why a similarly-named mls-rs"
+echo "vector was deliberately NOT used):"
+echo "  mls-rs-signatures.json, mls-rs-sender-data-key.json, key_package_ref.json,"
+echo "  proposal_ref.json, reuse_guard.json — mirrored by hand from mls-rs-pq/mls-rs/test_data/"
+echo "  framing.json, membership_tag.json, message_padding_test_vector.json — not vendored"
+echo "  at all; superseded by official files or non-normative, see Vectors/README.md"

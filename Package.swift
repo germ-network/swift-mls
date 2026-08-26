@@ -16,6 +16,8 @@ let package = Package(
         .library(name: "MLSCrypto", targets: ["MLSCrypto"]),
         .library(name: "MLSTreeMath", targets: ["MLSTreeMath"]),
         .library(name: "MLSKeySchedule", targets: ["MLSKeySchedule"]),
+        .library(name: "MLSFraming", targets: ["MLSFraming"]),
+        .library(name: "MLSProfileRFC9420", targets: ["MLSProfileRFC9420"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0")
@@ -37,6 +39,19 @@ let package = Package(
             dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
         ),
         .target(
+            name: "MLSFraming",
+            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
+        ),
+        .target(
+            // Does not depend on MLSKeySchedule: the RFC 9420 profile's
+            // types and codecs are independent of how its secrets are
+            // derived. MLSKeySchedule is linked by the *test* target only,
+            // to drive real secrets through Protect.swift's unprotect path
+            // (message-protection.json needs the secret tree ratchet).
+            name: "MLSProfileRFC9420",
+            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming"]
+        ),
+        .target(
             name: "MLSVectorSupport",
             dependencies: [],
             path: "Tests/MLSVectorSupport",
@@ -54,6 +69,22 @@ let package = Package(
         .testTarget(
             name: "MLSKeySchedTests",
             dependencies: ["MLSKeySchedule", "MLSCrypto", "MLSVectorSupport"]
+        ),
+        .testTarget(
+            // Deliberately does not link MLSProfileRFC9420. Framing's
+            // mechanisms (TBS/TBM assembly, tags, transcript hashes) take
+            // and return Data; this target proves they work against
+            // hand-assembled bytes with no profile decoder in existence,
+            // which is the actual test that MLSFraming doesn't secretly
+            // depend on RFC 9420's concrete types.
+            name: "MLSFramingTests",
+            dependencies: ["MLSFraming", "MLSCrypto", "MLSVectorSupport"]
+        ),
+        .testTarget(
+            name: "MLSProfileRFC9420Tests",
+            dependencies: [
+                "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSVectorSupport",
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]

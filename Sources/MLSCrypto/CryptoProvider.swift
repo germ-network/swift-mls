@@ -82,3 +82,18 @@ extension MLS {
 		func cipherSuiteProvider(for suite: CipherSuite) -> (any CipherSuiteProvider)?
 	}
 }
+
+extension MLS.CipherSuiteProvider {
+	/// RFC 9420's `MAC(key, data)` — HMAC under the suite's hash. Not a
+	/// protocol requirement: HKDF-Extract *is* HMAC with the salt as key
+	/// (RFC 5869 §2.2), so every conformer already computes this via
+	/// `kdfExtract(salt: key, ikm: data)` whether it knows it or not.
+	/// Verified against `transcript-hashes.json`'s confirmation tags and
+	/// `message-protection.json`'s membership tags — both match this
+	/// exactly. Promote to a requirement, with this as the default body, if
+	/// a conformer ever needs a MAC that genuinely differs from its own
+	/// KDF's Extract — nothing here would need to move.
+	public func mac(key: Data, data: Data) throws -> Data {
+		try kdfExtract(salt: key, ikm: data)
+	}
+}

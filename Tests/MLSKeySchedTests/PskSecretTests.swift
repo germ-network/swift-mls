@@ -5,11 +5,11 @@ import Testing
 
 @testable import MLSKeySchedule
 
-@Suite("mls-rs-psk-secret.json (supplementary, not an official mlswg vector)")
+@Suite("psk_secret.json (mlswg/mls-implementations, official)")
 struct PskSecretTests {
 	static let provider = SwiftCryptoProvider()
 
-	static let records = try! VectorFile.load("mls-rs-psk-secret", as: [PskSecretVector].self)
+	static let records = try! VectorFile.load("psk_secret", as: [PskSecretVector].self)
 		.filter { provider.supportedCipherSuites.map(\.id).contains($0.cipherSuite) }
 
 	@Test("accumulates 1 to 10 external PSKs correctly", arguments: records)

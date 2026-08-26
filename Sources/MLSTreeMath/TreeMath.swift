@@ -103,12 +103,6 @@ extension MLS {
 			return result
 		}
 	}
-
-	public enum TreeMathError: Error, Sendable, Equatable {
-		/// A tree's leaf count must be 0 or a power of two — see
-		/// `TreeMath.directPath`.
-		case invalidLeafCount(UInt32)
-	}
 }
 
 extension FixedWidthInteger {
