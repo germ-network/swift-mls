@@ -19,8 +19,11 @@ extension MLS.RFC9420 {
 		case branch = 3
 	}
 
-	/// `struct { ResumptionPSKUsage usage; opaque psk_group_id<V>; uint64
-	/// psk_epoch; } ResumptionPSK;`
+	/// RFC 9420 has no separate `ResumptionPSK` struct — §8.4 inlines these
+	/// three fields directly in `PreSharedKeyID`'s `resumption` select arm
+	/// (`ResumptionPSKUsage usage; opaque psk_group_id<V>; uint64
+	/// psk_epoch;`). Grouped into a type here purely for a nameable Swift
+	/// case payload; the wire bytes are identical either way.
 	public struct ResumptionPSK: Sendable, Equatable, MLSCodable {
 		public var usage: ResumptionPSKUsage
 		public var groupID: Data
@@ -46,8 +49,11 @@ extension MLS.RFC9420 {
 	}
 
 	/// `struct { PSKType psktype; select (PreSharedKeyID.psktype) { case
-	/// external: opaque psk_id<V>; case resumption: ResumptionPSK
-	/// resumption; }; opaque psk_nonce<V>; } PreSharedKeyID;`
+	/// external: opaque psk_id<V>; case resumption: ResumptionPSKUsage
+	/// usage; opaque psk_group_id<V>; uint64 psk_epoch; }; opaque
+	/// psk_nonce<V>; } PreSharedKeyID;` — `psk_nonce` is a sibling of
+	/// `psktype`, appended after the select resolves, not nested inside
+	/// either arm.
 	public enum PreSharedKeyIdentifier: Sendable, Equatable {
 		case external(pskID: Data, nonce: Data)
 		case resumption(ResumptionPSK, nonce: Data)
@@ -101,11 +107,13 @@ extension MLS.RFC9420 {
 	/// RFC 9420 §12.1's seven proposal bodies. `Proposal`'s own encoding
 	/// writes the `ProposalType` tag then the body directly — no extra
 	/// opaque wrapping, so an unrecognized proposal type is not skippable
-	/// purely from the wire (same caveat as `Credential`), which is why
-	/// this enum has no `.other` fallback case: unlike `Credential`,
-	/// mls-rs's own extensibility story for proposals (`CustomProposal`)
-	/// requires the *caller* to already know the type to interpret it, so
-	/// there is nothing generic to preserve here.
+	/// purely from the wire (same caveat as `Credential`). This enum has
+	/// no `.other` fallback case: mls-rs's own `CustomProposal` convention
+	/// decodes an unrecognized type's body by *assuming* it's `opaque<V>`
+	/// — a peer choice, not something the wire format guarantees, and one
+	/// that would silently mis-decode a foreign proposal type whose body
+	/// isn't shaped that way. We don't inherit that assumption: an
+	/// unrecognized proposal type is a hard decode error here instead.
 	public enum Proposal: Sendable, Equatable {
 		case add(KeyPackage)
 		case update(LeafNode)
@@ -116,9 +124,11 @@ extension MLS.RFC9420 {
 		case groupContextExtensions([Extension])
 	}
 
-	/// `struct { uint8 proposal_or_ref_type; select (...) { case proposal:
-	/// Proposal proposal; case reference: ProposalRef reference; }; }
-	/// ProposalOrRef;`
+	/// `struct { ProposalOrRefType type; select (ProposalOrRef.type) {
+	/// case proposal: Proposal proposal; case reference: ProposalRef
+	/// reference; }; } ProposalOrRef;`, where `ProposalOrRefType` is
+	/// `enum { reserved(0), proposal(1), reference(2), (255) }` — hence
+	/// the hardcoded tag values 1/2 below.
 	public enum ProposalOrRef: Sendable, Equatable {
 		case proposal(Proposal)
 		case reference(MLS.HashReference)

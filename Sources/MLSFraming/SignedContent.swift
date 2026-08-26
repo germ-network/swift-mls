@@ -45,7 +45,8 @@ extension MLS.Framing {
 			return Data(writer.bytes)
 		}
 
-		/// `FramedContentTBM` = TBS ‖ FramedContentAuthData. Takes encoded
+		/// RFC 9420 §6.2's `AuthenticatedContentTBM` = TBS ‖
+		/// FramedContentAuthData. Takes encoded
 		/// auth data for the same reason `encodedContent` is encoded: a
 		/// profile that changes the signature's representation changes
 		/// exactly that part, nothing else.

@@ -4,8 +4,8 @@ import MLSCrypto
 import MLSFraming
 
 extension MLS.RFC9420 {
-	/// `struct { ProtocolVersion version; CipherSuite cipher_suite; opaque
-	/// group_id<V>; uint64 epoch; opaque tree_hash<V>; opaque
+	/// `struct { ProtocolVersion version = mls10; CipherSuite cipher_suite;
+	/// opaque group_id<V>; uint64 epoch; opaque tree_hash<V>; opaque
 	/// confirmed_transcript_hash<V>; Extension extensions<V>; } GroupContext;`
 	public struct GroupContext: Sendable, Equatable, MLSCodable {
 		public var version: MLS.ProtocolVersion

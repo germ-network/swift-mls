@@ -13,6 +13,15 @@ extension MLS.RFC9420 {
 	/// whatever secret-tree state it's actually managing — this profile
 	/// target intentionally doesn't depend on `MLSKeySchedule` itself (see
 	/// `Package.swift`'s comment on `MLSProfileRFC9420`'s dependencies).
+	///
+	/// This function alone can't enforce the ratchet-hygiene properties
+	/// forward secrecy depends on — a conforming implementation must:
+	/// bound how far a decryption call is allowed to advance the ratchet
+	/// past its last-seen generation; delete a generation's secret once
+	/// consumed, so it can't be produced a second time; and refuse to
+	/// derive a decryption key for the caller's own leaf (a message can't
+	/// legitimately be decrypting its own sender). None of that is
+	/// visible from this one call's signature.
 	public protocol MessageKeySource {
 		func key(
 			for leafIndex: MLS.LeafIndex, generation: UInt32,
@@ -22,12 +31,9 @@ extension MLS.RFC9420 {
 		)
 	}
 
-	/// RFC 9420 §6.1: application content MUST NOT be sent as a
-	/// `PublicMessage` — a `PublicMessage`'s framing signature (and, for a
-	/// member sender, its membership tag) are visible on the wire, which
-	/// would leak who is talking to observers of an otherwise-encrypted
-	/// group. Checked here, in `protectPublic` alone — not in
-	/// `PublicMessage`'s own decoder, which must still accept an
+	/// RFC 9420 §6: "Applications MUST use PrivateMessage to encrypt
+	/// application messages." Checked here, in `protectPublic` alone — not
+	/// in `PublicMessage`'s own decoder, which must still accept an
 	/// `application_data`-carrying `PublicMessage` if handed one (e.g. by
 	/// `messages.json`'s own `public_message_application` vectors, testing
 	/// exactly this shape in isolation from the rule this function enforces).

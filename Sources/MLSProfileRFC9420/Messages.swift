@@ -131,12 +131,13 @@ extension MLS.RFC9420.PublicMessage: MLSDecodable {
 }
 
 extension MLS.RFC9420 {
-	/// `MLSMessage`'s payload select. Written per §4.3: a closed switch —
-	/// this is the one place that DOES need to be closed, since it's the
-	/// only place that knows the full set of RFC 9420 wire-format payload
-	/// types. A profile-pluggable *tag* (`MLS.WireFormat`, an open
-	/// newtype) plus a closed *dispatcher* per profile is exactly the
-	/// split §4.3 argues for.
+	/// RFC 9420 §6's `MLSMessage` payload select, over the five wire
+	/// formats §17.2's registry defines. A closed switch — this is the one
+	/// place that DOES need to be closed, since it's the only place that
+	/// knows the full set of RFC 9420 wire-format payload types. A
+	/// profile-pluggable *tag* (`MLS.WireFormat`, an open newtype, per
+	/// §17.2's own open registry) plus a closed *dispatcher* per profile
+	/// is this codebase's own split, not one the RFC itself argues for.
 	public enum Message: Sendable, Equatable {
 		case publicMessage(PublicMessage)
 		case privateMessage(PrivateMessage)

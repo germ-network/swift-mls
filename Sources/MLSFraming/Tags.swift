@@ -3,7 +3,7 @@ import MLSCodec
 import MLSCrypto
 
 extension MLS.Framing {
-	/// `MAC(membership_key, FramedContentTBM)`.
+	/// RFC 9420 §6.2: `MAC(membership_key, AuthenticatedContentTBM)`.
 	public static func membershipTag(
 		_ provider: any MLS.CipherSuiteProvider, membershipKey: Data,
 		signedContent: SignedContent, encodedAuthData: Data

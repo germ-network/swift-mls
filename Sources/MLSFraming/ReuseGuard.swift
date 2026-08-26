@@ -2,10 +2,11 @@ import Foundation
 import MLSCodec
 
 extension MLS.Framing {
-	/// RFC 9420 §6.3.2: a fresh 4 random bytes per message, XORed into the
-	/// leading bytes of the per-generation nonce so two messages sealed
-	/// under the same (key, nonce) — a ratchet collision from out-of-order
-	/// delivery racing a sender — never reuse it in practice.
+	/// RFC 9420 §6.3.1: a fresh 4 random bytes per message, XORed into the
+	/// leading bytes of the per-generation nonce so that a sender whose
+	/// persistent key-schedule position is lost or corrupted, and who
+	/// re-derives an already-used generation, still avoids resealing under
+	/// the exact same (key, nonce).
 	public struct ReuseGuard: Sendable, Equatable {
 		public var bytes: Data
 

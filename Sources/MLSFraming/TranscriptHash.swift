@@ -14,7 +14,7 @@ extension MLS.Framing {
 	/// `InterimTranscriptHash = Hash(ConfirmedTranscriptHash_[n] ‖
 	/// InterimTranscriptHashInput_[n])`, where
 	/// `InterimTranscriptHashInput` is just `MAC confirmation_tag`,
-	/// encoded as `opaque<V>` (RFC 9420 §7.2).
+	/// encoded as `opaque<V>` (RFC 9420 §8.2).
 	public static func interimTranscriptHash(
 		_ provider: any MLS.CipherSuiteProvider, confirmed: Data,
 		confirmationTag: MLS.ConfirmationTag
