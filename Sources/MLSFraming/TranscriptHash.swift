@@ -20,7 +20,7 @@ extension MLS.Framing {
 		confirmationTag: MLS.ConfirmationTag
 	) throws -> Data {
 		var writer = MLS.Writer()
-		try confirmationTag.encode(to: &writer)
+		try writer.encode(confirmationTag)
 		return try provider.hash(confirmed + Data(writer.bytes))
 	}
 }

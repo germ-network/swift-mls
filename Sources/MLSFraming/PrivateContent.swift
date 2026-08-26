@@ -23,7 +23,7 @@ extension MLS.Framing {
 		public func encode(to writer: inout MLS.Writer) throws {
 			try writer.writeOpaque(groupID)
 			writer.writeUInt64(epoch)
-			try contentType.encode(to: &writer)
+			try writer.encode(contentType)
 			try writer.writeOpaque(authenticatedData)
 		}
 	}

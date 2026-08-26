@@ -64,11 +64,11 @@ extension MLS.RFC9420 {
 
 extension MLS.RFC9420.Content: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try contentType.encode(to: &writer)
+		try writer.encode(contentType)
 		switch self {
 		case .application(let data): try writer.writeOpaque(data)
-		case .proposal(let proposal): try proposal.encode(to: &writer)
-		case .commit(let commit): try commit.encode(to: &writer)
+		case .proposal(let proposal): try writer.encode(proposal)
+		case .commit(let commit): try writer.encode(commit)
 		}
 	}
 }
@@ -93,8 +93,8 @@ extension MLS.RFC9420.Content {
 	func encodeBody(to writer: inout MLS.Writer) throws {
 		switch self {
 		case .application(let data): try writer.writeOpaque(data)
-		case .proposal(let proposal): try proposal.encode(to: &writer)
-		case .commit(let commit): try commit.encode(to: &writer)
+		case .proposal(let proposal): try writer.encode(proposal)
+		case .commit(let commit): try writer.encode(commit)
 		}
 	}
 
@@ -114,9 +114,9 @@ extension MLS.RFC9420.FramedContent: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
 		try writer.writeOpaque(groupID)
 		writer.writeUInt64(epoch)
-		try sender.encode(to: &writer)
+		try writer.encode(sender)
 		try writer.writeOpaque(authenticatedData)
-		try content.encode(to: &writer)
+		try writer.encode(content)
 	}
 }
 
@@ -132,8 +132,8 @@ extension MLS.RFC9420.FramedContent: MLSDecodable {
 
 extension MLS.RFC9420.AuthenticatedContent: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try wireFormat.encode(to: &writer)
-		try content.encode(to: &writer)
+		try writer.encode(wireFormat)
+		try writer.encode(content)
 		try auth.encodeRequiringSignature(
 			contentType: content.content.contentType, to: &writer)
 	}

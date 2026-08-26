@@ -29,10 +29,10 @@ extension MLS.RFC9420 {
 
 extension MLS.RFC9420.GroupInfo: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try groupContext.encode(to: &writer)
+		try writer.encode(groupContext)
 		try writer.encodeVector(extensions)
-		try confirmationTag.encode(to: &writer)
-		try signer.encode(to: &writer)
+		try writer.encode(confirmationTag)
+		try writer.encode(signer)
 		try writer.writeOpaque(signature)
 	}
 }
@@ -51,10 +51,10 @@ extension MLS.RFC9420.GroupInfo {
 	/// `GroupInfoTBS` — every field above except `signature`.
 	public func toBeSigned() throws -> Data {
 		var writer = MLS.Writer()
-		try groupContext.encode(to: &writer)
+		try writer.encode(groupContext)
 		try writer.encodeVector(extensions)
-		try confirmationTag.encode(to: &writer)
-		try signer.encode(to: &writer)
+		try writer.encode(confirmationTag)
+		try writer.encode(signer)
 		return Data(writer.bytes)
 	}
 }

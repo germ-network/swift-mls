@@ -38,8 +38,8 @@ extension MLS.Framing {
 		/// `FramedContentTBS` — version ‖ wire_format ‖ content ‖ context?
 		public func toBeSigned() throws -> Data {
 			var writer = MLS.Writer()
-			try protocolVersion.encode(to: &writer)
-			try wireFormat.encode(to: &writer)
+			try writer.encode(protocolVersion)
+			try writer.encode(wireFormat)
 			writer.writeBytes(encodedContent)
 			if let encodedGroupContext { writer.writeBytes(encodedGroupContext) }
 			return Data(writer.bytes)
@@ -62,7 +62,7 @@ extension MLS.Framing {
 		/// across all seven RFC 9420 cipher suites.)
 		public func confirmedTranscriptHashInput(encodedSignature: Data) throws -> Data {
 			var writer = MLS.Writer()
-			try wireFormat.encode(to: &writer)
+			try writer.encode(wireFormat)
 			writer.writeBytes(encodedContent)
 			writer.writeBytes(encodedSignature)
 			return Data(writer.bytes)

@@ -17,7 +17,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try encryptionKey.encode(to: &writer)
+			try writer.encode(encryptionKey)
 			try writer.encodeVector(encryptedPathSecret)
 		}
 
@@ -54,7 +54,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try leafNode.encode(to: &writer)
+			try writer.encode(leafNode)
 			try writer.encodeVector(nodes)
 		}
 

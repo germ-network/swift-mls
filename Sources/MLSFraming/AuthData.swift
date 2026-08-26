@@ -108,12 +108,12 @@ extension MLS.FramedContentAuthData {
 		contentType: MLS.ContentType, to writer: inout MLS.Writer
 	) throws {
 		guard let signature else { throw MLS.FramingError.signatureRequired }
-		try signature.encode(to: &writer)
+		try writer.encode(signature)
 		if contentType == .commit {
 			guard let confirmationTag else {
 				throw MLS.FramingError.confirmationTagMissing
 			}
-			try confirmationTag.encode(to: &writer)
+			try writer.encode(confirmationTag)
 		}
 	}
 

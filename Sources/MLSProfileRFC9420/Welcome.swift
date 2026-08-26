@@ -43,8 +43,8 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try newMember.encode(to: &writer)
-			try encryptedGroupSecrets.encode(to: &writer)
+			try writer.encode(newMember)
+			try writer.encode(encryptedGroupSecrets)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {
@@ -70,7 +70,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try cipherSuite.encode(to: &writer)
+			try writer.encode(cipherSuite)
 			try writer.encodeVector(secrets)
 			try writer.writeOpaque(encryptedGroupInfo)
 		}

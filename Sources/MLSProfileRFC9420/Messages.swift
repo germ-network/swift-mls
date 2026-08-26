@@ -90,7 +90,7 @@ extension MLS.RFC9420 {
 		public func encode(to writer: inout MLS.Writer) throws {
 			try writer.writeOpaque(groupID)
 			writer.writeUInt64(epoch)
-			try contentType.encode(to: &writer)
+			try writer.encode(contentType)
 			try writer.writeOpaque(authenticatedData)
 			try writer.writeOpaque(encryptedSenderData)
 			try writer.writeOpaque(ciphertext)
@@ -109,12 +109,12 @@ extension MLS.RFC9420 {
 
 extension MLS.RFC9420.PublicMessage: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try content.encode(to: &writer)
+		try writer.encode(content)
 		try auth.encodeRequiringSignature(
 			contentType: content.content.contentType, to: &writer)
 		if content.sender.carriesMembershipTag {
 			guard let membershipTag else { throw MLS.FramingError.membershipTagMissing }
-			try membershipTag.encode(to: &writer)
+			try writer.encode(membershipTag)
 		}
 	}
 }
@@ -158,14 +158,14 @@ extension MLS.RFC9420 {
 
 extension MLS.RFC9420.Message: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try MLS.ProtocolVersion.mls10.encode(to: &writer)
-		try wireFormat.encode(to: &writer)
+		try writer.encode(MLS.ProtocolVersion.mls10)
+		try writer.encode(wireFormat)
 		switch self {
-		case .publicMessage(let m): try m.encode(to: &writer)
-		case .privateMessage(let m): try m.encode(to: &writer)
-		case .welcome(let m): try m.encode(to: &writer)
-		case .groupInfo(let m): try m.encode(to: &writer)
-		case .keyPackage(let m): try m.encode(to: &writer)
+		case .publicMessage(let m): try writer.encode(m)
+		case .privateMessage(let m): try writer.encode(m)
+		case .welcome(let m): try writer.encode(m)
+		case .groupInfo(let m): try writer.encode(m)
+		case .keyPackage(let m): try writer.encode(m)
 		}
 	}
 }

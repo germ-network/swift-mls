@@ -33,7 +33,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try usage.encode(to: &writer)
+			try writer.encode(usage)
 			try writer.writeOpaque(groupID)
 			writer.writeUInt64(epoch)
 		}
@@ -85,8 +85,8 @@ extension MLS.RFC9420 {
 
 		public func encode(to writer: inout MLS.Writer) throws {
 			try writer.writeOpaque(groupID)
-			try version.encode(to: &writer)
-			try cipherSuite.encode(to: &writer)
+			try writer.encode(version)
+			try writer.encode(cipherSuite)
 			try writer.encodeVector(extensions)
 		}
 
@@ -129,12 +129,12 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 	public func encode(to writer: inout MLS.Writer) throws {
 		switch self {
 		case .external(let pskID, let nonce):
-			try MLS.RFC9420.PSKType.external.encode(to: &writer)
+			try writer.encode(MLS.RFC9420.PSKType.external)
 			try writer.writeOpaque(pskID)
 			try writer.writeOpaque(nonce)
 		case .resumption(let resumption, let nonce):
-			try MLS.RFC9420.PSKType.resumption.encode(to: &writer)
-			try resumption.encode(to: &writer)
+			try writer.encode(MLS.RFC9420.PSKType.resumption)
+			try writer.encode(resumption)
 			try writer.writeOpaque(nonce)
 		}
 	}
@@ -167,14 +167,14 @@ extension MLS.RFC9420.Proposal {
 
 extension MLS.RFC9420.Proposal: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try type.encode(to: &writer)
+		try writer.encode(type)
 		switch self {
-		case .add(let keyPackage): try keyPackage.encode(to: &writer)
-		case .update(let leafNode): try leafNode.encode(to: &writer)
-		case .remove(let leafIndex): try leafIndex.encode(to: &writer)
-		case .preSharedKey(let psk): try psk.encode(to: &writer)
-		case .reInit(let reInit): try reInit.encode(to: &writer)
-		case .externalInit(let externalInit): try externalInit.encode(to: &writer)
+		case .add(let keyPackage): try writer.encode(keyPackage)
+		case .update(let leafNode): try writer.encode(leafNode)
+		case .remove(let leafIndex): try writer.encode(leafIndex)
+		case .preSharedKey(let psk): try writer.encode(psk)
+		case .reInit(let reInit): try writer.encode(reInit)
+		case .externalInit(let externalInit): try writer.encode(externalInit)
 		case .groupContextExtensions(let extensions): try writer.encodeVector(extensions)
 		}
 	}
@@ -204,10 +204,10 @@ extension MLS.RFC9420.ProposalOrRef: MLSEncodable {
 		switch self {
 		case .proposal(let proposal):
 			writer.writeUInt8(1)
-			try proposal.encode(to: &writer)
+			try writer.encode(proposal)
 		case .reference(let ref):
 			writer.writeUInt8(2)
-			try ref.encode(to: &writer)
+			try writer.encode(ref)
 		}
 	}
 }

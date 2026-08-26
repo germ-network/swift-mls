@@ -31,8 +31,8 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try version.encode(to: &writer)
-			try cipherSuite.encode(to: &writer)
+			try writer.encode(version)
+			try writer.encode(cipherSuite)
 			try writer.writeOpaque(groupID)
 			writer.writeUInt64(epoch)
 			try writer.writeOpaque(treeHash)

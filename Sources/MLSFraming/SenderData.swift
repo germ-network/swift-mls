@@ -19,7 +19,7 @@ extension MLS.Framing {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try leafIndex.encode(to: &writer)
+			try writer.encode(leafIndex)
 			writer.writeUInt32(generation)
 			writer.writeBytes(reuseGuard.bytes)
 		}
@@ -50,7 +50,7 @@ extension MLS.Framing {
 		public func encode(to writer: inout MLS.Writer) throws {
 			try writer.writeOpaque(groupID)
 			writer.writeUInt64(epoch)
-			try contentType.encode(to: &writer)
+			try writer.encode(contentType)
 		}
 	}
 
@@ -77,7 +77,7 @@ extension MLS.Framing {
 		senderData: SenderData, aad: SenderDataAAD
 	) throws -> Data {
 		var senderDataWriter = MLS.Writer()
-		try senderData.encode(to: &senderDataWriter)
+		try senderDataWriter.encode(senderData)
 		var aadWriter = MLS.Writer()
 		try aad.encode(to: &aadWriter)
 		return try provider.aeadSeal(
