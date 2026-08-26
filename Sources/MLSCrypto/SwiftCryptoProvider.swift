@@ -351,12 +351,20 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	// which the delegated HPKE path never needed exposed at this level but
 	// this one does.
 
-	/// RFC 9180 §4: `"KEM" || I2OSP(kem_id, 2)`, this suite's KEM half only
-	/// — DeriveKeyPair never touches the combined HPKE suite_id (KEM+KDF+AEAD),
-	/// only the KEM's own.
+	/// RFC 9180 §3's `I2OSP(n, w)`: "Convert non-negative integer n to a
+	/// w-length, big-endian byte string." Every use in this file has
+	/// `w == 2`, so the width is pinned to `UInt16` rather than taken as a
+	/// parameter.
+	private func i2osp(_ value: UInt16) -> Data {
+		var bigEndian = value.bigEndian
+		return withUnsafeBytes(of: &bigEndian) { Data($0) }
+	}
+
+	/// RFC 9180 §4.1: `suite_id = concat("KEM", I2OSP(kem_id, 2))`, this
+	/// suite's KEM half only — DeriveKeyPair never touches the combined
+	/// HPKE suite_id (KEM+KDF+AEAD), only the KEM's own.
 	private var kemSuiteID: Data {
-		var id = hpkeKemID.bigEndian
-		return Data("KEM".utf8) + withUnsafeBytes(of: &id) { Data($0) }
+		Data("KEM".utf8) + i2osp(hpkeKemID)
 	}
 
 	private var hpkeKemID: UInt16 {
@@ -404,11 +412,9 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	private func kemLabeledExpand(prk: Data, label: String, info: Data, length: Int) throws
 		-> Data
 	{
-		var length16 = UInt16(length).bigEndian
 		let labeledInfo =
-			withUnsafeBytes(of: &length16) { Data($0) } + Data("HPKE-v1".utf8)
-			+ kemSuiteID
-			+ Data(label.utf8) + info
+			i2osp(UInt16(length)) + Data("HPKE-v1".utf8) + kemSuiteID + Data(label.utf8)
+			+ info
 		return try kdfExpand(prk: prk, info: labeledInfo, length: length)
 	}
 
