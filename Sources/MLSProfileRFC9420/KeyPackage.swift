@@ -68,7 +68,10 @@ extension MLS.RFC9420.KeyPackage {
 	/// Encode(KeyPackage))`, over the *whole* signed package, not just the
 	/// TBS — unlike the signature, which excludes itself.
 	public func reference(_ provider: any MLS.CipherSuiteProvider) throws -> MLS.HashReference {
-		try MLS.HashReference.compute(
+		guard provider.cipherSuite == cipherSuite else {
+			throw MLS.RFC9420.WireError.cipherSuiteMismatch
+		}
+		return try MLS.HashReference.compute(
 			provider, label: "MLS 1.0 KeyPackage Reference", value: try mlsEncoded())
 	}
 }

@@ -4,8 +4,9 @@ import MLSCrypto
 import MLSTreeMath
 
 extension MLS.RFC9420 {
-	/// `enum { key_package(1), update(2), commit(3) } LeafNodeSourceType;`
-	/// paired with its `select` payload as one Swift enum — the tag and its
+	/// `enum { reserved(0), key_package(1), update(2), commit(3), (255) }
+	/// LeafNodeSource;` paired with its `select` payload as one Swift
+	/// enum — the tag and its
 	/// payload are written back-to-back on the wire with no length prefix
 	/// between them, exactly what an enum-with-payload's encode already
 	/// does, so there is no separate "select" type the way `Credential`
@@ -22,12 +23,6 @@ extension MLS.RFC9420 {
 	/// signature_key; Credential credential; Capabilities capabilities;
 	/// LeafNodeSource leaf_node_source; select(...) {...}; Extension
 	/// extensions<V>; opaque signature<V>; } LeafNode;`
-	///
-	/// (`signature_key`+`credential` is RFC 9420's `SigningIdentity`,
-	/// inlined here rather than kept as its own nested type — nothing else
-	/// in this phase needs a standalone `SigningIdentity`, and RFC 9420's
-	/// wire encoding is identical either way since `SigningIdentity` has
-	/// no framing of its own.)
 	public struct LeafNode: Sendable, Equatable {
 		public var encryptionKey: MLS.HpkePublicKey
 		public var signatureKey: MLS.SignaturePublicKey
@@ -117,6 +112,15 @@ extension MLS.RFC9420.LeafNode {
 	public func toBeSigned(groupContext: (groupID: Data, leafIndex: MLS.LeafIndex)?) throws
 		-> Data
 	{
+		let needsContext: Bool
+		switch source {
+		case .keyPackage: needsContext = false
+		case .update, .commit: needsContext = true
+		}
+		guard (groupContext != nil) == needsContext else {
+			throw MLS.RFC9420.WireError.leafNodeTBSContextMismatch
+		}
+
 		var writer = MLS.Writer()
 		try encryptionKey.encode(to: &writer)
 		try signatureKey.encode(to: &writer)

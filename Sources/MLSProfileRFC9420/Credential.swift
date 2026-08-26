@@ -9,8 +9,10 @@ extension MLS.RFC9420 {
 		case x509 = 2
 	}
 
-	/// `struct { CredentialType credential_type; select (...) { case basic:
-	/// opaque identity<V>; case x509: CertificateChain chain; }; } Credential;`
+	/// `struct { CredentialType credential_type; select
+	/// (Credential.credential_type) { case basic: opaque identity<V>;
+	/// case x509: Certificate certificates<V>; }; } Credential;` where
+	/// `struct { opaque cert_data<V>; } Certificate;`.
 	///
 	/// RFC 9420's `select` has no generic length prefix, so a credential
 	/// type this package doesn't recognize is not skippable purely from
@@ -20,7 +22,7 @@ extension MLS.RFC9420 {
 	/// `opaque<V>` (`mls-rs-core/src/identity/credential.rs:206-212`); this
 	/// type follows the same convention, and applies it to `x509` too
 	/// (deferred — see `germ-swift-mls/docs/plan.md`'s credential section
-	/// — so its `CertificateChain` body is carried as opaque bytes for
+	/// — so its `certificates<V>` body is carried as opaque bytes for
 	/// round-trip purposes, not parsed).
 	public enum Credential: Sendable, Equatable {
 		case basic(identity: Data)

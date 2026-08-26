@@ -26,4 +26,19 @@ struct KeyPackageTests {
 		#expect(try keyPackage.mlsEncoded() == record.input.bytes)
 		#expect(try keyPackage.reference(provider).data == record.output.bytes)
 	}
+
+	@Test("reference throws for a provider whose cipher suite doesn't match the package's")
+	func referenceRejectsMismatchedProvider() throws {
+		let record = try #require(Self.records.first)
+		let mismatched = try #require(
+			Self.provider.supportedCipherSuites.first { $0.id != record.cipherSuite })
+		let provider = try #require(Self.provider.cipherSuiteProvider(for: mismatched))
+
+		var reader = MLS.Reader(record.input.bytes)
+		let keyPackage = try MLS.RFC9420.KeyPackage(from: &reader)
+
+		#expect(throws: MLS.RFC9420.WireError.cipherSuiteMismatch) {
+			try keyPackage.reference(provider)
+		}
+	}
 }

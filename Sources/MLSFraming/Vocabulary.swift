@@ -3,15 +3,18 @@ import MLSCodec
 import MLSTreeMath
 
 /// `ProtocolVersion`, `WireFormat`, and `ContentType` are open `UInt8`/
-/// `UInt16` newtypes with well-known constants — modeled exactly like
+/// `UInt16` newtypes with well-known constants — modeled like
 /// `MLS.CipherSuite` (`MLSCrypto/CipherSuite.swift`), not as
-/// `MLSClosedEnum`s, even though RFC 9420 §17.1 lists WireFormat and
-/// ContentType as closed and ProtocolVersion as the canonical *extensible*
-/// example (see `MLSCodec/Enum.swift`'s doc comment, written in phase 0).
+/// `MLSClosedEnum`s. RFC 9420 doesn't treat the three uniformly: §17.2's
+/// "MLS Wire Formats" is a real, open IANA registry (Specification
+/// Required, with a private-use range) — `uint16 WireFormat;` isn't even
+/// an enum in the RFC's own presentation language — while §6 defines
+/// `ContentType` and `ProtocolVersion` as closed enums with no registry
+/// at all.
 ///
-/// This phase reverses that assignment for all three types. Closedness is
-/// a decoder *policy*, and the only place that actually knows the full set
-/// of payload types for a given tag is a profile's top-level message
+/// This phase makes all three open regardless. Closedness is a decoder
+/// *policy*, and the only place that actually knows the full set of
+/// payload types for a given tag is a profile's top-level message
 /// select (`MLS.RFC9420.Message`) — not this shared vocabulary. Keeping
 /// the tag itself open lets a second profile (SlimMLS: wire formats
 /// 0x0007–0x000B) claim values in the same registry without redefining a
@@ -81,8 +84,8 @@ extension MLS {
 		case newMemberProposal
 		case newMemberCommit
 
-		/// FramedContentTBS includes the GroupContext iff the sender is
-		/// `member` or `newMemberCommit` (`group/message_signature.rs`).
+		/// RFC 9420 §6.1: `FramedContentTBS` includes `GroupContext context`
+		/// iff `sender_type` is `member` or `new_member_commit`.
 		public var bindsGroupContext: Bool {
 			switch self {
 			case .member, .newMemberCommit: true
@@ -90,8 +93,8 @@ extension MLS {
 			}
 		}
 
-		/// PublicMessage carries a membership tag iff the sender is a
-		/// current group member.
+		/// RFC 9420 §6.2: `PublicMessage` carries a `membership_tag` iff
+		/// the sender is a current group member.
 		public var carriesMembershipTag: Bool {
 			if case .member = self { return true }
 			return false

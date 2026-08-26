@@ -2,11 +2,10 @@ import Foundation
 import MLSCodec
 
 extension MLS.RFC9420 {
-	/// RFC 9420 §17.3's Extension Types registry is extensible: an
-	/// unrecognized value must round-trip, not be rejected — a client
-	/// missing a newer extension still has to relay the group's
-	/// `required_capabilities` correctly. `MLS.ExtensibleEnum` exists for
-	/// exactly this.
+	/// RFC 9420 §17.3's Extension Types registry is extensible. §13.4:
+	/// "A client processing a KeyPackage object MUST ignore ... all
+	/// unknown extensions" — an unrecognized value must round-trip, not
+	/// be rejected. `MLS.ExtensibleEnum` exists for exactly this.
 	public typealias ExtensionType = MLS.ExtensibleEnum<KnownExtensionType>
 
 	public enum KnownExtensionType: UInt16, RawRepresentable, Sendable, Equatable, Hashable {

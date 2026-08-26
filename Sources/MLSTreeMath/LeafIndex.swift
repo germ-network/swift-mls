@@ -10,11 +10,13 @@ extension MLS {
 	public struct LeafIndex: Hashable, Sendable, Comparable {
 		public var value: UInt32
 
-		/// RFC 9420 caps a tree at 2^28 leaves; a leaf's node index (2x)
-		/// must still fit the tree's varint-encoded node count, so
-		/// implementations conventionally reject anything at or above
-		/// 2^24. Decode-time check — construction from a trusted local
-		/// count (e.g. `LeafIndex(value: currentLeafCount)`) is unchecked.
+		/// RFC 9420 states no leaf-count cap; the wire-level bound is
+		/// indirect and by bytes, not nodes — `ratchet_tree<V>`'s vector
+		/// header caps the whole tree encoding at 2^30 bytes (§2.1.2).
+		/// `2^24` is this implementation's own conservative decode-time
+		/// bound, not a value the RFC or peers agree on. Decode-time
+		/// check — construction from a trusted local count (e.g.
+		/// `LeafIndex(value: currentLeafCount)`) is unchecked.
 		public static let ceiling: UInt32 = 1 << 24
 
 		public init(value: UInt32) { self.value = value }
