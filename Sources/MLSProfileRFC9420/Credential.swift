@@ -34,10 +34,10 @@ extension MLS.RFC9420.Credential: MLSCodable {
 	public func encode(to writer: inout MLS.Writer) throws {
 		switch self {
 		case .basic(let identity):
-			try MLS.RFC9420.CredentialType(.basic).encode(to: &writer)
+			try writer.encode(MLS.RFC9420.CredentialType(.basic))
 			try writer.writeOpaque(identity)
 		case .other(let type, let data):
-			try type.encode(to: &writer)
+			try writer.encode(type)
 			try writer.writeOpaque(data)
 		}
 	}

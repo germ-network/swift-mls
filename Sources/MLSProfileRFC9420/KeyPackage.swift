@@ -32,10 +32,10 @@ extension MLS.RFC9420 {
 
 extension MLS.RFC9420.KeyPackage: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try version.encode(to: &writer)
-		try cipherSuite.encode(to: &writer)
-		try initKey.encode(to: &writer)
-		try leafNode.encode(to: &writer)
+		try writer.encode(version)
+		try writer.encode(cipherSuite)
+		try writer.encode(initKey)
+		try writer.encode(leafNode)
 		try writer.encodeVector(extensions)
 		try writer.writeOpaque(signature)
 	}
@@ -56,10 +56,10 @@ extension MLS.RFC9420.KeyPackage {
 	/// `KeyPackageTBS` — every field above except `signature`.
 	public func toBeSigned() throws -> Data {
 		var writer = MLS.Writer()
-		try version.encode(to: &writer)
-		try cipherSuite.encode(to: &writer)
-		try initKey.encode(to: &writer)
-		try leafNode.encode(to: &writer)
+		try writer.encode(version)
+		try writer.encode(cipherSuite)
+		try writer.encode(initKey)
+		try writer.encode(leafNode)
 		try writer.encodeVector(extensions)
 		return Data(writer.bytes)
 	}

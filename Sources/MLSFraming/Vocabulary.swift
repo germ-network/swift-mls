@@ -107,7 +107,7 @@ extension MLS.Sender: MLSCodable {
 		switch self {
 		case .member(let index):
 			writer.writeUInt8(1)
-			try index.encode(to: &writer)
+			try writer.encode(index)
 		case .external(let index):
 			writer.writeUInt8(2)
 			writer.writeUInt32(index)

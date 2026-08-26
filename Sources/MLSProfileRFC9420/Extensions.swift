@@ -27,7 +27,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try type.encode(to: &writer)
+			try writer.encode(type)
 			try writer.writeOpaque(data)
 		}
 

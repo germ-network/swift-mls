@@ -53,7 +53,7 @@ extension MLS.RFC9420.LeafNodeSource: MLSEncodable {
 		switch self {
 		case .keyPackage(let lifetime):
 			writer.writeUInt8(1)
-			try lifetime.encode(to: &writer)
+			try writer.encode(lifetime)
 		case .update:
 			writer.writeUInt8(2)
 		case .commit(let parentHash):
@@ -76,11 +76,11 @@ extension MLS.RFC9420.LeafNodeSource: MLSDecodable {
 
 extension MLS.RFC9420.LeafNode: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try encryptionKey.encode(to: &writer)
-		try signatureKey.encode(to: &writer)
-		try credential.encode(to: &writer)
-		try capabilities.encode(to: &writer)
-		try source.encode(to: &writer)
+		try writer.encode(encryptionKey)
+		try writer.encode(signatureKey)
+		try writer.encode(credential)
+		try writer.encode(capabilities)
+		try writer.encode(source)
 		try writer.encodeVector(extensions)
 		try writer.writeOpaque(signature)
 	}
@@ -122,15 +122,15 @@ extension MLS.RFC9420.LeafNode {
 		}
 
 		var writer = MLS.Writer()
-		try encryptionKey.encode(to: &writer)
-		try signatureKey.encode(to: &writer)
-		try credential.encode(to: &writer)
-		try capabilities.encode(to: &writer)
-		try source.encode(to: &writer)
+		try writer.encode(encryptionKey)
+		try writer.encode(signatureKey)
+		try writer.encode(credential)
+		try writer.encode(capabilities)
+		try writer.encode(source)
 		try writer.encodeVector(extensions)
 		if let (groupID, leafIndex) = groupContext {
 			try writer.writeOpaque(groupID)
-			try leafIndex.encode(to: &writer)
+			try writer.encode(leafIndex)
 		}
 		return Data(writer.bytes)
 	}

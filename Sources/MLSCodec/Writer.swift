@@ -61,6 +61,11 @@ extension MLS {
 			bytes.append(contentsOf: raw)
 		}
 
+		/// The preferred form inside an `encode(to:)` body: `writer.encode(x)`
+		/// rather than `x.encode(to: &writer)`, so a whole encoding reads as a
+		/// uniform sequence of `writer.…` calls with no `&` threading. Same
+		/// bytes either way — `Writer` is a value type passed `inout` for the
+		/// zero-copy mutable borrow, and this just hides that at the call site.
 		public mutating func encode(_ value: some MLSEncodable) throws {
 			try value.encode(to: &self)
 		}
