@@ -78,7 +78,7 @@ extension MLS.RFC9420 {
 		groupContext: GroupContext,
 		verificationKey: MLS.SignaturePublicKey, membershipKey: Data
 	) throws -> Bool {
-		// §6.1's MUST-NOT is a receive-side rule as much as a send-side one:
+		// §6's MUST-NOT is a receive-side rule as much as a send-side one:
 		// `PublicMessage`'s own decoder must still accept an
 		// application-content message handed to it (e.g. by
 		// `messages.json`'s own `public_message_application` records,

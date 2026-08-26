@@ -183,8 +183,8 @@ extension MLS.RFC9420.Message: MLSDecodable {
 	public init(from reader: inout MLS.Reader) throws {
 		// This profile only ever emits `mls10`; a message carrying any other
 		// version is rejected here rather than silently reinterpreted as
-		// mls10 on re-encode — this dispatcher is the one place per §4.3
-		// that validates.
+		// mls10 on re-encode — this dispatcher is the one place that
+		// validates it, matching RFC 9420 §6's `MLSMessage` struct.
 		let version = try MLS.ProtocolVersion(from: &reader)
 		guard version == .mls10 else {
 			throw MLS.RFC9420.WireError.unsupportedProtocolVersion(version)
