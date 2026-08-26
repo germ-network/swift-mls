@@ -101,7 +101,13 @@ extension MLS {
 
 		/// RFC 9420 §8.5's MLS-Exporter: `ExpandWithLabel(DeriveSecret(
 		/// exporterSecret, label), "exported", Hash(context), length)`.
-		public static func exportSecret(
+		///
+		/// `package`, not `public`: this secret has no forward secrecy —
+		/// it's a fixed function of `exporterSecret` for the epoch's whole
+		/// lifetime, unlike every other key schedule output. Recent drafts
+		/// favor a "safe export" construction instead; kept here for RFC
+		/// 9420 conformance and internal use, not as an adopter-facing API.
+		package static func exportSecret(
 			_ provider: any CipherSuiteProvider,
 			exporterSecret: Data,
 			label: String,
