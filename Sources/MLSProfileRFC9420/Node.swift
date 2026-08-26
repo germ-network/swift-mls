@@ -21,7 +21,7 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try encryptionKey.encode(to: &writer)
+			try writer.encode(encryptionKey)
 			try writer.writeOpaque(parentHash)
 			try writer.encodeVector(unmergedLeaves)
 		}
@@ -59,11 +59,11 @@ extension MLS.RFC9420.Node: MLSEncodable {
 	public func encode(to writer: inout MLS.Writer) throws {
 		switch self {
 		case .leaf(let leafNode):
-			try MLS.RFC9420.NodeType.leaf.encode(to: &writer)
-			try leafNode.encode(to: &writer)
+			try writer.encode(MLS.RFC9420.NodeType.leaf)
+			try writer.encode(leafNode)
 		case .parent(let parentNode):
-			try MLS.RFC9420.NodeType.parent.encode(to: &writer)
-			try parentNode.encode(to: &writer)
+			try writer.encode(MLS.RFC9420.NodeType.parent)
+			try writer.encode(parentNode)
 		}
 	}
 }
