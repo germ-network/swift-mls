@@ -11,7 +11,7 @@ Refresh with `Scripts/fetch-vectors.sh` and commit the diff.
 | `tree-math.json` | `mlswg/mls-implementations` `test-vectors/tree-math.json` | yes |
 | `key-schedule.json` | `mlswg/mls-implementations` `test-vectors/key-schedule.json` | yes |
 | `secret-tree.json` | `mlswg/mls-implementations` `test-vectors/secret-tree.json` | yes |
-| `mls-rs-psk-secret.json` | mirrored from `mls-rs-pq/mls-rs/test_data/psk_secret.json` | **no** — exercises the PSK-secret accumulation (`§9.1`) across 1–10 external PSKs per suite; independently useful because `key-schedule.json`'s own `psk_secret` field is a plain opaque input, not something it derives itself |
+| `mls-rs-psk-secret.json` | mirrored from `mls-rs-pq/mls-rs/test_data/psk_secret.json` | **no** — exercises the PSK-secret accumulation (`§8.4`) across 1–10 external PSKs per suite; independently useful because `key-schedule.json`'s own `psk_secret` field is a plain opaque input, not something it derives itself |
 | `mls-rs-sender-data-key.json` | mirrored from `mls-rs-pq/mls-rs/test_data/sender_data_key_test_vector.json` | **no** — exercises §6.3.2's sender-data key/nonce derivation and the AEAD seal built on it, at three ciphertext-sample-boundary sizes per suite |
 
 Verified byte-identical to the local `mls-rs-pq` checkout's copy at fetch time
