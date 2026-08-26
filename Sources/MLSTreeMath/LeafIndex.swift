@@ -26,6 +26,9 @@ extension MLS {
 extension MLS {
 	public enum TreeMathError: Error, Sendable, Equatable {
 		case leafIndexTooLarge(UInt32)
+		/// A tree's leaf count must be 0 or a power of two — see
+		/// `TreeMath.directPath`.
+		case invalidLeafCount(UInt32)
 	}
 }
 
