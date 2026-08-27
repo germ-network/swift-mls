@@ -88,7 +88,7 @@ extension MLS.TreeKEM.RatchetTree {
 			let (secretKey, publicKey) = try MLS.TreeKEM.nodeKeyPair(
 				provider, pathSecret: secret)
 			secretKeys.append(secretKey)
-			setParent(
+			try setParent(
 				step.path,
 				to: .init(
 					encryptionKey: publicKey, parentHash: Data(),

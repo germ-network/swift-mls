@@ -2,6 +2,17 @@ import MLSCodec
 
 extension MLS.TreeKEM {
 	public enum TreeError: Error, Sendable, Equatable {
+		/// A mutation named a node index beyond the current padded tree —
+		/// the structural form of a guard that used to live only in
+		/// callers. `LeafIndex`'s own 2^24 ceiling never bounds an index
+		/// against *this* tree, and an unconditional setter grew the
+		/// backing array to reach whatever it was handed (hundreds of MB
+		/// below the ceiling; a process abort at it).
+		case nodeIndexOutOfBounds(index: UInt32, nodeCount: UInt32)
+		/// `insertLeaf` on a tree already at `LeafIndex.ceiling / 2`
+		/// leaves: doubling would produce the leaf count
+		/// `LeafCount.init(validating:)` rejects.
+		case treeFull
 		/// A tree slot's node type doesn't match its array position's
 		/// parity (a leaf at an odd index, or a parent at an even one).
 		case wrongNodeKind(index: UInt32)

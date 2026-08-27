@@ -74,7 +74,7 @@ struct AddExclusionTests {
 		// direct path -- a no-op here since every ancestor above it is
 		// still blank, but it's what a real Add-application does.
 		let (_, joinerPublicKey) = try provider.hpkeGenerateKeyPair()
-		let joiner = tree.insertLeaf(
+		let joiner = try tree.insertLeaf(
 			.init(encryptionKey: joinerPublicKey, parentHash: nil, encoded: Data([2])),
 			hint: .init(value: 2))
 		try #require(joiner == .init(value: 2))
@@ -89,7 +89,7 @@ struct AddExclusionTests {
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
 		let (_, senderPublicKey) = try provider.hpkeGenerateKeyPair()
-		tree.setLeaf(
+		try tree.setLeaf(
 			sender,
 			to: .init(
 				encryptionKey: senderPublicKey, parentHash: stage.leafParentHash,

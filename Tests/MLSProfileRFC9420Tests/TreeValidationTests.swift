@@ -70,7 +70,7 @@ struct TreeValidationTests {
 	func rejectsWrongNodeKind(_ record: TreeValidationVector) throws {
 		var tree = try Self.decodeTree(record)
 		// Put a parent at node index 0 (always a leaf slot).
-		tree.setParent(
+		try tree.setParent(
 			0,
 			to: .init(
 				encryptionKey: .init(Data()), parentHash: Data(), unmergedLeaves: []
@@ -110,7 +110,7 @@ struct TreeValidationTests {
 		var p = try #require(tree.parent(at: 11))
 		try #require(!p.parentHash.isEmpty)
 		p.parentHash[p.parentHash.startIndex] ^= 0xFF
-		tree.setParent(11, to: p)
+		try tree.setParent(11, to: p)
 
 		#expect(throws: (any Error).self) { try tree.validateParentHashChain(provider) }
 	}
@@ -134,7 +134,7 @@ struct TreeValidationTests {
 		let bogus = MLS.LeafIndex(value: 4)
 		try #require(!p.unmergedLeaves.contains(bogus))
 		p.unmergedLeaves.append(bogus)
-		tree.setParent(11, to: p)
+		try tree.setParent(11, to: p)
 
 		#expect(throws: (any Error).self) { try tree.validateParentHashChain(provider) }
 	}
@@ -165,7 +165,7 @@ struct TreeValidationTests {
 				.compactMap { tree.parent(at: $0)?.encryptionKey }
 				.first { $0 != p.encryptionKey })
 		p.encryptionKey = donor
-		tree.setParent(topmost, to: p)
+		try tree.setParent(topmost, to: p)
 
 		#expect(throws: MLS.TreeKEM.TreeError.parentHashMismatch) {
 			try tree.validateParentHashChain(provider)
@@ -188,7 +188,7 @@ struct TreeValidationTests {
 		var p = try #require(tree.parent(at: 11))
 		let existing = try #require(p.unmergedLeaves.first)
 		p.unmergedLeaves = [existing, existing]
-		tree.setParent(11, to: p)
+		try tree.setParent(11, to: p)
 
 		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
 			try tree.validateUnmergedLeaves()
@@ -223,7 +223,7 @@ struct TreeValidationTests {
 		let bogus = MLS.LeafIndex(value: 4)
 		try #require(!p.unmergedLeaves.contains(bogus))
 		p.unmergedLeaves.insert(bogus, at: 0)
-		tree.setParent(11, to: p)
+		try tree.setParent(11, to: p)
 
 		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeafNotAtExpectedPosition) {
 			try tree.validateUnmergedLeaves()
@@ -239,7 +239,7 @@ struct TreeValidationTests {
 
 		var p = try #require(tree.parent(at: 11))
 		p.unmergedLeaves = [MLS.LeafIndex(value: 7), MLS.LeafIndex(value: 4)]
-		tree.setParent(11, to: p)
+		try tree.setParent(11, to: p)
 
 		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
 			try tree.validateUnmergedLeaves()

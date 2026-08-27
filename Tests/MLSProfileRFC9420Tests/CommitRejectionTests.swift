@@ -300,7 +300,7 @@ struct CommitRejectionTests {
 			return
 		}
 		var group = f.group
-		group.tree.setLeaf(senderIndex, to: nil)
+		try group.tree.setLeaf(senderIndex, to: nil)
 		#expect(throws: MLS.RFC9420.GroupError.blankSenderLeaf) {
 			_ = try group.processing(
 				f.provider, commit: f.commit, proposals: f.store, psk: { _ in nil })

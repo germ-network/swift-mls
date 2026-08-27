@@ -27,7 +27,7 @@ extension MLS.TreeKEM.RatchetTree {
 	public mutating func apply(_ proposal: MLS.RFC9420.Proposal, sender: MLS.LeafIndex) throws {
 		switch proposal {
 		case .add(let keyPackage):
-			let newIndex = insertLeaf(try keyPackage.leafNode.record)
+			let newIndex = try insertLeaf(try keyPackage.leafNode.record)
 			for step in MLS.TreeMath.directPath(
 				from: 2 * newIndex.value, leafCount: leafCount)
 			{
@@ -37,7 +37,7 @@ extension MLS.TreeKEM.RatchetTree {
 			// The leaf gets the *new* LeafNode, not a blank -- only the
 			// ancestor chain (whose keys nobody can vouch for against the
 			// member's new encryption key) goes blank.
-			setLeaf(sender, to: try leafNode.record)
+			try setLeaf(sender, to: leafNode.record)
 			blankDirectPath(of: sender)
 		case .remove(let removed):
 			blankLeafAndDirectPath(removed)
