@@ -20,7 +20,14 @@ extension MLS.RFC9420 {
 		public internal(set) var tree: MLS.TreeKEM.RatchetTree
 		public internal(set) var interimTranscriptHash: Data
 		public internal(set) var myLeafIndex: MLS.LeafIndex
-		public internal(set) var epoch: MLS.KeySchedule.Epoch
+		public internal(set) var epoch: EpochSecrets
+
+		/// See `RetentionPolicy`. Lowering it prunes immediately, not at
+		/// the next commit — a group that never processes another commit
+		/// must still be able to shed history.
+		public var retention: RetentionPolicy = RetentionPolicy() {
+			didSet { pruneResumptionPsks(currentEpoch: context.epoch) }
+		}
 
 		/// Every HPKE secret key this member currently holds, keyed by
 		/// *node* index — its own leaf (`2 * myLeafIndex`) plus whatever
@@ -29,11 +36,19 @@ extension MLS.RFC9420 {
 		/// stateful.
 		var secretKeys: [UInt32: MLS.HpkeSecretKey]
 
-		/// `resumption_psk` for every epoch this member has held, keyed
-		/// by epoch. Grows without bound — retention policy is an
-		/// application concern (this library has no storage-provider
-		/// protocol of its own), not fixed here.
+		/// `resumption_psk` for recent epochs, keyed by epoch — bounded by
+		/// `retention.resumptionPskDepth`, enforced after every processed
+		/// commit and on policy change.
 		var resumptionPsks: [UInt64: Data]
+
+		mutating func pruneResumptionPsks(currentEpoch: UInt64) {
+			// Saturating: at epochs below the depth, everything survives.
+			// (An unchecked subtraction here traps -- the fixture epochs
+			// are 2-4, below the default depth.)
+			let depth = UInt64(retention.resumptionPskDepth)
+			let floor = currentEpoch >= depth ? currentEpoch - depth : 0
+			resumptionPsks = resumptionPsks.filter { $0.key >= floor }
+		}
 	}
 }
 
@@ -249,7 +264,7 @@ extension MLS.RFC9420.Group {
 		return MLS.RFC9420.Group(
 			context: groupInfo.groupContext, tree: tree,
 			interimTranscriptHash: interimTranscriptHash, myLeafIndex: myLeafIndex,
-			epoch: epoch, secretKeys: secretKeys,
+			epoch: EpochSecrets(retaining: epoch), secretKeys: secretKeys,
 			resumptionPsks: [groupInfo.groupContext.epoch: epoch.resumptionPsk])
 	}
 }

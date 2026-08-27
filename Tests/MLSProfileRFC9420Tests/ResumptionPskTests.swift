@@ -6,13 +6,16 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-// No official or mls-rs vector exercises a resumption PSK (finding 1.7 in
-// the GER-2294 plan) -- self-verified here instead. This is exactly the
+// The official vectors exercise resumption PSKs only shallowly: every
+// reference in `passive-client-handling-commit.json` is application-usage
+// at gap 1 (the immediately preceding epoch), and
+// `passive-client-random.json` carries no PSKs at all -- measured during
+// the phase-5 retention work, correcting this header's earlier claim that
+// no vector exercises them. What still needs self-verification is the
 // class this component's own doc comment says it stopped hardcoding
-// (Sources/MLSKeySchedule/Labels.swift): a real regression test, not
-// vector coverage, is what stands between "compiles" and "actually
-// distinguishes the two PSK kinds during derivation."
-@Suite("resumption PSKs (no vector; self-verified)")
+// (Sources/MLSKeySchedule/Labels.swift): that derivation actually
+// distinguishes the two PSK kinds, which a gap-1 happy path never probes.
+@Suite("resumption PSKs (vector coverage shallow; self-verified)")
 struct ResumptionPskTests {
 	static let provider = SwiftCryptoProvider().cipherSuiteProvider(for: .curve25519Aes128)!
 
