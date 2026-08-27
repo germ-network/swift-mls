@@ -217,6 +217,47 @@ struct GroupMutationTests {
 		}
 	}
 
+	/// RFC 9420 §10.1's version half: "Verify that the cipher suite and
+	/// protocol version of the KeyPackage match those in the GroupContext."
+	/// The version is forced through a `GroupInfo` reseal for the same
+	/// reason S6 is -- it lives inside the AEAD-sealed structure.
+	///
+	/// Note what makes this test possible at all: `MLS.ProtocolVersion` is
+	/// an open newtype, not a closed enum, so a non-`mls10` value is
+	/// *representable* and the check has something to reject. That is the
+	/// same design decision that makes the check worth having -- a closed
+	/// enum would make this unrepresentable today and silently wrong the
+	/// day a second version exists.
+	///
+	/// **What this test does and does not prove.** Mutation-verified:
+	/// deleting the version check makes it fail. But it then fails with
+	/// `signatureVerificationFailed`, not by accepting the tree -- because
+	/// this test cannot re-sign the `GroupInfo` (the vector supplies the
+	/// joiner's secrets, never the signer's), so the mutation also breaks
+	/// the signature that covers `GroupInfoTBS`. So against a **network**
+	/// attacker the signature check already suffices, and what the version
+	/// check adds is the correct, specific error ahead of it.
+	///
+	/// The adversary it actually defends against is a **malicious or
+	/// compromised inviter**, who signs the `GroupInfo` themselves and so
+	/// produces a valid signature over a mismatched version. No test here
+	/// can construct that case; stating the limit is the honest
+	/// alternative to implying this test covers it.
+	@Test("GroupInfo.group_context.version mismatched against our own KeyPackage's")
+	func groupContextVersionMismatch() throws {
+		let scenario = try Self.buildScenario()
+		var groupInfo = scenario.groupInfo
+		groupInfo.groupContext.version = MLS.ProtocolVersion(id: 0xFFFF)
+		let welcome = try Self.reseal(scenario, groupInfo: groupInfo)
+
+		#expect(throws: MLS.RFC9420.GroupError.protocolVersionMismatch) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: welcome,
+				credentials: scenario.credentials,
+				externalTree: scenario.externalTree, psk: { _ in nil })
+		}
+	}
+
 	/// S6: `GroupInfo.group_context.cipher_suite` disagreeing with the
 	/// joiner's own `KeyPackage.cipher_suite` must be rejected -- distinct
 	/// from S2, which checks the *Welcome's* own outer `cipher_suite`

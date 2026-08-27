@@ -151,10 +151,22 @@ extension MLS.RFC9420.Group {
 			try leafNode.verifySignature(provider, groupContext: leafContext)
 		}
 
-		// bullet 7
+		// bullet 7. RFC 9420 §10.1 pairs these two in one sentence --
+		// "Verify that the cipher suite and protocol version of the
+		// KeyPackage match those in the GroupContext" -- so they are one
+		// check, not a cipher-suite check with a version check bolted on.
+		// The version half has no bite today (`mls10` is the only value
+		// RFC 9420 defines, and this profile's `Message` decoder rejects
+		// anything else at its dispatch point), but this library exists to
+		// produce protocol variants: the moment a second version is
+		// representable, a joiner that never compares versions accepts
+		// whatever the inviter claims.
 		guard groupInfo.groupContext.cipherSuite == credentials.keyPackage.cipherSuite
 		else {
 			throw MLS.RFC9420.GroupError.cipherSuiteMismatch
+		}
+		guard groupInfo.groupContext.version == credentials.keyPackage.version else {
+			throw MLS.RFC9420.GroupError.protocolVersionMismatch
 		}
 
 		// bullet 5

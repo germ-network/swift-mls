@@ -197,7 +197,19 @@ extension MLS.RFC9420.Message: MLSDecodable {
 			self = .privateMessage(try MLS.RFC9420.PrivateMessage(from: &reader))
 		case .welcome: self = .welcome(try MLS.RFC9420.Welcome(from: &reader))
 		case .groupInfo: self = .groupInfo(try MLS.RFC9420.GroupInfo(from: &reader))
-		case .keyPackage: self = .keyPackage(try MLS.RFC9420.KeyPackage(from: &reader))
+		case .keyPackage:
+			// RFC 9420 §10: "If a client receives a KeyPackage carried
+			// within an MLSMessage object, then it MUST verify that the
+			// version field of the KeyPackage has the same value as the
+			// version field of the MLSMessage." A KeyPackage carries its
+			// own `version` precisely so the two can disagree on the wire;
+			// decoding it and never comparing is what the MUST forbids.
+			let keyPackage = try MLS.RFC9420.KeyPackage(from: &reader)
+			guard keyPackage.version == version else {
+				throw MLS.RFC9420.WireError.unsupportedProtocolVersion(
+					keyPackage.version)
+			}
+			self = .keyPackage(keyPackage)
 		default: throw MLS.RFC9420.WireError.unknownWireFormat(wireFormat)
 		}
 	}

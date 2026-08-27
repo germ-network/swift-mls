@@ -27,6 +27,10 @@ extension MLS.RFC9420 {
 		/// S2/S6: `Welcome.cipherSuite` or `GroupContext.cipherSuite`
 		/// doesn't match the joiner's own `KeyPackage.cipherSuite`.
 		case cipherSuiteMismatch
+		/// RFC 9420 §10.1's other half: "Verify that the cipher suite and
+		/// protocol version of the KeyPackage match those in the
+		/// GroupContext."
+		case protocolVersionMismatch
 		/// Neither an externally-supplied tree nor a `ratchet_tree`
 		/// extension on `GroupInfo` was available.
 		case missingRatchetTree
