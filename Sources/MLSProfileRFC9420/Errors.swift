@@ -76,6 +76,14 @@ extension MLS.RFC9420 {
 		case unknownProposalReference
 		/// S18: RFC 9420 §12.4 requires a path for this proposal list.
 		case pathRequired
+		/// A commit carried a ReInit proposal. RFC 9420 §12.4.2: such a
+		/// client "MUST NOT use the group to send messages anymore" and
+		/// must wait for a §11.2 Welcome — a transition this project
+		/// defers project-wide. Rejected rather than applied because
+		/// ReInit, uniquely, does not perturb the key schedule: applying
+		/// it would *succeed* and hand back a live-looking `Group` the
+		/// caller must not send from.
+		case unsupportedReInit
 		/// GER-2355: a Remove naming a leaf that is already blank. The
 		/// tree's own mutation primitives stay unconditional by design;
 		/// "is this leaf currently a member" is context only commit
