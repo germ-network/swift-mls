@@ -5,7 +5,7 @@ import MLSTreeMath
 
 extension MLS.TreeKEM.RatchetTree {
 	/// RFC 9420 §7.8: `TreeHashInput` is a tagged union —
-	/// `struct { LeafIndex leaf_index; optional<LeafNode> leaf_node; }`
+	/// `struct { uint32 leaf_index; optional<LeafNode> leaf_node; }`
 	/// for a leaf (tag 1), `struct { optional<ParentNode> parent_node;
 	/// opaque left_hash<V>; opaque right_hash<V>; }` for a parent (tag 2)
 	/// — hashed bottom-up: a parent's hash covers its already-computed

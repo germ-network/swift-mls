@@ -138,6 +138,39 @@ struct TreeValidationTests {
 		#expect(throws: (any Error).self) { try tree.validateParentHashChain(provider) }
 	}
 
+	/// The node at the top of a parent-hash chain legitimately carries an
+	/// empty `parent_hash` — there is nothing above it to chain from. That
+	/// says nothing about whether anything chains *up to* it, which is
+	/// what RFC 9420 §7.9.2's "all non-blank parent nodes are covered by
+	/// exactly one such chain" actually requires. Swapping such a node's
+	/// encryption key leaves its own (empty) hash field untouched while
+	/// breaking every descendant chain's claim against it, so the only
+	/// thing that can catch it is the coverage sweep.
+	@Test("a chain-topmost node's encryption key can't be swapped undetected")
+	func mutationSwappingTopmostNodeKeyBreaksCoverage() throws {
+		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())
+		let provider = try #require(Self.provider.cipherSuiteProvider(for: .init(id: 1)))
+		try tree.validateParentHashChain(provider)  // sanity: valid before mutation
+
+		let topmost = try #require(
+			stride(from: UInt32(1), to: tree.physicalNodeCount, by: 2).first {
+				tree.parent(at: $0)?.parentHash.isEmpty == true
+			})
+		var p = try #require(tree.parent(at: topmost))
+		// Any *other* node's key works as the substitute -- a well-formed
+		// HPKE key that simply isn't the one the chain below committed to.
+		let donor = try #require(
+			stride(from: UInt32(1), to: tree.physicalNodeCount, by: 2).lazy
+				.compactMap { tree.parent(at: $0)?.encryptionKey }
+				.first { $0 != p.encryptionKey })
+		p.encryptionKey = donor
+		tree.setParent(topmost, to: p)
+
+		#expect(throws: MLS.TreeKEM.TreeError.parentHashMismatch) {
+			try tree.validateParentHashChain(provider)
+		}
+	}
+
 	@Test("S14: a trailing blank leaf is rejected, not silently trimmed", arguments: records)
 	func rejectsTrailingBlank(_ record: TreeValidationVector) throws {
 		var reader = MLS.Reader(record.tree.bytes)

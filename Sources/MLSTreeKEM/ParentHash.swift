@@ -4,8 +4,8 @@ import MLSCrypto
 import MLSTreeMath
 
 extension MLS.TreeKEM {
-	/// RFC 9420 §7.9: `ParentHashInput = opaque public_key<V>; opaque
-	/// parent_hash<V>; opaque original_sibling_tree_hash<V>;`
+	/// RFC 9420 §7.9: `ParentHashInput = HPKEPublicKey encryption_key;
+	/// opaque parent_hash<V>; opaque original_sibling_tree_hash<V>;`
 	static func parentHash(
 		publicKey: MLS.HpkePublicKey, parentHash: Data, originalSiblingTreeHash: Data,
 		_ provider: any MLS.CipherSuiteProvider
@@ -23,8 +23,9 @@ extension MLS.TreeKEM.RatchetTree {
 	/// path: walks the *direct copath* root-down, chaining each level's
 	/// parent hash into the next, and installs the result into each
 	/// parent node along the way (`parent.parentHash = ` the hash computed
-	/// one level closer to the leaf). The value that falls out at the
-	/// bottom is the leaf's own `parent_hash`.
+	/// one level closer to the root — empty at the topmost node, which
+	/// has nothing above it to chain from). The value that falls out at
+	/// the bottom is the leaf's own `parent_hash`.
 	///
 	/// A blank copath child contributes nothing (its resolution is empty,
 	/// so nobody would be encrypting a path secret to it) — those direct-
@@ -55,15 +56,22 @@ extension MLS.TreeKEM.RatchetTree {
 		return hash
 	}
 
-	/// RFC 9420 §7.9's parent-hash chain validation: every non-blank
-	/// parent with a non-empty `parent_hash` must be covered by exactly
-	/// one non-blank leaf's chain, walked leaf-to-root. A chain ends
-	/// (without error) the moment a hash doesn't match — that's simply as
-	/// far as the most recent committer through that region got.
+	/// RFC 9420 §7.9.2's parent-hash chain validation, done "bottom up":
+	/// "verifying that all non-blank parent nodes are covered by exactly
+	/// one such chain," walked leaf-to-root. *Every* non-blank parent
+	/// needs coverage, the root included -- a node's own `parent_hash`
+	/// being empty (as a chain's topmost node's always is) says nothing
+	/// about whether some descendant's hash chains up to it, which is
+	/// what "covered" means.
+	///
+	/// A chain ends (without error) the moment a hash doesn't match —
+	/// that's simply as far as the most recent committer through that
+	/// region got. What makes an unmatched node an error is the coverage
+	/// sweep at the end, not the mismatch itself.
 	public func validateParentHashChain(_ provider: any MLS.CipherSuiteProvider) throws {
 		var toValidate = Set<UInt32>()
 		for i in stride(from: UInt32(1), to: physicalNodeCount, by: 2) {
-			if let p = parent(at: i), !p.parentHash.isEmpty { toValidate.insert(i) }
+			if parent(at: i) != nil { toValidate.insert(i) }
 		}
 		for (leafIndex, _) in nonBlankLeaves() {
 			try validateChain(
@@ -138,8 +146,7 @@ extension MLS.TreeKEM.RatchetTree {
 				throw MLS.TreeKEM.TreeError.parentHashMismatch
 			}
 
-			let firstTimeSeen = toValidate.remove(ancestor) != nil
-			guard firstTimeSeen || ancestorNode.parentHash.isEmpty else {
+			guard toValidate.remove(ancestor) != nil else {
 				throw MLS.TreeKEM.TreeError.parentHashCoveredTwice
 			}
 
