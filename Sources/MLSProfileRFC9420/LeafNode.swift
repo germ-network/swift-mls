@@ -135,11 +135,15 @@ extension MLS.RFC9420.LeafNode {
 		return Data(writer.bytes)
 	}
 
-	/// RFC 9420 §7.3: verify this leaf's own signature under
-	/// `SignWithLabel`'s "LeafNodeTBS" label -- the half of leaf validation
-	/// that's authenticity, not policy (contrast lifetime bounds,
+	/// RFC 9420 §7.3's "Verify that the signature on the LeafNode is valid
+	/// using signature_key" -- the half of leaf validation that's
+	/// authenticity, not policy (contrast lifetime bounds,
 	/// capability/extension consistency, `required_capabilities`
-	/// satisfaction, which stay deferred). `groupContext` supplies
+	/// satisfaction, and §5.3.1 credential validation, which stay
+	/// deferred). The "LeafNodeTBS" label and the signed structure itself
+	/// are §7.2's; §12.4.3.1's tree-integrity bullet delegates here
+	/// ("validate the LeafNode as described in Section 7.3"), which is why
+	/// a joiner runs this over every non-blank leaf. `groupContext` supplies
 	/// `(group_id, leaf_index)` for `update`/`commit`-sourced leaves, nil
 	/// for `key_package`-sourced ones -- see `toBeSigned`'s own doc
 	/// comment.
