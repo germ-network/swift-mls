@@ -14,9 +14,19 @@ extension MLS {
 		/// indirect and by bytes, not nodes — `ratchet_tree<V>`'s vector
 		/// header caps the whole tree encoding at 2^30 bytes (§2.1.2).
 		/// `2^24` is this implementation's own conservative decode-time
-		/// bound, not a value the RFC or peers agree on. Decode-time
-		/// check — construction from a trusted local count (e.g.
-		/// `LeafIndex(value: currentLeafCount)`) is unchecked.
+		/// bound. Decode-time check — construction from a trusted local
+		/// count (e.g. `LeafIndex(value: currentLeafCount)`) is unchecked.
+		///
+		/// The peers pick bounds too, and they disagree *with each other*,
+		/// which is the useful data point: mls-rs lands on exactly this
+		/// value (`MAX_LEAF_INDEX = (1 << 24) - 1`, `tree_kem/node.rs:21`,
+		/// enforced in its `LeafIndex` decode at `:47` — the same bound at
+		/// the same placement), while OpenMLS derives a much larger one
+		/// from the byte cap above (`MAX_TREE_SIZE = (1 << 30) - 1` →
+		/// `MAX_LEAF = (MAX_TREE_SIZE - 1) / 2`, roughly 2^29,
+		/// `binary_tree/array_representation/treemath.rs:6-14`). So this is
+		/// a spec-permitted implementation choice with no consensus value,
+		/// not a number invented here alone.
 		public static let ceiling: UInt32 = 1 << 24
 
 		public init(value: UInt32) { self.value = value }
