@@ -64,8 +64,32 @@ extension MLS {
 			try self.init(validating: Self.nextPowerOfTwo(count / 2 + 1))
 		}
 
+		/// Rounds `x` up to the next power of two, saturating at
+		/// `UInt32.max` rather than wrapping to zero.
+		///
+		/// The saturation is load-bearing, not defensive tidiness. Swift's
+		/// `<<` is a *smart* shift: over-shifting yields 0, it does not
+		/// trap, so the unguarded form returns **0** for every input above
+		/// 2³¹. Under the height model that is not the hazard it once was:
+		/// `init(validating:)` rejects 0 the same as any other
+		/// non-power-of-two value, so an unguarded overflow would still
+		/// throw — but it would throw `invalidLeafCount(0)`, blaming a
+		/// value the caller never passed. Saturating to `.max` keeps the
+		/// rejection on the caller's actual input instead: `.max` also
+		/// exceeds `LeafIndex.ceiling`, so `init(validating:)` throws for
+		/// that reason, consistently.
+		///
+		/// Unreachable from `init(nodeArrayCount:)` today, whose largest
+		/// possible argument is exactly 2³¹ (`UInt32.max / 2 + 1`), which
+		/// this returns unchanged and `init(validating:)` then rejects for
+		/// exceeding `LeafIndex.ceiling`. Saturating keeps that true for a
+		/// second caller that does not exist yet — the same
+		/// two-checks-drift failure this whole type was written to end,
+		/// one level down.
 		static func nextPowerOfTwo(_ x: UInt32) -> UInt32 {
-			x <= 1 ? 1 : UInt32(1) << (UInt32.bitWidth - (x - 1).leadingZeroBitCount)
+			guard x > 1 else { return 1 }
+			guard x <= 1 << 31 else { return .max }
+			return UInt32(1) << (UInt32.bitWidth - (x - 1).leadingZeroBitCount)
 		}
 	}
 }
