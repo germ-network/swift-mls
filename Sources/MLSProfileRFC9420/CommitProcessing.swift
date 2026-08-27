@@ -207,6 +207,22 @@ extension MLS.RFC9420.Group {
 			guard case .member(let updateSender) = stored.sender else {
 				throw MLS.RFC9420.GroupError.unsupportedSender
 			}
+			// The same membership check the Remove path below performs, and
+			// for a sharper reason. RFC 9420 §12.1.2 defines applying an
+			// Update as "Replace the sender's LeafNode with the one
+			// contained in the Update proposal" -- if the sender occupies no
+			// leaf there is nothing to replace and the operation is
+			// undefined. But `LeafIndex` is bounded only by its own 2^24
+			// ceiling, never against *this* tree, and `setLeaf` grows the
+			// backing array to reach whatever index it is handed. So an
+			// unchecked sender is not merely a no-op on a blank leaf: it
+			// pads the array toward 2^25 entries one `nil` at a time, and
+			// the `leafCount` read on the very next line then trips
+			// `RatchetTree`'s `try!`. An out-of-range sender in a
+			// caller-supplied `ProposalStore` aborts the process.
+			guard provisionalTree.leaf(at: updateSender) != nil else {
+				throw MLS.RFC9420.GroupError.updateFromNonMember(leaf: updateSender)
+			}
 			blankedNodes.formUnion(
 				MLS.TreeMath.directPath(
 					from: 2 * updateSender.value,

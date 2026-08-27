@@ -28,7 +28,7 @@ extension MLS.TreeKEM.RatchetTree {
 		switch proposal {
 		case .add(let keyPackage):
 			let newIndex = insertLeaf(try keyPackage.leafNode.record)
-			for step in try MLS.TreeMath.directPath(
+			for step in MLS.TreeMath.directPath(
 				from: 2 * newIndex.value, leafCount: leafCount)
 			{
 				try addUnmergedLeaf(newIndex, to: step.path)
@@ -38,9 +38,9 @@ extension MLS.TreeKEM.RatchetTree {
 			// ancestor chain (whose keys nobody can vouch for against the
 			// member's new encryption key) goes blank.
 			setLeaf(sender, to: try leafNode.record)
-			try blankDirectPath(of: sender)
+			blankDirectPath(of: sender)
 		case .remove(let removed):
-			try blankLeafAndDirectPath(removed)
+			blankLeafAndDirectPath(removed)
 		case .preSharedKey, .reInit, .externalInit, .groupContextExtensions:
 			throw MLS.RFC9420.TreeEditError.notATreeEditingProposal
 		}

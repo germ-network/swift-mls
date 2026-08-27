@@ -29,7 +29,7 @@ extension MLS.TreeKEM.RatchetTree {
 		sender: MLS.LeafIndex, leaf: MLS.TreeKEM.LeafRecord,
 		pathNodes: [MLS.TreeKEM.PathNode], _ provider: any MLS.CipherSuiteProvider
 	) throws {
-		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
+		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
 		let expectedCount = filtered.filter { !$0 }.count
 		guard pathNodes.count == expectedCount else {

@@ -40,7 +40,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// (§7.6), since encrypting a path secret to zero recipients has
 	/// nothing to encrypt to.
 	public func filteredDirectPath(from leafIndex: MLS.LeafIndex) throws -> [Bool] {
-		try MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
+		MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
 			.map { resolution(of: $0.sibling).isEmpty }
 	}
 }

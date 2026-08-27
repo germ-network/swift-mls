@@ -38,8 +38,11 @@ extension MLS {
 extension MLS {
 	public enum TreeMathError: Error, Sendable, Equatable {
 		case leafIndexTooLarge(UInt32)
-		/// A tree's leaf count must be 0 or a power of two — see
-		/// `TreeMath.directPath`.
+		/// A tree's leaf count must be a power of two, and below
+		/// `LeafIndex.ceiling` — see `MLS.LeafCount`, which is where that
+		/// is now enforced. (`TreeMath.directPath` used to throw this and
+		/// no longer can: it takes a `LeafCount`, so it has no invalid
+		/// input left to reject.)
 		case invalidLeafCount(UInt32)
 	}
 }

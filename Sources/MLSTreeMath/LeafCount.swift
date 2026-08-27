@@ -31,7 +31,10 @@ extension MLS {
 
 		/// Derives the height of a power-of-two leaf count, rejecting any
 		/// input that is not one — zero included, since an MLS tree is never
-		/// empty — or that reaches `LeafIndex.ceiling`.
+		/// empty — or that reaches `LeafIndex.ceiling`. The ceiling check is
+		/// not decoration: `RatchetTree.leafCount` computes its value with
+		/// `try!`, so a count that reaches 2^24 aborts the process rather
+		/// than throwing (GER-2363).
 		public init(validating value: UInt32) throws {
 			guard value.nonzeroBitCount == 1, value < MLS.LeafIndex.ceiling else {
 				throw MLS.TreeMathError.invalidLeafCount(value)

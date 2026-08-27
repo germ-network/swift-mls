@@ -58,7 +58,7 @@ extension MLS.TreeKEM.RatchetTree {
 		excluding: Set<MLS.LeafIndex> = [],
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.TreeKEM.DecapResult {
-		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
+		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
 		try validatePathStructure(
 			sender: sender,

@@ -40,7 +40,7 @@ extension MLS.TreeKEM.RatchetTree {
 		_ leafIndex: MLS.LeafIndex, _ provider: any MLS.CipherSuiteProvider
 	) throws -> Data {
 		var hash = Data()
-		let path = try MLS.TreeMath.directPath(
+		let path = MLS.TreeMath.directPath(
 			from: 2 * leafIndex.value, leafCount: leafCount)
 		for step in path.reversed() {
 			guard !resolution(of: step.sibling).isEmpty else { continue }

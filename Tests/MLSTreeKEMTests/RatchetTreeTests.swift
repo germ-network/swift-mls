@@ -106,7 +106,7 @@ struct RatchetTreeTests {
 				.leaf(syntheticLeaf(4)), .parent(syntheticParent(5)),
 				.leaf(syntheticLeaf(6)),
 			])
-		try tree.blankLeafAndDirectPath(.init(value: 0))
+		tree.blankLeafAndDirectPath(.init(value: 0))
 		#expect(tree.leaf(at: .init(value: 0)) == nil)
 		#expect(tree.parent(at: 1) == nil)  // direct-path ancestor
 		#expect(tree.parent(at: 3) == nil)  // root

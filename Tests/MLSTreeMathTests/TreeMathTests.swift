@@ -82,6 +82,20 @@ struct TreeMathTests {
 		#expect(try MLS.LeafCount(validating: leafCount).value == leafCount)
 	}
 
+	/// The ceiling half of `init(validating:)`, which the power-of-two cases
+	/// above never reach. Directly pinned because this is exactly the
+	/// boundary where an unbounded tree detonates: `RatchetTree.leafCount`
+	/// computes its value with `try!`, so a count that reaches 2^24 aborts
+	/// the process rather than throwing (see GER-2363).
+	@Test("LeafCount accepts the largest legal tree and rejects the next power of two")
+	func leafCountCeilingBoundary() throws {
+		let largest = MLS.LeafIndex.ceiling / 2
+		#expect(try MLS.LeafCount(validating: largest).value == largest)
+		#expect(throws: MLS.TreeMathError.invalidLeafCount(MLS.LeafIndex.ceiling)) {
+			_ = try MLS.LeafCount(validating: MLS.LeafIndex.ceiling)
+		}
+	}
+
 	/// Swift's `<<` is a smart shift: over-shifting yields 0 rather than
 	/// trapping. `init(validating:)` rejects 0 like any other
 	/// non-power-of-two value, so an unsaturated overflow would still

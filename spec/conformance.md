@@ -27,9 +27,10 @@ this project wrote, not by upstream data. Section 4 below is where that shows.
 ## 1. Cipher-suite coverage
 
 Every "N records" figure in this repo is a **filtered** count. swift-crypto
-exposes no X448, so suites **4** (`X448_CHACHA20POLY1305_SHA512_Ed448`) and
-**6** (`X448_AES256GCM_SHA512_Ed448`) cannot be implemented on this stack at
-all — not deferred, not unimplemented, unavailable.
+exposes no X448, so suites **4** (`MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448`)
+and **6** (`MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448`) cannot be
+implemented on this stack at all — not deferred, not unimplemented,
+unavailable.
 
 `SwiftCryptoProvider.supportedCipherSuites` is suites 1, 2, 3, 5, 7. Upstream
 vector files carry all seven in equal proportion, so the filter drops exactly
@@ -122,27 +123,39 @@ during phase 5b demonstrated the cost of assuming otherwise: **both**
 
 Two consequences worth stating plainly.
 
-**Rejection coverage is partial, and mostly bounded by a signing oracle.**
-`Group.processing` verifies the commit's framing signature at step 5, so a test
-that *mutates* a commit can only reach checks running before that point. Seven
-of fifteen commit rejections are covered: five by mutation
-(`wrongEpoch`, `wrongGroup`, `notACommit`, `unsupportedSender`,
-`blankSenderLeaf`) and two by *withholding* state rather than altering bytes,
-which disturbs no signature at all (`unknownProposalReference`,
-`unresolvedPreSharedKey`).
+**Rejection coverage is partial, and only partly bounded by a signing oracle.**
+`Group.processing` can throw **16** distinct `GroupError` cases. It verifies the
+commit's framing signature at step 5, so a test that *mutates* a commit can only
+reach checks running before that point — but mutation is not the only route, and
+reasoning as though it were is what made the first draft of this section
+undercount.
 
-Seven more — `pathRequired`, `removeOfNonMember`,
-`updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey`,
-`removedFromGroup`, `unsupportedReInit`, and the UpdatePath key-freshness check
-— sit *after* signature verification and need a commit that is both malformed
-and validly signed by the committer. The vectors supply the joiner's secrets,
-never a committer's signing key. Those rest on reading, and
-`CommitRejectionTests` records the limit in its own header.
+**Eight are covered.** Five by mutation (`wrongEpoch`, `wrongGroup`,
+`notACommit`, `unsupportedSender`, `blankSenderLeaf`) and three by *supplying or
+withholding caller state*, which disturbs no signature at all because
+`processing` takes the `ProposalStore` and the PSK resolver on trust:
+`unknownProposalReference`, `unresolvedPreSharedKey`, and `updateFromNonMember`.
 
-**One is a real hole rather than an inherent limit:** `confirmationTagMismatch`
-has no test on either the join or the commit path, and unlike the seven above
-it needs no committer secret to exercise — a wrong tag can simply be written
-in. It should be covered; it currently is not.
+**Six need a commit that is both malformed and validly signed by the
+committer** — `pathRequired`, `removeOfNonMember`,
+`updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey` (thrown at two
+sites: the committer's own previous leaf key, and the UpdatePath key-freshness
+sweep), `removedFromGroup`, and `unsupportedReInit`. The vectors supply the
+joiner's secrets, never a committer's signing key, so no test here can construct
+one. Those rest on reading, and `CommitRejectionTests` records the limit in its
+own header.
+
+**Two are real holes rather than inherent limits**, since neither needs a
+committer secret: `confirmationTagMismatch` (a wrong tag can simply be written
+in) and `unsupportedResumptionUsage` (reachable by the same store-supplied route
+as `updateFromNonMember`). Both should be covered; neither currently is.
+
+The store-supplied route is worth naming on its own, because it is where the
+one real defect this audit found lived. `processing` reads a by-reference
+proposal's *sender* out of the caller-supplied store, with no signature of its
+own to check. An Update naming a leaf beyond the tree used to grow the ratchet
+tree's backing array toward 2²⁵ entries and then abort the process on a `try!` —
+the guard and its test now exist, and the structural fix is tracked separately.
 
 **Zeroization is unimplemented, and no vector will ever notice.** Open since
 phase 1 and corroborated by three independent peer reviews as the one real

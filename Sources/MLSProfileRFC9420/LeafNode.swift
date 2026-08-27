@@ -123,6 +123,19 @@ extension MLS.RFC9420.LeafNode {
 		/// `key_package`-sourced leaf reached this way is normal (a member
 		/// added but never yet updated) and still signs without the
 		/// binding.
+		///
+		/// **`.inGroup` does not discharge §7.3's source check**, and the
+		/// two places that need one say so themselves. §7.3 requires a leaf
+		/// in an Update proposal to be `update`-sourced and one in a
+		/// Commit's `UpdatePath` to be `commit`-sourced; this case accepts
+		/// any source, because a *tree walk* legitimately meets all three.
+		/// Verifying an Update-proposal leaf under `.inGroup` alone would
+		/// therefore accept a `key_package`-sourced one against unbound
+		/// bytes — i.e. a signature harvested from any published
+		/// KeyPackage would satisfy an Update at an arbitrary leaf index.
+		/// `CommitProcessing` guards its half explicitly
+		/// (`updatePathLeafNotCommitSource`); the Update-proposal half
+		/// arrives with phase 6's proposal validation and must do the same.
 		case inGroup(groupID: Data, leafIndex: MLS.LeafIndex)
 		/// In a `KeyPackage`, which belongs to no group yet.
 		case keyPackage

@@ -76,7 +76,7 @@ extension MLS.TreeKEM.RatchetTree {
 		sender: MLS.LeafIndex, firstPathSecret: Data,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.TreeKEM.CommitPathStage {
-		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
+		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
 
 		var secret = firstPathSecret
