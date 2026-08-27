@@ -1,5 +1,6 @@
 import MLSCodec
 import MLSFraming
+import MLSTreeMath
 
 extension MLS.RFC9420 {
 	public enum WireError: Error, Sendable, Equatable {
@@ -31,6 +32,11 @@ extension MLS.RFC9420 {
 		/// protocol version of the KeyPackage match those in the
 		/// GroupContext."
 		case protocolVersionMismatch
+		/// RFC 9420 §7.3: "Verify that the following fields are unique
+		/// among the members of the group: signature_key, encryption_key."
+		/// This is the `signature_key` half; the `encryption_key` half is
+		/// `MLS.TreeKEM.TreeError.duplicateEncryptionKey`.
+		case duplicateSignatureKey(leaf: MLS.LeafIndex)
 		/// Neither an externally-supplied tree nor a `ratchet_tree`
 		/// extension on `GroupInfo` was available.
 		case missingRatchetTree

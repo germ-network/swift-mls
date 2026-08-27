@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 import MLSCodec
 import MLSCrypto
@@ -78,6 +79,50 @@ struct GroupMutationTests {
 	}
 
 	enum TestFailure: Error { case unexpectedShape }
+
+	/// A real signature key pair for suite 1 (Ed25519). Generated with
+	/// swift-crypto directly rather than through `CipherSuiteProvider`,
+	/// which deliberately exposes no signature keygen — RFC 9420's core
+	/// protocol never needs one (see `CryptoProvider.swift`). The pair is
+	/// round-tripped through the provider's own `sign`/`verify` below, so
+	/// this is verified to be a usable pair, not assumed.
+	static func signingKeyPair(_ provider: any MLS.CipherSuiteProvider) throws -> (
+		MLS.SignatureSecretKey, MLS.SignaturePublicKey
+	) {
+		let key = Curve25519.Signing.PrivateKey()
+		let signingKey = MLS.SignatureSecretKey(key.rawRepresentation)
+		let signatureKey = MLS.SignaturePublicKey(key.publicKey.rawRepresentation)
+
+		let probe = Data("probe".utf8)
+		let signature = try provider.sign(privateKey: signingKey, content: probe)
+		#expect(
+			try provider.verify(
+				publicKey: signatureKey, content: probe, signature: signature))
+		return (signingKey, signatureKey)
+	}
+
+	/// A `key_package`-sourced `LeafNode`, really signed. `key_package` is
+	/// the source whose `LeafNodeTBS` carries no `(group_id, leaf_index)`
+	/// binding, so one signature is valid at any leaf index.
+	static func signedKeyPackageLeaf(
+		_ provider: any MLS.CipherSuiteProvider,
+		signingKey: MLS.SignatureSecretKey, signatureKey: MLS.SignaturePublicKey,
+		identity: Data
+	) throws -> MLS.TreeKEM.LeafRecord {
+		let (_, encryptionKey) = try provider.hpkeGenerateKeyPair()
+		var leaf = MLS.RFC9420.LeafNode(
+			encryptionKey: encryptionKey, signatureKey: signatureKey,
+			credential: .basic(identity: identity),
+			capabilities: .init(
+				versions: [.mls10], cipherSuites: [.curve25519Aes128],
+				extensions: [], proposals: [], credentials: [.init(.basic)]),
+			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
+			extensions: [], signature: Data())
+		leaf.signature = try MLS.signWithLabel(
+			provider, privateKey: signingKey, label: "LeafNodeTBS",
+			content: try leaf.toBeSigned(groupContext: nil))
+		return try leaf.record
+	}
 
 	/// Re-seals a mutated `GroupInfo` into a self-consistent `Welcome`.
 	/// Needed by any test that changes a field *inside* `GroupInfo`:
@@ -255,6 +300,56 @@ struct GroupMutationTests {
 				scenario.provider, welcome: welcome,
 				credentials: scenario.credentials,
 				externalTree: scenario.externalTree, psk: { _ in nil })
+		}
+	}
+
+	/// RFC 9420 §7.3: "Verify that the following fields are unique among
+	/// the members of the group: signature_key, encryption_key." Two
+	/// members sharing a signature key means a signature attributable to
+	/// either -- the whole point of binding a leaf to an identity.
+	///
+	/// Tested against `validateLeaves` directly, not through `join`, and
+	/// that is the finding as much as the check is. Every leaf mutation
+	/// reachable through `join` also perturbs the subtree hashes that
+	/// parent nodes' stored `parent_hash` values were computed over, so
+	/// `validateParentHashChain` rejects the tree before the uniqueness
+	/// check is ever consulted. Two black-box attempts passed with the
+	/// check deleted before that was traced; the third — this one — builds
+	/// the tree the check actually guards against.
+	///
+	/// Both leaves are `key_package`-sourced (so `LeafNodeTBS` omits the
+	/// `(group_id, leaf_index)` binding and each signature is valid at its
+	/// own index), each is **really signed**, and their encryption keys
+	/// **differ** — so the encryption-key check cannot mask this and the
+	/// signature-key rule is isolated exactly.
+	@Test("§7.3: two members sharing a signature key is rejected")
+	func duplicateSignatureKey() throws {
+		let provider = try #require(
+			Self.provider.cipherSuiteProvider(for: .curve25519Aes128))
+
+		let (signingKey, signatureKey) = try Self.signingKeyPair(provider)
+		let leafA = try Self.signedKeyPackageLeaf(
+			provider, signingKey: signingKey, signatureKey: signatureKey,
+			identity: Data("a".utf8))
+		let leafB = try Self.signedKeyPackageLeaf(
+			provider, signingKey: signingKey, signatureKey: signatureKey,
+			identity: Data("b".utf8))
+		#expect(leafA.encryptionKey != leafB.encryptionKey)
+
+		let tree = try MLS.TreeKEM.RatchetTree(nodes: [.leaf(leafA), nil, .leaf(leafB)])
+
+		// Sanity: each leaf on its own passes, so the rejection below is
+		// the *pair* being rejected, not a malformed leaf.
+		for leaf in [leafA, leafB] {
+			try MLS.RFC9420.Group.validateLeaves(
+				try MLS.TreeKEM.RatchetTree(nodes: [.leaf(leaf)]), groupID: Data(),
+				provider)
+		}
+
+		#expect(
+			throws: MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: .init(value: 1))
+		) {
+			try MLS.RFC9420.Group.validateLeaves(tree, groupID: Data(), provider)
 		}
 	}
 
