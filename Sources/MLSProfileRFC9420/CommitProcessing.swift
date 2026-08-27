@@ -280,7 +280,9 @@ extension MLS.RFC9420.Group {
 				throw MLS.RFC9420.GroupError.updatePathLeafNotCommitSource
 			}
 			try path.leafNode.verifySignature(
-				provider, groupContext: (context.groupID, senderIndex))
+				provider,
+				placement: .inGroup(
+					groupID: context.groupID, leafIndex: senderIndex))
 			guard path.leafNode.encryptionKey != senderLeaf.encryptionKey else {
 				throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
 			}

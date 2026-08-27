@@ -10,10 +10,19 @@ extension MLS.RFC9420 {
 		case unknownProposalOrRefType(UInt8)
 		case unknownContentType(MLS.ContentType)
 		case unsupportedProtocolVersion(MLS.ProtocolVersion)
-		/// `groupContext` must be supplied to `LeafNode.toBeSigned` iff
-		/// `source` is `.update` or `.commit` (RFC 9420 §7.2's
-		/// `LeafNodeTBS`) — never for `.keyPackage`.
-		case leafNodeTBSContextMismatch
+		/// RFC 9420 §10: "The field leaf_node.leaf_node_source of the
+		/// LeafNode in a KeyPackage MUST be set to key_package"; §7.3
+		/// restates it as a validation step. A leaf found in a KeyPackage
+		/// whose source is `update` or `commit` cannot even be signed —
+		/// §7.2's `LeafNodeTBS` would bind a `(group_id, leaf_index)` that
+		/// does not exist — so this is thrown at TBS assembly rather than
+		/// waiting for the signature to fail.
+		///
+		/// Note what still has no caller: nothing in `Sources/` yet
+		/// verifies a *received* KeyPackage's leaf. §10.1 validation
+		/// arrives with phase 6's Add-proposal handling; this error is the
+		/// half of it that already exists.
+		case leafNodeSourceNotKeyPackage
 		/// `KeyPackage.reference` was called with a provider for a
 		/// different cipher suite than the package itself declares.
 		case cipherSuiteMismatch
