@@ -122,17 +122,27 @@ during phase 5b demonstrated the cost of assuming otherwise: **both**
 
 Two consequences worth stating plainly.
 
-**Rejection coverage is partial, and bounded by a signing oracle.**
-`Group.processing` verifies the commit's framing signature at step 5, so any
-test that mutates a commit can only reach checks running before that point. Six
-of roughly thirteen rejections are reachable that way; the rest —
-`pathRequired`, `removeOfNonMember`, `updatePathLeafNotCommitSource`,
-`updatePathReusesEncryptionKey`, `removedFromGroup`, `unsupportedReInit`, and
-the UpdatePath key-freshness check — sit *after* signature verification and
-need a commit that is both malformed and validly signed by the committer. The
-vectors supply the joiner's secrets, never a committer's signing key. Those
-checks rest on reading. `CommitRejectionTests` records this in its own header
-rather than leaving it as a silent gap.
+**Rejection coverage is partial, and mostly bounded by a signing oracle.**
+`Group.processing` verifies the commit's framing signature at step 5, so a test
+that *mutates* a commit can only reach checks running before that point. Seven
+of fifteen commit rejections are covered: five by mutation
+(`wrongEpoch`, `wrongGroup`, `notACommit`, `unsupportedSender`,
+`blankSenderLeaf`) and two by *withholding* state rather than altering bytes,
+which disturbs no signature at all (`unknownProposalReference`,
+`unresolvedPreSharedKey`).
+
+Seven more — `pathRequired`, `removeOfNonMember`,
+`updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey`,
+`removedFromGroup`, `unsupportedReInit`, and the UpdatePath key-freshness check
+— sit *after* signature verification and need a commit that is both malformed
+and validly signed by the committer. The vectors supply the joiner's secrets,
+never a committer's signing key. Those rest on reading, and
+`CommitRejectionTests` records the limit in its own header.
+
+**One is a real hole rather than an inherent limit:** `confirmationTagMismatch`
+has no test on either the join or the commit path, and unlike the seven above
+it needs no committer secret to exercise — a wrong tag can simply be written
+in. It should be covered; it currently is not.
 
 **Zeroization is unimplemented, and no vector will ever notice.** Open since
 phase 1 and corroborated by three independent peer reviews as the one real
