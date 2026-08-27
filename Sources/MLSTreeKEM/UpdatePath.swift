@@ -95,10 +95,13 @@ extension MLS.TreeKEM.RatchetTree {
 	}
 
 	/// Encap step 5: encrypt each unfiltered path secret to every member
-	/// of its copath resolution (excluding any leaf added in this same
-	/// commit — a brand-new member has no key the committer's path could
-	/// have been encrypted under yet), and derive `commit_secret` one step
-	/// past the last path secret in the chain.
+	/// of its copath resolution, and derive `commit_secret` one step past
+	/// the last path secret in the chain. RFC 9420 §7.6:
+	/// `EncryptWithLabel(node_public_key, "UpdatePathNode", group_context,
+	/// path_secret)`, where "the resolution of the corresponding copath
+	/// node MUST exclude all new leaf nodes added as part of the current
+	/// Commit" — a brand-new member has no key the committer's path could
+	/// have been encrypted under yet.
 	///
 	/// `groupContext` must already reflect this commit's new tree hash —
 	/// the profile computes that between `beginCommitPath` and this call

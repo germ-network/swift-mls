@@ -14,10 +14,12 @@ extension MLS.TreeKEM.RatchetTree {
 	/// count must equal its copath resolution's size, minus any leaves
 	/// excluded because they were added in this same commit (S10).
 	///
-	/// mls-rs is *not* this strict — a short `nodes` array is a bare
-	/// out-of-bounds index at the point it's used (`kem.rs:268`), and
-	/// ciphertext count is never checked eagerly at all. Both checks here
-	/// are deliberately stricter, exactly what this validation exists for.
+	/// mls-rs is *not* this strict in either direction that matters: a
+	/// *short* `nodes` array is a bare out-of-bounds index at the point
+	/// it's used, and ciphertext count is never checked eagerly at all.
+	/// (It does reject an over-*long* path up front, so S9 is only half
+	/// unchecked there.) Both checks here run eagerly, before anything
+	/// consumes the path — exactly what this validation exists for.
 	public func validatePathStructure(
 		sender: MLS.LeafIndex, nodeCiphertextCounts: [Int], excluding: Set<MLS.LeafIndex>
 	) throws {

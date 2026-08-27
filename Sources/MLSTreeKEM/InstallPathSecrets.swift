@@ -4,10 +4,14 @@ import MLSCrypto
 import MLSTreeMath
 
 extension MLS.TreeKEM.RatchetTree {
-	/// A joiner processing a `Welcome`: derive every node-key pair `self`
-	/// can reach from the single path secret `GroupSecrets.pathSecret`
-	/// carries, starting at the direct-path entry level-aligned with
-	/// `GroupInfo.signer` and `self`'s own leaf's lowest common ancestor.
+	/// A joiner processing a `Welcome`, RFC 9420 §12.4.3.1: "Identify the
+	/// lowest common ancestor of the leaf node my_leaf and of the node of
+	/// the member with leaf index GroupInfo.signer. Set the private key
+	/// for this node to the private key derived from the path_secret," and
+	/// then "For each parent of the common ancestor, up to the root of the
+	/// tree, derive a new path secret[…] The private key MUST be the
+	/// private key that corresponds to the public key in the node" — the
+	/// tree-key equality check below is that MUST.
 	///
 	/// Not the same walk as `decapCommitPath`: a joiner has no wire
 	/// update-path to compare against, so every derived public key is
