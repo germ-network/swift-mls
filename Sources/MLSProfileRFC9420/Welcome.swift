@@ -112,8 +112,10 @@ extension MLS.RFC9420.Welcome {
 	/// call succeeds -- so `MLS.KeySchedule.welcomeKeyNonce` derives them
 	/// directly rather than through `fromJoinerSecret`'s full fan-out. Once
 	/// `GroupInfo` (and therefore the real group context) is in hand, the
-	/// full `Epoch` is derived properly via `fromJoinerSecret`; the AEAD
-	/// associated data is empty, per RFC 9420.
+	/// full `Epoch` is derived properly via `fromJoinerSecret`. The AEAD
+	/// associated data is empty: §12.4.3.1 says only "use the key and
+	/// nonce to decrypt the encrypted_group_info field" and specifies no
+	/// AAD input, so there is none to pass.
 	public func decryptGroupInfo(
 		_ provider: any MLS.CipherSuiteProvider,
 		joinerSecret: Data, pskSecret: Data
