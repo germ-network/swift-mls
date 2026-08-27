@@ -208,7 +208,7 @@ extension MLS.RFC9420.Group {
 				throw MLS.RFC9420.GroupError.unsupportedSender
 			}
 			blankedNodes.formUnion(
-				try MLS.TreeMath.directPath(
+				MLS.TreeMath.directPath(
 					from: 2 * updateSender.value,
 					leafCount: provisionalTree.leafCount
 				).map(\.path))
@@ -227,7 +227,7 @@ extension MLS.RFC9420.Group {
 			}
 			blankedNodes.insert(2 * removed.value)
 			blankedNodes.formUnion(
-				try MLS.TreeMath.directPath(
+				MLS.TreeMath.directPath(
 					from: 2 * removed.value,
 					leafCount: provisionalTree.leafCount
 				).map(\.path))
@@ -438,22 +438,21 @@ extension MLS.RFC9420.Group {
 	/// test while still violating §7.5's forward-secrecy MUST. That is
 	/// exactly why the rule is written out here rather than left implicit.
 	private func prunedSecretKeys(
-		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: UInt32
+		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: MLS.LeafCount
 	) -> [UInt32: MLS.HpkeSecretKey] {
 		var stale = blankedNodes
-		if let senderIndex,
-			let senderPath = try? MLS.TreeMath.directPath(
-				from: 2 * senderIndex.value, leafCount: leafCount)
-		{
-			stale.formUnion(senderPath.map(\.path))
+		if let senderIndex {
+			stale.formUnion(
+				MLS.TreeMath.directPath(
+					from: 2 * senderIndex.value, leafCount: leafCount
+				).map(\.path))
 		}
 
 		var ownNodes: Set<UInt32> = [2 * myLeafIndex.value]
-		if let ownPath = try? MLS.TreeMath.directPath(
-			from: 2 * myLeafIndex.value, leafCount: leafCount)
-		{
-			ownNodes.formUnion(ownPath.map(\.path))
-		}
+		ownNodes.formUnion(
+			MLS.TreeMath.directPath(
+				from: 2 * myLeafIndex.value, leafCount: leafCount
+			).map(\.path))
 
 		return secretKeys.filter { node, _ in
 			!stale.contains(node) && ownNodes.contains(node)

@@ -38,7 +38,7 @@ struct SecretTreeTests {
 	func matchesVector(_ record: SecretTreeVector) throws {
 		let provider = try #require(
 			Self.provider.cipherSuiteProvider(for: .init(id: record.cipherSuite)))
-		let numLeaves = UInt32(record.leaves.count)
+		let numLeaves = try MLS.LeafCount(validating: UInt32(record.leaves.count))
 
 		for (leafIndex, generations) in record.leaves.enumerated() {
 			let leafSecret = try MLS.KeySchedule.leafSecret(
@@ -81,7 +81,7 @@ struct SecretTreeTests {
 			try MLS.KeySchedule.leafSecret(
 				provider,
 				encryptionSecret: Data(repeating: 0, count: provider.hashSize),
-				leafIndex: 4, numLeaves: 4)
+				leafIndex: 4, numLeaves: try MLS.LeafCount(validating: 4))
 		}
 	}
 }

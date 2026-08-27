@@ -16,8 +16,8 @@ extension MLS {
 	public enum TreeMath: Sendable {
 		/// `2n - 1` — the array size for a tree of `leafCount` leaves.
 		/// `0` leaves is `0` nodes: there is no node zero-of-nothing.
-		public static func nodeCount(leafCount: UInt32) -> UInt32 {
-			leafCount == 0 ? 0 : 2 * leafCount - 1
+		public static func nodeCount(leafCount: MLS.LeafCount) -> UInt32 {
+			leafCount.value == 0 ? 0 : 2 * leafCount.value - 1
 		}
 
 		/// The middle index of the `2n - 1`-slot array, *not* its last
@@ -27,11 +27,13 @@ extension MLS {
 		/// not 30 — node 30 is a leaf, the tree's rightmost).
 		///
 		/// Only equals the RFC's general root index when `n` is a power of
-		/// two — true of every tree this protocol constructs (RFC 9420
-		/// §4.1: "Every tree used in this protocol is a perfect binary
-		/// tree"); `directPath` is what guards against an invalid count.
-		public static func root(leafCount: UInt32) -> UInt32 {
-			leafCount == 0 ? 0 : leafCount - 1
+		/// two — which `MLS.LeafCount` now guarantees by construction
+		/// (RFC 9420 §4.1: "Every tree used in this protocol is a perfect
+		/// binary tree"). This function previously carried a `precondition`
+		/// trap, and `directPath` a separate `guard`, for the same
+		/// invariant; the type replaces both.
+		public static func root(leafCount: MLS.LeafCount) -> UInt32 {
+			leafCount.value == 0 ? 0 : leafCount.value - 1
 		}
 
 		public static func isLeaf(_ node: UInt32) -> Bool { node & 1 == 0 }
@@ -56,15 +58,15 @@ extension MLS {
 		}
 
 		/// `nil` at the root, which has no parent.
-		public static func parent(_ node: UInt32, leafCount: UInt32) -> UInt32? {
+		public static func parent(_ node: UInt32, leafCount: MLS.LeafCount) -> UInt32? {
 			parentAndSibling(node, leafCount: leafCount)?.parent
 		}
 
-		public static func sibling(_ node: UInt32, leafCount: UInt32) -> UInt32? {
+		public static func sibling(_ node: UInt32, leafCount: MLS.LeafCount) -> UInt32? {
 			parentAndSibling(node, leafCount: leafCount)?.sibling
 		}
 
-		static func parentAndSibling(_ node: UInt32, leafCount: UInt32) -> (
+		static func parentAndSibling(_ node: UInt32, leafCount: MLS.LeafCount) -> (
 			parent: UInt32, sibling: UInt32
 		)? {
 			let root = root(leafCount: leafCount)
@@ -84,15 +86,14 @@ extension MLS {
 		/// which is what deriving a secret-tree leaf's secret from the
 		/// shared root secret needs (`MLSKeySchedule`).
 		///
-		/// `leafCount` must be 0 or a power of two (RFC 9420 §4.1) — an
-		/// invalid count sends the loop below climbing without ever
-		/// reaching that count's root: a hang, not a wrong answer.
-		public static func directPath(from node: UInt32, leafCount: UInt32) throws -> [(
+		/// No longer throws: `MLS.LeafCount` cannot hold a value that would
+		/// make the loop below non-terminating, so there is nothing left to
+		/// reject. The hang this used to guard — an invalid count sends the
+		/// climb past a root index that is on no node's ancestor chain — is
+		/// now unrepresentable rather than checked.
+		public static func directPath(from node: UInt32, leafCount: MLS.LeafCount) -> [(
 			path: UInt32, sibling: UInt32
 		)] {
-			guard leafCount == 0 || leafCount.nonzeroBitCount == 1 else {
-				throw MLS.TreeMathError.invalidLeafCount(leafCount)
-			}
 			guard isInTree(node, root: root(leafCount: leafCount)) else { return [] }
 			var result: [(UInt32, UInt32)] = []
 			var current = node
@@ -103,32 +104,12 @@ extension MLS {
 			return result
 		}
 
-		/// The padded leaf count implied by a node array's length —
-		/// `(nodeArrayCount / 2 + 1)` rounded up to the next power of two.
-		///
-		/// The wire array is *not* always exactly `2n - 1` long: RFC 9420
-		/// trims trailing blank slots before serializing (load-bearing for
-		/// `tree-operations.json`'s byte-exact `tree_after` check), so a
-		/// shorter array — anywhere from empty up to `2n - 1` — is valid
-		/// and still resolves to the same padded leaf count `n`. This
-		/// matches mls-rs's `NodeVec::total_leaf_count`
-		/// (`(len / 2 + 1).next_power_of_two()`) exactly; there is no
-		/// "malformed length" to reject here, only an oversized result.
-		public static func paddedLeafCount(nodeArrayCount: Int) throws -> UInt32 {
-			guard nodeArrayCount >= 0, let count = UInt32(exactly: nodeArrayCount)
-			else {
-				throw MLS.TreeMathError.invalidLeafCount(
-					UInt32(clamping: nodeArrayCount))
-			}
-			let n = nextPowerOfTwo(count / 2 + 1)
-			guard n < MLS.LeafIndex.ceiling else {
-				throw MLS.TreeMathError.invalidLeafCount(n)
-			}
-			return n
-		}
-
-		private static func nextPowerOfTwo(_ x: UInt32) -> UInt32 {
-			x <= 1 ? 1 : UInt32(1) << (UInt32.bitWidth - (x - 1).leadingZeroBitCount)
+		/// Superseded by `MLS.LeafCount.init(nodeArrayCount:)`, which
+		/// returns the validated type rather than a raw `UInt32` a caller
+		/// could then pass anywhere. Kept as a thin forwarder because it is
+		/// the name the tree-decode path already reads well with.
+		public static func paddedLeafCount(nodeArrayCount: Int) throws -> MLS.LeafCount {
+			try MLS.LeafCount(nodeArrayCount: nodeArrayCount)
 		}
 	}
 }

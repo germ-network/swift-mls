@@ -9,9 +9,10 @@ struct TreeMathTests {
 	static let records = try! VectorFile.load("tree-math", as: [TreeMathVector].self)
 
 	@Test("n_nodes, root, and every node's left/right/parent/sibling", arguments: records)
-	func matchesVector(_ record: TreeMathVector) {
-		#expect(MLS.TreeMath.nodeCount(leafCount: record.nLeaves) == record.nNodes)
-		#expect(MLS.TreeMath.root(leafCount: record.nLeaves) == record.root)
+	func matchesVector(_ record: TreeMathVector) throws {
+		let nLeaves = try MLS.LeafCount(validating: record.nLeaves)
+		#expect(MLS.TreeMath.nodeCount(leafCount: nLeaves) == record.nNodes)
+		#expect(MLS.TreeMath.root(leafCount: nLeaves) == record.root)
 
 		for node in 0..<record.nNodes {
 			let isLeaf = MLS.TreeMath.isLeaf(node)
@@ -22,10 +23,10 @@ struct TreeMathTests {
 				#expect(MLS.TreeMath.right(node) == record.right[Int(node)])
 			}
 			#expect(
-				MLS.TreeMath.parent(node, leafCount: record.nLeaves)
+				MLS.TreeMath.parent(node, leafCount: nLeaves)
 					== record.parent[Int(node)])
 			#expect(
-				MLS.TreeMath.sibling(node, leafCount: record.nLeaves)
+				MLS.TreeMath.sibling(node, leafCount: nLeaves)
 					== record.sibling[Int(node)])
 		}
 	}
@@ -35,9 +36,9 @@ struct TreeMathTests {
 	)
 	func directPathMatchesParentChain() throws {
 		for record in Self.records where record.nLeaves > 1 {
+			let nLeaves = try MLS.LeafCount(validating: record.nLeaves)
 			for leaf in stride(from: UInt32(0), to: 2 * record.nLeaves, by: 2) {
-				let path = try MLS.TreeMath.directPath(
-					from: leaf, leafCount: record.nLeaves)
+				let path = MLS.TreeMath.directPath(from: leaf, leafCount: nLeaves)
 				// Walking the vector's own `parent` array from `leaf` up must
 				// produce exactly the `.path` sequence `directPath` returns.
 				var expected: [UInt32] = []
@@ -51,21 +52,32 @@ struct TreeMathTests {
 		}
 	}
 
-	/// An unguarded non-power-of-two `leafCount` sends `directPath`'s
-	/// parent-chain loop climbing without ever reaching that count's root.
+	/// A non-power-of-two leaf count would send `directPath`'s parent-chain
+	/// loop climbing without ever reaching that count's root — a hang, not a
+	/// wrong answer.
+	///
+	/// This used to test `directPath` directly, because the guard lived
+	/// there (and, before that, as a `precondition` in `root`). It now tests
+	/// the *type*: `directPath` cannot be handed an invalid count at all, so
+	/// there is no longer a call to make. The `.timeLimit` stays — if
+	/// someone ever reintroduces a raw-`UInt32` entry point, the failure
+	/// mode goes back to wedging the run rather than failing it.
 	@Test(
-		"directPath rejects a non-power-of-two leafCount instead of hanging",
-		// The pre-fix failure mode is a hang, not a thrown error -- without
-		// this, a regression here wedges the whole test run instead of
-		// failing it. Swift Testing only accepts whole minutes.
+		"LeafCount rejects a non-power-of-two, so directPath cannot hang",
 		.timeLimit(.minutes(1)),
 		arguments: [
 			3, 5, 6, 7, 9,
 		])
-	func directPathRejectsInvalidLeafCount(_ leafCount: UInt32) {
+	func leafCountRejectsNonPowerOfTwo(_ leafCount: UInt32) {
 		#expect(throws: MLS.TreeMathError.invalidLeafCount(leafCount)) {
-			_ = try MLS.TreeMath.directPath(from: 0, leafCount: leafCount)
+			_ = try MLS.LeafCount(validating: leafCount)
 		}
+	}
+
+	/// The empty tree is the one valid non-power-of-two count.
+	@Test("LeafCount accepts zero and every power of two", arguments: [0, 1, 2, 4, 8, 1024])
+	func leafCountAcceptsValidSizes(_ leafCount: UInt32) throws {
+		#expect(try MLS.LeafCount(validating: leafCount).value == leafCount)
 	}
 
 	@Test(
@@ -75,6 +87,7 @@ struct TreeMathTests {
 		for record in Self.records {
 			#expect(
 				try MLS.TreeMath.paddedLeafCount(nodeArrayCount: Int(record.nNodes))
+					.value
 					== record.nLeaves)
 		}
 	}
@@ -90,7 +103,7 @@ struct TreeMathTests {
 		throws
 	{
 		#expect(
-			try MLS.TreeMath.paddedLeafCount(nodeArrayCount: pair.nodeArrayCount)
+			try MLS.TreeMath.paddedLeafCount(nodeArrayCount: pair.nodeArrayCount).value
 				== pair.expected)
 	}
 
