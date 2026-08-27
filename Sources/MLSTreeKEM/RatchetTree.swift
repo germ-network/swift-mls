@@ -92,11 +92,15 @@ extension MLS.TreeKEM {
 			}
 		}
 
-		/// RFC 9420 requires trimming after every edit: remove nodes from
-		/// the end of the array while the last one is blank. Load-bearing
-		/// for byte-exact re-serialization (`tree-operations.json`'s
-		/// `tree_after` check) — an untrimmed tail would round-trip to
-		/// different bytes than what a well-formed peer sent.
+		/// Remove nodes from the end of the array while the last one is
+		/// blank. RFC 9420 §12.4.3.3 requires the *serialized* form end
+		/// non-blank ("the sender MUST NOT include blank nodes after the
+		/// last non-blank node"); Remove additionally truncates trailing
+		/// all-blank subtrees as part of applying the proposal (§12.1.3).
+		/// Load-bearing for byte-exact re-serialization
+		/// (`tree-operations.json`'s `tree_after` check) — an untrimmed
+		/// tail would round-trip to different bytes than what a
+		/// well-formed peer sent.
 		public mutating func trim() {
 			while nodes.last == .some(nil) { nodes.removeLast() }
 		}
@@ -149,12 +153,12 @@ extension MLS.TreeKEM {
 		}
 
 		/// Inserts `leafIndex` into `nodeIndex`'s `unmergedLeaves`, keeping
-		/// the list sorted ascending — a real invariant `TreeValidation`
-		/// checks, not incidental tidiness (RFC 9420 §7.7, and the
-		/// resolution/parent-hash algorithms both assume ascending order to
-		/// binary-search subtree membership). Throws rather than silently
-		/// deduplicating: a duplicate means the caller's own bookkeeping
-		/// is wrong, not a normal occurrence.
+		/// the list sorted ascending — RFC 9420 §7.1: "The entries in the
+		/// unmerged_leaves vector MUST be sorted in increasing order." A
+		/// real invariant `TreeValidation` checks, not incidental tidiness
+		/// — the RFC states the MUST with no rationale. Throws rather than
+		/// silently deduplicating: a duplicate means the caller's own
+		/// bookkeeping is wrong, not a normal occurrence.
 		public mutating func addUnmergedLeaf(
 			_ leafIndex: MLS.LeafIndex, to nodeIndex: UInt32
 		)

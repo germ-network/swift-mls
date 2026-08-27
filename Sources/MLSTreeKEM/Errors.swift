@@ -33,9 +33,13 @@ extension MLS.TreeKEM {
 		case unmergedLeavesNotSorted
 		case unmergedLeafNotAtExpectedPosition
 		case duplicateUnmergedLeaf
-		/// The tree has trailing blank leaves -- RFC 9420 requires
-		/// trimming after every edit, so a well-formed tree never ends
-		/// with a blank.
+		/// The tree's last node is blank -- RFC 9420 §12.4.3.3: "the sender
+		/// MUST NOT include blank nodes after the last non-blank node. The
+		/// receiver MUST check that the last node in ratchet_tree is
+		/// non-blank." (Remove also truncates trailing all-blank subtrees,
+		/// §12.1.3 -- but that alone doesn't rule out a trailing blank
+		/// leaf, only an all-blank trailing subtree; this wire check is
+		/// the actual invariant being enforced here.)
 		case trailingBlankLeaves
 		case emptyTree
 		/// The receiver's own leaf isn't in this tree at all, or is blank.

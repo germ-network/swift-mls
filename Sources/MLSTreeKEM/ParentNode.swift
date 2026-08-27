@@ -5,15 +5,17 @@ import MLSTreeMath
 
 extension MLS.TreeKEM {
 	/// `struct { HPKEPublicKey encryption_key; opaque parent_hash<V>;
-	/// LeafIndex unmerged_leaves<V>; } ParentNode;`
+	/// uint32 unmerged_leaves<V>; } ParentNode;`
 	///
-	/// Lives here, not in the profile, because the tree hash (§7.8) must
-	/// re-encode a *filtered* copy of this type (unmerged leaves outside a
-	/// given ancestor's subtree removed) -- `MLSTreeKEM` needs its own
-	/// encoder either way, and a second one in the profile would be a
-	/// byte-exactness hazard against this one. `MLSProfileRFC9420` keeps a
-	/// `public typealias ParentNode = MLS.TreeKEM.ParentNode` so callers
-	/// there never notice.
+	/// Lives here, not in the profile, because §7.9's parent-hash chain
+	/// needs to re-encode a *filtered* copy of this type for
+	/// `original_sibling_tree_hash` (§7.8's tree hash re-encodes it
+	/// unfiltered): an ancestor's own unmerged leaves get blanked and
+	/// removed from parents' `unmerged_leaves` lists. `MLSTreeKEM` needs
+	/// its own encoder either way, and a second one in the profile would
+	/// be a byte-exactness hazard against this one. `MLSProfileRFC9420`
+	/// keeps a `public typealias ParentNode = MLS.TreeKEM.ParentNode` so
+	/// callers there never notice.
 	public struct ParentNode: Sendable, Equatable, MLSCodable {
 		public var encryptionKey: MLS.HpkePublicKey
 		public var parentHash: Data

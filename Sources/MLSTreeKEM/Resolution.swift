@@ -2,7 +2,7 @@ import MLSCodec
 import MLSTreeMath
 
 extension MLS.TreeKEM.RatchetTree {
-	/// RFC 9420 §4.2.2's resolution: a non-blank node contributes itself,
+	/// RFC 9420 §4.1.1's resolution: a non-blank node contributes itself,
 	/// then its unmerged leaves (in the order they're already stored,
 	/// ascending); a blank *parent* recurses into both children; a blank
 	/// *leaf* contributes nothing. Node indices only — this is the first
@@ -34,11 +34,11 @@ extension MLS.TreeKEM.RatchetTree {
 		return result
 	}
 
-	/// RFC 9420 §8.4's filtered direct path: `true` at position `i` iff
+	/// RFC 9420 §4.1.2's filtered direct path: `true` at position `i` iff
 	/// `directPath[i]`'s copath child has an empty resolution — that
-	/// direct-path entry is omitted from the wire `UpdatePath` entirely,
-	/// since encrypting a path secret to zero recipients has nothing to
-	/// encrypt to.
+	/// direct-path entry is omitted from the wire `UpdatePath` entirely
+	/// (§7.6), since encrypting a path secret to zero recipients has
+	/// nothing to encrypt to.
 	public func filteredDirectPath(from leafIndex: MLS.LeafIndex) throws -> [Bool] {
 		try MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
 			.map { resolution(of: $0.sibling).isEmpty }
