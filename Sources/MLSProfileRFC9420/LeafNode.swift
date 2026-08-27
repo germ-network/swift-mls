@@ -103,7 +103,7 @@ extension MLS.RFC9420.LeafNode {
 	/// 9420 §7.2's second `select (LeafNodeTBS.leaf_node_source)` decides
 	/// that from the leaf's own `source`, and nothing else.
 	///
-	/// GER-2345. `toBeSigned` used to take the binding itself, as an
+	/// `toBeSigned` used to take the binding itself, as an
 	/// optional `(groupID, leafIndex)`, and throw when it disagreed with
 	/// `source`. That made two things wrong at once. Callers had to
 	/// pre-compute the `source` switch to decide what to pass, so

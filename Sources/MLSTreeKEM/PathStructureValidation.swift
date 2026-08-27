@@ -5,8 +5,8 @@ import MLSTreeMath
 
 extension MLS.TreeKEM.RatchetTree {
 	/// The explicit path-structure validation `Commit.path`'s wire types
-	/// (`UpdatePath`/`UpdatePathNode`) were split out to require — GER-2295's
-	/// own headline: `MLSFraming`'s opaque wrapper couldn't check this,
+	/// (`UpdatePath`/`UpdatePathNode`) were split out to require — the tree
+	/// phase's own headline: `MLSFraming`'s opaque wrapper couldn't check this,
 	/// because it has no tree to check against.
 	///
 	/// `sender`'s `UpdatePath.nodes` must supply exactly one entry per

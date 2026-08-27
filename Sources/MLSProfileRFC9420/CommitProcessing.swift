@@ -233,7 +233,7 @@ extension MLS.RFC9420.Group {
 
 		for stored in resolved {
 			guard case .remove(let removed) = stored.proposal else { continue }
-			// GER-2355's second half: mls-rs errors
+			// The peer-derived half of remove validation: mls-rs errors
 			// (`RemovingNonExistingMember`) rather than blanking an
 			// already-blank leaf. The tree's own primitives stay
 			// unconditional by design; "is this leaf a member" is context

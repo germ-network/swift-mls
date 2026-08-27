@@ -7,7 +7,7 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-/// GER-2295's own headline requirement: the explicit path-structure
+/// The tree phase's own headline requirement: the explicit path-structure
 /// validation `Commit.path`'s wire types (`UpdatePath`/`UpdatePathNode`)
 /// were split out to require, since `MLSFraming`'s opaque wrapper has no
 /// tree to check against. "Gets its own test" — this file is that test,
@@ -96,7 +96,7 @@ struct PathStructureValidationTests {
 
 	/// S10: one node's ciphertext count not matching its copath
 	/// resolution's size must be rejected — the check this file exists
-	/// for, per GER-2295's description directly.
+	/// for, per that phase's stated scope directly.
 	@Test("S10: a wrong ciphertext count at one node is rejected")
 	func rejectsWrongCiphertextCount() throws {
 		let (tree, sender, wirePath) = try Self.loadRecord()

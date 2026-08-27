@@ -118,7 +118,8 @@ struct TreeValidationTests {
 	/// S6: an extra unmerged-leaf entry at node 11 changes what its
 	/// filtered ("original") tree hash covers when a descendant's chain
 	/// checks against it, so the previously-valid chain now mismatches --
-	/// this is exactly the resolution-membership rule GER-2295 exists for.
+	/// this is exactly the resolution-membership rule the tree phase
+	/// exists for.
 	@Test("S6: an extra unmerged leaf breaks validation")
 	func mutationExtraUnmergedLeafBreaksChain() throws {
 		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())

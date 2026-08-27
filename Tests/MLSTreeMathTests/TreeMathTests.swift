@@ -86,7 +86,8 @@ struct TreeMathTests {
 	/// above never reach. Directly pinned because this is exactly the
 	/// boundary where an unbounded tree detonates: `RatchetTree.leafCount`
 	/// computes its value with `try!`, so a count that reaches 2^24 aborts
-	/// the process rather than throwing (see GER-2363).
+	/// the process rather than throwing (see `RatchetTree.leafCount`'s
+	/// own comment).
 	@Test("LeafCount accepts the largest legal tree and rejects the next power of two")
 	func leafCountCeilingBoundary() throws {
 		let largest = MLS.LeafIndex.ceiling / 2

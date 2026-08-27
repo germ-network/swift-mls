@@ -38,7 +38,8 @@ extension MLS.TreeKEM {
 			// applies (`updateFromNonMember`, `removeOfNonMember`).
 			//
 			// Making it structural instead -- bounding growth inside
-			// `setNode` and turning the setters throwing -- is GER-2363.
+			// `setNode` and turning the setters throwing -- is tracked as a
+			// follow-up.
 			// It changes signatures across this module, so it is not
 			// bolted on here.
 			try! MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)

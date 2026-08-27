@@ -93,7 +93,7 @@ extension MLS.RFC9420 {
 		/// it would *succeed* and hand back a live-looking `Group` the
 		/// caller must not send from.
 		case unsupportedReInit
-		/// GER-2355: a Remove naming a leaf that is already blank. The
+		/// A Remove naming a leaf that is already blank. The
 		/// tree's own mutation primitives stay unconditional by design;
 		/// "is this leaf currently a member" is context only commit
 		/// processing has.
