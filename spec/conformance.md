@@ -180,12 +180,17 @@ decision, not more tests. Second, §9.2's per-message MUSTs (delete the
 `encryption_secret` and ratchet secrets as messages are consumed) await
 phase 6, which is where message consumption itself arrives.
 
-**One planned hardening item did not ship.** Two own-leaf guards in
-`Protect.swift` (reject decrypting your own message; verify the sender is the
-self leaf) are not implemented. Neither is spec-mandated — they are properties
-mls-rs has that this profile does not — but the deferral reason ("whichever
-phase owns group-membership state") has been discharged since `Group` landed,
-so this is now an open item rather than a pending dependency.
+**Both peer-derived own-leaf guards now ship.** Neither is spec-mandated —
+they are properties mls-rs enforces that this profile originally did not —
+and both waited on "whichever layer owns this client's own leaf index *and*
+calls these functions," which arrived with `Group.protect`/`unprotect` in the
+application-message layer. Rejecting decryption of one's own message is a
+runtime check (`cannotDecryptOwnMessage`, before any key derivation, so a
+reflected message costs no ratchet state). Verifying the framed sender is the
+caller's own leaf is stronger than the runtime check the finding asked for:
+`Group.protectContent` builds `FramedContent` with `sender: .member(myLeafIndex)`
+and exposes no parameter to override it, so framing a message as another
+member is unrepresentable rather than rejected.
 
 ---
 
