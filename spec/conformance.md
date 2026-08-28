@@ -189,18 +189,43 @@ so this is now an open item rather than a pending dependency.
 
 ---
 
-## 5. What phase 7 must add before "conformant" is claimable
+## 5. Interop harness — what runs today, and what "conformant" still waits on
 
-The gRPC interop harness (`mls-interop-server` implementing `MLSClient`,
-out-of-scope RPCs answering `UNIMPLEMENTED`), run under the mlswg Go runner
-across swift-mls ↔ mls-rs ↔ OpenMLS. Passing vectors proves agreement with
-implementations that have already agreed with each other on *chosen* inputs;
-interop proves agreement on inputs neither side chose, including this profile's
-own commits — which no *official* vector exercises. The self-interop gate is
-the strongest signal construction has today, and its known ceiling is that
-both sides share code and could share a bug; the stage-5 review found two
-exactly-such bugs by reading against the text, which is the method until
-phase 7 makes it mechanical.
+`mls-interop-server` implements the mlswg `MLSClient` gRPC service over
+`MLS.RFC9420` (out-of-scope RPCs answer `ABORTED "unsupported"`, matching
+mls-rs). It runs under the **real mlswg Go test-runner** — the same driver
+the reference implementations use — over the runner's own scenario configs.
+`Scripts/run-interop.sh` reproduces the matrix.
 
-Until that runs, `MLSProfileRFC9420` ships as a product whose own specification
-directory declines to give it the badge.
+**swift ↔ swift, every supported cipher suite (1, 2, 3, 5, 7):**
+
+| config | scripts | result |
+|---|---|---|
+| `application` | in-order, out-of-order within epoch, out-of-order across epochs | **pass, all 5 suites** |
+| `welcome_join` | force-path and external-tree join variants | **pass, all 5 suites** |
+| `commit` | add, empty, remove, external_psk, group_context_extensions | **pass, all 5 suites** |
+| `commit` | update, resumption_psk, all_together_{alice,bob}_proposes | ABORTED — deferred features (the updater key-handoff, and reinit/branch resumption PSKs) |
+
+This proves the harness end to end and the runner-driven scenario semantics
+on every implemented feature and every suite the stack supports — group
+creation, key packages, welcome/join in both tree-delivery modes, the four
+implemented proposal types, path and pathless commits, and the full
+application-message ratchet with cross-epoch out-of-order delivery. It is a
+materially stronger signal than the self-interop gate, because the *runner*
+chose the call sequence, not us.
+
+**What it does not yet do, and why the badge stays withheld.** Both clients
+in the matrix above are this library. `spec/README.md` defines *conformant*
+as verified "against at least one independent implementation" — so the
+remaining step is the same harness run swift ↔ mls-rs (and, if cheap,
+swift ↔ OpenMLS). The server is built and driver-proven for that run; it
+needs the peer harness built and pointed at the same runner. Two of this
+project's own defects were bugs both sides of a shared codebase missed
+(the phase-6 review's pathless-lockout and §12.1.7 brick), which is exactly
+the failure class an *independent* peer catches and a self-run cannot —
+so the badge waiting on it is not a formality.
+
+Until that cross-implementation run lands, `MLSProfileRFC9420` ships as a
+product that passes every official vector and the full runner-driven
+self-interop matrix, but whose own specification directory still declines
+the badge.
