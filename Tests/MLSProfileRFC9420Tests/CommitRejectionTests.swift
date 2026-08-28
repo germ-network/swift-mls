@@ -36,20 +36,18 @@ import Testing
 /// untested branch. Anything reachable by handing `processing` crafted state
 /// should be assumed reachable until checked.
 ///
-/// **Six need a commit that is both malformed and validly signed by the
-/// committer** — `pathRequired`, `removeOfNonMember`,
-/// `updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey` (thrown
-/// at two sites, the committer's own previous leaf key and the UpdatePath
-/// key-freshness sweep), `removedFromGroup`, `unsupportedReInit`. The
-/// vectors supply the joiner's secrets, never a committer's signing key, so
-/// no test here can construct one. They rest on reading, and this comment is
-/// the honest record of that rather than a silent gap.
-///
-/// **Two are real holes rather than inherent limits**, since neither needs a
-/// committer secret: `confirmationTagMismatch` (a wrong tag can simply be
-/// written in) and `unsupportedResumptionUsage` (reachable by the same
-/// store-supplied route as `updateFromNonMember`). Both are listed as open
-/// in `spec/conformance.md`.
+/// **The six that needed a validly-signed-but-malformed commit** —
+/// `pathRequired`, `removeOfNonMember`, `updatePathLeafNotCommitSource`,
+/// `updatePathReusesEncryptionKey`, `removedFromGroup`,
+/// `unsupportedReInit` — rested on reading until phase 6b's `create`
+/// supplied a committer signing key; they now live in
+/// `ConstructedRejectionTests` (and the backbone, for `removedFromGroup`).
+/// The two former holes closed with them: `confirmationTagMismatch`
+/// (whose naive version dies at the membership MAC — the real test
+/// recomputes that tag, which is exactly what a malicious member can do)
+/// and `unsupportedResumptionUsage`. Nothing on the commit path is
+/// untested-by-necessity any more; `spec/conformance.md` carries the full
+/// accounting.
 @Suite("Commit rejection paths")
 struct CommitRejectionTests {
 	static let provider = SwiftCryptoProvider()

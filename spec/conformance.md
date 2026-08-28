@@ -133,41 +133,31 @@ failures (`cipherSuiteMismatch` and `protocolVersionMismatch`, previously
 join-only, are now also commit-path — Add validation reuses them for §10.1's
 match-the-GroupContext bullet).
 
-**Twenty-five are covered.** (Twenty-five covered + six
-signing-oracle-bound + two holes + `cipherSuiteMismatch` and
-`protocolVersionMismatch`, covered by the join-path suite = thirty-five.) Five by commit mutation (`wrongEpoch`,
-`wrongGroup`, `notACommit`, `unsupportedSender`, `blankSenderLeaf`); three by
-withholding caller state (`unknownProposalReference`,
-`unresolvedPreSharedKey`, `updateFromNonMember`); ten more by *supplying*
-crafted `ProposalStore` state, which disturbs nothing the framing signature
-covers (`updateByCommitter`, `removeOfCommitter`, `duplicateProposalForLeaf`,
-`duplicatePreSharedKey`, `multipleGroupContextExtensions`,
-`wrongPskNonceLength`, `wrongLeafNodeSource`, `updateDidNotChangeEncryptionKey`,
-`keyPackageInitKeyReused`, `requiredCapabilitiesNotMet` — the last via a
-synthetic same-commit GroupContextExtensions, since all 28 vector GCEs are
-empty); and four §7.3 policy cases as direct units
-(`unsupportedExtensionInLeaf`, `credentialTypeNotInOwnCapabilities`,
-`credentialTypeUnsupportedByMember`, `memberCredentialUnsupportedByLeaf`, and
-the two opt-in lifetime bounds).
-Signature verification on installed leaves is pinned in both directions: a
-tampered Add KeyPackage and a garbage-signed Update leaf are both rejected,
-and `duplicateSignatureKey` is now exercised on the *commit* path (two
-individually-valid Adds sharing a key), not only at join.
+**All thirty-five are now covered** — phase 6b's `create` supplied the
+committer signing key that the six oracle-bound rejections had waited on
+since 5b. The breakdown: five by commit mutation; three by withholding
+caller state; ten by supplying crafted `ProposalStore` state; five §7.3
+policy cases as direct units; two on the join path (`cipherSuiteMismatch`,
+`protocolVersionMismatch`); and — new in 6b — eight by *constructed*
+commits, validly signed and membership-tagged by a real member and
+malformed in exactly one way (`pathRequired`, `unsupportedReInit`,
+`removeOfNonMember`, `updatePathLeafNotCommitSource`,
+`updatePathReusesEncryptionKey`, `removedFromGroup` via the self-interop
+backbone, and the two former holes: `confirmationTagMismatch` — a wrong
+tag with an honestly recomputed membership tag, which is the
+malicious-member adversary, since a network attacker's tag rewrite dies at
+the membership MAC instead — and `unsupportedResumptionUsage`).
 
-**Six still need a commit that is both malformed and validly signed by the
-committer** — `pathRequired`, `removeOfNonMember`,
-`updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey` (thrown at two
-sites: the committer's own previous leaf key, and the UpdatePath key-freshness
-sweep), `removedFromGroup`, and `unsupportedReInit`. The vectors supply the
-joiner's secrets, never a committer's signing key, so no test here can
-construct one. Those rest on reading until phase 6b's commit construction
-provides a signing member, and `CommitRejectionTests` records the limit in its
-own header.
-
-**Two are real holes rather than inherent limits**, since neither needs a
-committer secret: `confirmationTagMismatch` (a wrong tag can simply be written
-in) and `unsupportedResumptionUsage` (reachable by the store route). Neither is
-currently covered.
+The self-interop gate is the other thing 6b adds to this document's
+evidence: constructed commits and Welcomes are processed by the
+vector-proven receive path across five epochs (full, pathless, PSK, and
+remove commits), with cross-member convergence asserted on the group
+context, the tree, both transcript hashes, the epoch authenticator, and
+every jointly-held private key. Construction and processing share the
+§12.3 application code (`applyProposals`) by design, so "the two sides
+agree" is partly structural — the mutation tests are what prove the parts
+that are not (transcript binding in the provisional context, old-epoch
+membership keys, the GroupSecrets-to-encrypted-GroupInfo binding).
 
 The store-supplied route is worth naming on its own, because it is where the
 one real defect this audit found lived. `processing` reads a by-reference

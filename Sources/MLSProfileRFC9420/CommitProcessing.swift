@@ -211,86 +211,10 @@ extension MLS.RFC9420.Group {
 		// passing one to `apply` is a caller error by design, exactly as
 		// for preSharedKey/reInit/externalInit.
 
-		var provisionalTree = tree
-		var blankedNodes: Set<UInt32> = []
-		var addedLeaves: Set<MLS.LeafIndex> = []
-
-		for stored in resolved {
-			guard case .update = stored.proposal else { continue }
-			guard case .member(let updateSender) = stored.sender else {
-				throw MLS.RFC9420.GroupError.unsupportedSender
-			}
-			// The same membership check the Remove path below performs, and
-			// for a sharper reason. RFC 9420 §12.1.2 defines applying an
-			// Update as "Replace the sender's LeafNode with the one
-			// contained in the Update proposal" -- if the sender occupies no
-			// leaf there is nothing to replace and the operation is
-			// undefined. But `LeafIndex` is bounded only by its own 2^24
-			// ceiling, never against *this* tree, and `setLeaf` grows the
-			// backing array to reach whatever index it is handed. So an
-			// unchecked sender is not merely a no-op on a blank leaf: it
-			// pads the array toward 2^25 entries one `nil` at a time, and
-			// the `leafCount` read on the very next line then trips
-			// `RatchetTree`'s `try!`. An out-of-range sender in a
-			// caller-supplied `ProposalStore` aborts the process.
-			guard provisionalTree.leaf(at: updateSender) != nil else {
-				throw MLS.RFC9420.GroupError.updateFromNonMember(leaf: updateSender)
-			}
-			blankedNodes.formUnion(
-				MLS.TreeMath.directPath(
-					from: 2 * updateSender.value,
-					leafCount: provisionalTree.leafCount
-				).map(\.path))
-			try provisionalTree.apply(stored.proposal, sender: updateSender)
-		}
-
-		for stored in resolved {
-			guard case .remove(let removed) = stored.proposal else { continue }
-			// The peer-derived half of remove validation: mls-rs errors
-			// (`RemovingNonExistingMember`) rather than blanking an
-			// already-blank leaf. The tree's own primitives stay
-			// unconditional by design; "is this leaf a member" is context
-			// only this layer has.
-			guard provisionalTree.leaf(at: removed) != nil else {
-				throw MLS.RFC9420.GroupError.removeOfNonMember(leaf: removed)
-			}
-			blankedNodes.insert(2 * removed.value)
-			blankedNodes.formUnion(
-				MLS.TreeMath.directPath(
-					from: 2 * removed.value,
-					leafCount: provisionalTree.leafCount
-				).map(\.path))
-			try provisionalTree.apply(stored.proposal, sender: senderIndex)
-		}
-
-		for stored in resolved {
-			guard case .add(let keyPackage) = stored.proposal else { continue }
-			try provisionalTree.apply(stored.proposal, sender: senderIndex)
-			if let added = provisionalTree.nonBlankLeaves().first(where: {
-				(try? $0.record.encoded == keyPackage.leafNode.mlsEncoded())
-					?? false
-			}) {
-				addedLeaves.insert(added.index)
-			}
-		}
-
-		// §12.2's closing rule: the commit is invalid if "After
-		// processing the Commit the ratchet tree is invalid, in
-		// particular, if it contains any leaf node that is invalid
-		// according to Section 7.3." The per-proposal pass above validated
-		// each leaf *individually*; what only the post-application tree
-		// can show is a §7.3 uniqueness violation introduced by
-		// combination -- two Adds in one commit, each fine alone, sharing
-		// a signature key. Join-side validation never sees this: it runs
-		// once, at join.
-		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
-		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
-			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
-			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
-			else {
-				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
-			}
-		}
+		let applied = try applyProposals(resolved, committer: senderIndex)
+		var provisionalTree = applied.tree
+		let blankedNodes = applied.blankedNodes
+		let addedLeaves = applied.addedLeaves
 
 		// S19: detect self-removal explicitly. This is *after* step 5, so
 		// the signature and membership MAC have both passed -- an
@@ -462,6 +386,109 @@ extension MLS.RFC9420.Group {
 	/// rejected outright for the same reason `join` rejects it: those
 	/// carry §12.4.3.1 rules that are meaningless without ReInit/branching
 	/// support, which this project defers project-wide.
+	/// The §12.3 application pass — update, then remove, then add, in
+	/// §12.3's order, plus §12.2's closing post-application uniqueness
+	/// sweep. Extracted so `processing` (receive) and `committing`
+	/// (construct) run the *same* code: the two sides must land on
+	/// byte-identical trees and on the same `blankedNodes`/`addedLeaves`
+	/// sets (which feed key pruning and copath exclusion), and a
+	/// re-implementation that diverged even slightly in ordering or in
+	/// the added-leaf matching would silently fork the group.
+	struct AppliedProposals {
+		var tree: MLS.TreeKEM.RatchetTree
+		var blankedNodes: Set<UInt32>
+		var addedLeaves: Set<MLS.LeafIndex>
+	}
+
+	func applyProposals(
+		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex
+	) throws -> AppliedProposals {
+		var provisionalTree = tree
+		var blankedNodes: Set<UInt32> = []
+		var addedLeaves: Set<MLS.LeafIndex> = []
+
+		for stored in resolved {
+			guard case .update = stored.proposal else { continue }
+			guard case .member(let updateSender) = stored.sender else {
+				throw MLS.RFC9420.GroupError.unsupportedSender
+			}
+			// The same membership check the Remove path below performs, and
+			// for a sharper reason. RFC 9420 §12.1.2 defines applying an
+			// Update as "Replace the sender's LeafNode with the one
+			// contained in the Update proposal" -- if the sender occupies no
+			// leaf there is nothing to replace and the operation is
+			// undefined. But `LeafIndex` is bounded only by its own 2^24
+			// ceiling, never against *this* tree, and `setLeaf` grows the
+			// backing array to reach whatever index it is handed. So an
+			// unchecked sender is not merely a no-op on a blank leaf: it
+			// pads the array toward 2^25 entries one `nil` at a time, and
+			// the `leafCount` read on the very next line then trips
+			// `RatchetTree`'s `try!`. An out-of-range sender in a
+			// caller-supplied `ProposalStore` aborts the process.
+			guard provisionalTree.leaf(at: updateSender) != nil else {
+				throw MLS.RFC9420.GroupError.updateFromNonMember(leaf: updateSender)
+			}
+			blankedNodes.formUnion(
+				MLS.TreeMath.directPath(
+					from: 2 * updateSender.value,
+					leafCount: provisionalTree.leafCount
+				).map(\.path))
+			try provisionalTree.apply(stored.proposal, sender: updateSender)
+		}
+
+		for stored in resolved {
+			guard case .remove(let removed) = stored.proposal else { continue }
+			// The peer-derived half of remove validation: mls-rs errors
+			// (`RemovingNonExistingMember`) rather than blanking an
+			// already-blank leaf. The tree's own primitives stay
+			// unconditional by design; "is this leaf a member" is context
+			// only this layer has.
+			guard provisionalTree.leaf(at: removed) != nil else {
+				throw MLS.RFC9420.GroupError.removeOfNonMember(leaf: removed)
+			}
+			blankedNodes.insert(2 * removed.value)
+			blankedNodes.formUnion(
+				MLS.TreeMath.directPath(
+					from: 2 * removed.value,
+					leafCount: provisionalTree.leafCount
+				).map(\.path))
+			try provisionalTree.apply(stored.proposal, sender: committer)
+		}
+
+		for stored in resolved {
+			guard case .add(let keyPackage) = stored.proposal else { continue }
+			try provisionalTree.apply(stored.proposal, sender: committer)
+			if let added = provisionalTree.nonBlankLeaves().first(where: {
+				(try? $0.record.encoded == keyPackage.leafNode.mlsEncoded())
+					?? false
+			}) {
+				addedLeaves.insert(added.index)
+			}
+		}
+
+		// §12.2's closing rule: the commit is invalid if "After
+		// processing the Commit the ratchet tree is invalid, in
+		// particular, if it contains any leaf node that is invalid
+		// according to Section 7.3." The per-proposal pass above validated
+		// each leaf *individually*; what only the post-application tree
+		// can show is a §7.3 uniqueness violation introduced by
+		// combination -- two Adds in one commit, each fine alone, sharing
+		// a signature key. Join-side validation never sees this: it runs
+		// once, at join.
+		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
+			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
+			else {
+				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
+			}
+		}
+
+		return AppliedProposals(
+			tree: provisionalTree, blankedNodes: blankedNodes,
+			addedLeaves: addedLeaves)
+	}
+
 	/// RFC 9420 §12.2 (list rules) and §12.1 (per-proposal validity), over
 	/// the resolved list. This is the authenticity payload of phase 6a as
 	/// much as the policy one: before this pass, an Update's or Add's
@@ -470,7 +497,7 @@ extension MLS.RFC9420.Group {
 	/// sender) on trust, so an unverified leaf could enter the tree and
 	/// every later message from that member would verify against a key
 	/// nothing ever proved anyone holds.
-	private func validateProposalList(
+	func validateProposalList(
 		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex,
 		provisionalExtensions: [MLS.RFC9420.Extension],
 		provider: any MLS.CipherSuiteProvider
@@ -603,7 +630,7 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	private func resolvePsk(
+	func resolvePsk(
 		_ id: MLS.RFC9420.PreSharedKeyIdentifier,
 		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> Data? {
@@ -631,7 +658,7 @@ extension MLS.RFC9420.Group {
 	/// and blanked nodes never appear in a resolution — so it breaks no
 	/// test while still violating §7.5's forward-secrecy MUST. That is
 	/// exactly why the rule is written out here rather than left implicit.
-	private func prunedSecretKeys(
+	func prunedSecretKeys(
 		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: MLS.LeafCount
 	) -> [UInt32: MLS.HpkeSecretKey] {
 		var stale = blankedNodes
@@ -655,7 +682,7 @@ extension MLS.RFC9420.Group {
 
 	/// §12.4.2: "Verify that none of the public keys in the UpdatePath
 	/// appear in any node of the new ratchet tree."
-	private func checkUpdatePathKeysAreFresh(
+	func checkUpdatePathKeysAreFresh(
 		_ path: MLS.RFC9420.UpdatePath, in tree: MLS.TreeKEM.RatchetTree
 	) throws {
 		var existing: Set<MLS.HpkePublicKey> = []
