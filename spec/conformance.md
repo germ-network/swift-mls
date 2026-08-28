@@ -100,15 +100,16 @@ that a caller gets an error, not a plausible-looking result.
 | ReInit | `GroupError.unsupportedReInit` — rejected rather than applied, because ReInit uniquely does not perturb the key schedule, so applying it would *succeed* and hand back a live-looking `Group` the caller must not send from |
 | Branching, resumption PSKs with `reinit`/`branch` usage | `GroupError.unsupportedResumptionUsage` |
 | X.509 credentials | Credentials stay opaque on the wire; interpretation is the application's |
-| Commit *construction*, proposal *validation* | Phase 6. This profile is a **passive** client today: it joins and applies, it does not commit |
+| External commits and external senders | Deferred project-wide; a regular commit refuses to construct or apply either |
 
-§7.3 leaf validation is split, and only half is implemented. The
-**authenticity** half — every leaf's own signature — runs on every non-blank
-leaf at join and on every `UpdatePath` leaf at commit. The **policy** half —
-lifetime bounds, capability/extension consistency, `required_capabilities`
-satisfaction, and §5.3.1 credential validation — is phase 6's, because it needs
-the group's current extensions and a clock, which are not this layer's to
-adjudicate.
+§7.3 leaf validation runs in full — the authenticity half (every leaf's own
+signature) and the policy half (capability/extension consistency, mutual
+credential support, `required_capabilities`) at join, on every proposal leaf,
+and on every `UpdatePath` leaf. The two deliberate carve-outs: lifetime
+bounds are caller opt-ins (the receive-side check is RECOMMENDED-not-
+mandatory and hundreds of official-vector leaves are already expired; the
+maximum-total-lifetime is an application MUST), and §5.3.1 credential
+validation stays the application's — credentials are opaque here by design.
 
 ---
 
@@ -118,35 +119,30 @@ The official suite contains no malformed input. Every rejection path in this
 codebase is therefore pinned by tests written here, and an adversarial review
 during phase 5b demonstrated the cost of assuming otherwise: **both**
 `checkUpdatePathKeysAreFresh` and the path-required check were deleted, and all
-382 commit epochs still passed (91 records x 2 epochs from
-`passive-client-handling-commit.json`, 200 from `passive-client-random.json` —
-an earlier revision of this document said 330, itself a counting error).
+330 commit epochs still passed — 65 records x 2 epochs from
+`passive-client-handling-commit.json` after the suite filter (the file
+carries 91 records, but suites 4 and 6 are X448 and never run; a "corrected"
+revision of this document briefly said 382 by counting records the tests
+never execute), plus 200 from `passive-client-random.json`.
 
 Two consequences worth stating plainly.
 
-**Rejection coverage is partial, and only partly bounded by a signing oracle.**
-Counted from source (not reasoned — an earlier draft of this section
-undercounted twice by assuming commit *mutation* was the only route to a
-check): the commit-processing path, including phase 6a's §12.1/§12.2
-validation pass, can throw **35** distinct `GroupError` cases plus signature
-failures (`cipherSuiteMismatch` and `protocolVersionMismatch`, previously
-join-only, are now also commit-path — Add validation reuses them for §10.1's
-match-the-GroupContext bullet).
-
-**All thirty-five are now covered** — phase 6b's `create` supplied the
-committer signing key that the six oracle-bound rejections had waited on
-since 5b. The breakdown: five by commit mutation; three by withholding
-caller state; ten by supplying crafted `ProposalStore` state; five §7.3
-policy cases as direct units; two on the join path (`cipherSuiteMismatch`,
-`protocolVersionMismatch`); and — new in 6b — eight by *constructed*
-commits, validly signed and membership-tagged by a real member and
-malformed in exactly one way (`pathRequired`, `unsupportedReInit`,
-`removeOfNonMember`, `updatePathLeafNotCommitSource`,
-`updatePathReusesEncryptionKey`, `removedFromGroup` via the self-interop
-backbone, and the two former holes: `confirmationTagMismatch` — a wrong
-tag with an honestly recomputed membership tag, which is the
-malicious-member adversary, since a network attacker's tag rewrite dies at
-the membership MAC instead — and `unsupportedResumptionUsage`).
+**Rejection coverage is complete, and now counted per phase.** The
+commit-processing and commit-construction paths together throw **38**
+distinct `GroupError` cases (35 at the end of 6a; the phase-6 review split
+`updatePathReusesCommitterKey` from the whole-tree freshness sweep so each
+is separately mutation-testable, and added `welcomeCoverageIncomplete` for
+§12.4.3.1's every-member MUST — plus §7.3's encryption-key uniqueness,
+which throws the tree component's own `duplicateEncryptionKey`). Every one
+is exercised: by commit mutation, by supplying or withholding crafted
+`ProposalStore` state, as direct §7.3 policy units, on the join path, or —
+since 6b supplied the committer signing key — by constructed commits
+validly signed and malformed in exactly one way. The former standing holes
+(`confirmationTagMismatch`, `unsupportedResumptionUsage`) are closed, and
+the phase-6 review's additions (the §12.1.7 membership sweep, UpdatePath
+leaf policy, post-application encryption-key uniqueness, the pathless
+committer-key fix) each landed with a regression test that its own
+mutation run fails.
 
 The self-interop gate is the other thing 6b adds to this document's
 evidence: constructed commits and Welcomes are processed by the
@@ -164,7 +160,9 @@ one real defect this audit found lived. `processing` reads a by-reference
 proposal's *sender* out of the caller-supplied store, with no signature of its
 own to check. An Update naming a leaf beyond the tree used to grow the ratchet
 tree's backing array toward 2²⁵ entries and then abort the process on a `try!` —
-the guard and its test now exist, and the structural fix is tracked separately.
+the guard and its test came first, and the structural fix followed: the tree's
+setters now throw on any index beyond the padded tree, so the spec-shaped
+rejection sits in front of a bounds guard rather than being the only defense.
 
 **Retention is now bounded; erasure still is not.** §9.2's deletion schedule
 is partially in effect: the Welcome-processing secrets and the confirmation
@@ -198,8 +196,11 @@ out-of-scope RPCs answering `UNIMPLEMENTED`), run under the mlswg Go runner
 across swift-mls ↔ mls-rs ↔ OpenMLS. Passing vectors proves agreement with
 implementations that have already agreed with each other on *chosen* inputs;
 interop proves agreement on inputs neither side chose, including this profile's
-own commits — which today no vector exercises at all, because it cannot yet
-build one.
+own commits — which no *official* vector exercises. The self-interop gate is
+the strongest signal construction has today, and its known ceiling is that
+both sides share code and could share a bug; the stage-5 review found two
+exactly-such bugs by reading against the text, which is the method until
+phase 7 makes it mechanical.
 
 Until that runs, `MLSProfileRFC9420` ships as a product whose own specification
 directory declines to give it the badge.

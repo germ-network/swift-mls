@@ -45,13 +45,18 @@ struct BaselineBenchmarkTests {
 		guard case .commit(let commit) = rotation.commit.content.content else {
 			throw CommitRejectionTests.Failure.shape
 		}
+		// Signature counts by byte length, not presence flags: a
+		// construction that signed twice, or elided the leaf signature
+		// while keeping the path, must move these numbers.
+		let framingSignatureBytes = rotation.commit.auth.signature?.data.count ?? 0
+		let leafSignatureBytes = commit.path?.leafNode.signature.count ?? 0
 		return Measured(
 			rotationCommit: try size(.publicMessage(rotation.commit)),
 			addCommit: try size(.publicMessage(add.commit)),
 			welcome: try size(.welcome(try #require(add.welcome))),
 			keyPackage: try size(.keyPackage(bob.keyPackage)),
-			rotationFramingSignatures: rotation.commit.auth.signature == nil ? 0 : 1,
-			rotationLeafSignatures: commit.path == nil ? 0 : 1)
+			rotationFramingSignatures: framingSignatureBytes == 64 ? 1 : 0,
+			rotationLeafSignatures: leafSignatureBytes == 64 ? 1 : 0)
 	}
 
 	@Test("one rotation costs exactly 2 signatures and 491 wire bytes")

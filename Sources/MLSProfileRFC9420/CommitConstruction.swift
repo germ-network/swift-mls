@@ -281,8 +281,18 @@ extension MLS.RFC9420.Group {
 			membershipKey: epoch.membershipKey)
 
 		// The committer's own post-commit private state.
+		// `senderIndex` only when a path re-keyed the direct path -- the
+		// receive side splits exactly this way. Passing it for a pathless
+		// commit pruned the committer's own parent keys with nothing
+		// re-adding them: the next far-subtree commit encrypts to a node
+		// key the committer threw away, and the committer is locked out of
+		// its own group permanently (`notAMember` at decap). The
+		// self-interop gate missed it because no *other* member ever
+		// committed a path after a pathless commit -- the stage-5 review's
+		// three-member repro is now the regression test.
 		var newSecretKeys = prunedSecretKeys(
-			blankedNodes: applied.blankedNodes, senderIndex: myLeafIndex,
+			blankedNodes: applied.blankedNodes,
+			senderIndex: includePath ? myLeafIndex : nil,
 			leafCount: newTree.leafCount)
 		if let stage {
 			newSecretKeys[2 * myLeafIndex.value] = randomness.leafEncryptionSecretKey
@@ -363,12 +373,16 @@ extension MLS.RFC9420.Group {
 		var secrets: [MLS.RFC9420.EncryptedGroupSecrets] = []
 		for stored in resolved {
 			guard case .add(let keyPackage) = stored.proposal else { continue }
+			// §12.4.3.1: "the set of Welcome messages produced in this
+			// step MUST cover every new member added in the Commit" -- an
+			// unmatched member is a thrown invariant violation, never a
+			// silent skip.
 			guard
 				let addedIndex = applied.addedLeaves.first(where: { index in
 					(try? newTree.leaf(at: index)?.encoded
 						== keyPackage.leafNode.mlsEncoded()) ?? false
 				})
-			else { continue }
+			else { throw MLS.RFC9420.GroupError.welcomeCoverageIncomplete }
 
 			// The path secret at the LCA of the committer and this new
 			// member — nil for pathless commits, and nil when the LCA is

@@ -18,10 +18,9 @@ extension MLS.RFC9420 {
 		/// does not exist — so this is thrown at TBS assembly rather than
 		/// waiting for the signature to fail.
 		///
-		/// Note what still has no caller: nothing in `Sources/` yet
-		/// verifies a *received* KeyPackage's leaf. §10.1 validation
-		/// arrives with phase 6's Add-proposal handling; this error is the
-		/// half of it that already exists.
+		/// `KeyPackage.validate` runs the full §10.1 suite on every Add;
+		/// this error is the TBS-assembly half of the source rule, thrown
+		/// before a signature could even be checked.
 		case leafNodeSourceNotKeyPackage
 		/// `KeyPackage.reference` was called with a provider for a
 		/// different cipher suite than the package itself declares.
@@ -102,13 +101,11 @@ extension MLS.RFC9420 {
 		/// §12.1.2 defines the operation as replacing *the sender's*
 		/// LeafNode, which does not exist in that case.
 		///
-		/// Load-bearing beyond the undefined semantics: `setLeaf` grows
-		/// the backing array to reach any index it is given, and
-		/// `LeafIndex` is bounded only by its own 2^24 ceiling, never
-		/// against the tree it indexes. Without this guard an
-		/// out-of-range sender in a caller-supplied `ProposalStore`
-		/// allocates its way toward 2^25 array entries and then aborts
-		/// the process on `RatchetTree.leafCount`'s `try!`.
+		/// Historically load-bearing beyond the undefined semantics: it
+		/// was the only guard between an out-of-range store-supplied
+		/// sender and a process abort. The tree's setters now throw on
+		/// out-of-range indices themselves, so this is the spec-shaped
+		/// error in front of a structural backstop.
 		case updateFromNonMember(leaf: MLS.LeafIndex)
 		/// §7.3: a leaf `extensions` entry (non-default type) missing
 		/// from its own `capabilities.extensions`. Default types are
@@ -162,9 +159,22 @@ extension MLS.RFC9420 {
 		case wrongPskNonceLength(expected: Int, actual: Int)
 		/// S20: `UpdatePath.leaf_node.leaf_node_source` must be `commit`.
 		case updatePathLeafNotCommitSource
+		/// §12.4.2: the UpdatePath leaf carries the committer's own
+		/// *current* leaf encryption key — the specific bullet, distinct
+		/// from `updatePathReusesEncryptionKey`'s whole-tree sweep so the
+		/// two are separately testable (a leaf tripping this necessarily
+		/// also trips the sweep, which made a shared case
+		/// mutation-invisible).
+		case updatePathReusesCommitterKey
 		/// S20: an `UpdatePath` public key already appears in the new
 		/// ratchet tree — including the committer's own previous leaf key.
 		case updatePathReusesEncryptionKey
+		/// §12.4.3.1: "the set of Welcome messages produced in this step
+		/// MUST cover every new member added in the Commit." An added
+		/// member whose KeyPackage could not be matched to a tree leaf —
+		/// an internal invariant violation surfaced as a throw rather
+		/// than a silently incomplete Welcome.
+		case welcomeCoverageIncomplete
 		/// S19: this commit removed us. Note what is and isn't proven:
 		/// the framing signature and membership MAC have both passed, so
 		/// an *authenticated member* sent it — but the confirmation tag

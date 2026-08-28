@@ -23,7 +23,7 @@ extension MLS.RFC9420.Group {
 	///   the §9.2 MUST applies directly.
 	/// - `confirmationKey`: consumed once the epoch-establishing
 	///   confirmation tag is verified. Later commits are checked with the
-	///   *next* epoch's key, and a committer (phase 6) computes its tag
+	///   *next* epoch's key, and a committer (`committing`) computes its tag
 	///   from the new epoch it just derived in-line — nothing reads a
 	///   retained confirmation key.
 	/// - `externalSecret`, `externalPublicKey`: only power external
@@ -42,7 +42,7 @@ extension MLS.RFC9420.Group {
 	/// `PublicMessage` this epoch; `senderDataSecret` and
 	/// `encryptionSecret` are the epoch's message-protection roots
 	/// (consumed per §9.2's own schedule only as messages are handled —
-	/// phase 6 wires that in); `exporterSecret` backs the exporter for the
+	/// message protection wires that in); `exporterSecret` backs the exporter for the
 	/// epoch's lifetime; `epochAuthenticator` is the value RFC 9420
 	/// exposes to applications.
 	public struct EpochSecrets: Sendable {

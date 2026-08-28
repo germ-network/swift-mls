@@ -134,8 +134,8 @@ extension MLS.RFC9420.LeafNode {
 		/// bytes — i.e. a signature harvested from any published
 		/// KeyPackage would satisfy an Update at an arbitrary leaf index.
 		/// `CommitProcessing` guards its half explicitly
-		/// (`updatePathLeafNotCommitSource`); the Update-proposal half
-		/// arrives with phase 6's proposal validation and must do the same.
+		/// (`updatePathLeafNotCommitSource`); `validateProposalList`'s
+		/// Update arm guards the other (`.updateProposal` context).
 		case inGroup(groupID: Data, leafIndex: MLS.LeafIndex)
 		/// In a `KeyPackage`, which belongs to no group yet.
 		case keyPackage
@@ -173,11 +173,9 @@ extension MLS.RFC9420.LeafNode {
 	}
 
 	/// RFC 9420 §7.3's "Verify that the signature on the LeafNode is valid
-	/// using signature_key" -- the half of leaf validation that's
-	/// authenticity, not policy (contrast lifetime bounds,
-	/// capability/extension consistency, `required_capabilities`
-	/// satisfaction, and §5.3.1 credential validation, which stay
-	/// deferred). The "LeafNodeTBS" label and the signed structure itself
+	/// using signature_key" -- the authenticity half of leaf validation;
+	/// `validatePolicy` is the other half (lifetime bounds and §5.3.1
+	/// credential validation excepted, per its own doc comment). The "LeafNodeTBS" label and the signed structure itself
 	/// are §7.2's; §12.4.3.1's tree-integrity bullet delegates here
 	/// ("validate the LeafNode as described in Section 7.3"), which is why
 	/// a joiner runs this over every non-blank leaf. `placement` says where

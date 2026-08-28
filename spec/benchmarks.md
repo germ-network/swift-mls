@@ -1,17 +1,21 @@
 # Wire-size and signature-count baseline
 
-The numbers the draft profiles measure against, established at phase 6 —
-`BaselineBenchmarkTests` asserts every figure here exactly, so this file
-and the code cannot drift apart silently.
+The numbers the draft profiles measure against, established at phase 6.
+`BaselineBenchmarkTests` asserts every figure in the **Baseline** table
+exactly, so that table and the code cannot drift apart silently; the
+target rows below it are goals, asserted only once each construction
+lands.
 
 ## Scenario
 
 Cipher suite 1 (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` — every
-primitive fixed-length), 5-byte basic-credential identities, empty
-capability lists. "One rotation" = an empty commit with a full UpdatePath
-in a 2-member group: the operation a member performs to rotate its own
-keys, and the operation the SlimMLS and multi-group drafts exist to make
-cheaper.
+primitive fixed-length), 3–5-byte basic-credential identities, the test
+members' standard capability lists (versions, suites, credentials
+populated; extensions and proposals empty). Sizes are of the full
+`MLSMessage` envelope, wire-ready. "One rotation" = an empty commit with a
+full UpdatePath in a 2-member group: the operation a member performs to
+rotate its own keys, and the operation the SlimMLS and multi-group drafts
+exist to make cheaper.
 
 ## Baseline (RFC 9420, this implementation)
 
@@ -22,8 +26,9 @@ cheaper.
 | Welcome (one new member) | 795 |
 | **Rotation commit (empty, full path, 2 members)** | **491** |
 
-One rotation carries **2 signatures**: the framing signature over
-`FramedContentTBS` and the UpdatePath leaf's `LeafNodeTBS` signature.
+One rotation carries **2 signatures** — the framing signature over
+`FramedContentTBS` and the UpdatePath leaf's `LeafNodeTBS` signature, both
+64-byte Ed25519, asserted by byte length rather than presence flags.
 
 ## The row that motivates the drafts
 
@@ -32,7 +37,7 @@ classical/PQ halves). The same identity rotation therefore costs, today:
 
 | construction | leaf sigs | framing sigs | total | wire bytes |
 |---|---:|---:|---:|---:|
-| RFC 9420 baseline, 4 groups | 4 | 4 | **8** | 1,964 |
+| RFC 9420 baseline, 4 groups (arithmetic over the measured single-group rotation; no four-group harness yet) | 4 | 4 | **8** | 1,964 |
 | single-signature (phase 8 target) | 4 | 0 | 4 | — |
 | shared leaf (phase 9 target) | 1 | 4 | 5 | — |
 | both (the draft candidate) | 1 | 0 | **1** | — |

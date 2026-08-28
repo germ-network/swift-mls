@@ -21,10 +21,10 @@ extension MLS.TreeKEM {
 		/// that relationship on its own.
 		public var leafCount: MLS.LeafCount {
 			// Cannot throw, and this time the claim is enforced rather
-			// than asserted: `setNode` refuses any growth beyond the
-			// current padded `nodeCount` except the single legal doubling
-			// step, and `insertLeaf` throws `treeFull` at the ceiling --
-			// so `nodes.count` can never reach a length `paddedLeafCount`
+			// than asserted: `setNode` refuses any index beyond the
+			// current padded `nodeCount`, and the only growth path,
+			// `insertLeaf`, throws `treeFull` at the ceiling -- so
+			// `nodes.count` can never reach a length `paddedLeafCount`
 			// rejects. (An earlier version of this comment made the same
 			// "never throws" claim while the setters were unconditional;
 			// that was false and reproduced as a process abort. The
@@ -62,20 +62,24 @@ extension MLS.TreeKEM {
 			return nodes[i]
 		}
 
-		/// The one growth path. Every legal grow is one of exactly two
-		/// shapes: filling in an index inside the current padded
-		/// `nodeCount` that trailing-blank trimming left physically absent
-		/// (`applyUpdatePath` does this routinely — a direct-path ancestor
-		/// can sit past where blanks were trimmed), or the single doubling
-		/// step `insertLeaf` performs at index `2 * leafCount` when the
-		/// tree is full (mirrors mls-rs `NodeVec::insert_leaf`). Anything
-		/// else — in particular a wire-supplied index bounded only by
-		/// `LeafIndex`'s own 2^24 ceiling and not by *this* tree — used to
-		/// pad the array unboundedly and then abort the process on
-		/// `leafCount`'s `try!`; now it throws.
+		/// The one checked growth path: filling in an index inside the
+		/// current padded `nodeCount` that trailing-blank trimming left
+		/// physically absent (`applyUpdatePath` does this routinely — a
+		/// direct-path ancestor can sit past where blanks were trimmed).
+		/// Anything beyond the padded tree — in particular a wire-supplied
+		/// index bounded only by `LeafIndex`'s own 2^24 ceiling and not by
+		/// *this* tree — used to pad the array unboundedly and then abort
+		/// the process on `leafCount`'s `try!`; now it throws. Growing the
+		/// tree itself is `insertLeaf`'s job alone, which carries the
+		/// ceiling guard and uses the unchecked path for the one index it
+		/// derives itself. (An earlier version of this guard admitted the
+		/// doubling index `2 * leafCount` as an exception for `insertLeaf`
+		/// — which had stopped calling it, leaving a public `setLeaf` able
+		/// to double the tree ceiling-unchecked, twenty-four calls from
+		/// the abort. The stage-5 review executed exactly that.)
 		mutating func setNode(at index: UInt32, to value: TreeNode?) throws {
 			let limit = MLS.TreeMath.nodeCount(leafCount: leafCount)
-			guard index < limit || index == 2 * leafCount.value else {
+			guard index < limit else {
 				throw MLS.TreeKEM.TreeError.nodeIndexOutOfBounds(
 					index: index, nodeCount: limit)
 			}
@@ -155,8 +159,14 @@ extension MLS.TreeKEM {
 		/// Blanks a leaf and every node on its direct path — what Remove
 		/// does: the member is gone, so both the leaf and the ancestor
 		/// chain (which nobody can re-derive without them) go blank.
-		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) {
-			setNodeUnchecked(at: 2 * index.value, to: nil)
+		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) throws {
+			// Checked: `index` is caller-supplied, exactly what
+			// `setNodeUnchecked`'s contract excludes -- routing it there
+			// re-opened the unbounded-growth abort this type's guard
+			// exists to close (found by the stage-5 review; not
+			// wire-reachable, since both Remove call sites pre-check
+			// membership, but a public method must not depend on that).
+			try setNode(at: 2 * index.value, to: nil)
 			blankDirectPath(of: index)
 		}
 

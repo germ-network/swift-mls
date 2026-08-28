@@ -118,8 +118,8 @@ struct ConstructedRejectionTests {
 			throws: .updatePathLeafNotCommitSource)
 	}
 
-	@Test("S20: an UpdatePath leaf reusing the committer's encryption key is rejected")
-	func updatePathReusesEncryptionKey() throws {
+	@Test("§12.4.2: an UpdatePath leaf reusing the committer's current key is rejected")
+	func updatePathReusesCommitterKey() throws {
 		let pair = try Self.pair()
 		let record = try #require(pair.groupA.tree.leaf(at: pair.groupA.myLeafIndex))
 		let current = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
@@ -136,7 +136,106 @@ struct ConstructedRejectionTests {
 			pair,
 			try Self.craftedCommit(
 				pair, proposals: [], path: .init(leafNode: leaf, nodes: [])),
+			throws: .updatePathReusesCommitterKey)
+	}
+
+	/// The whole-tree freshness sweep, now separately testable: a
+	/// commit-sourced leaf reusing *Bob's* key — in the tree, but not the
+	/// committer's own — reaches past the committer-key bullet and trips
+	/// the sweep. Before the error split, this and the case above were one
+	/// case, and deleting the committer-key check was mutation-invisible.
+	@Test("S20: an UpdatePath leaf reusing another member's key trips the freshness sweep")
+	func updatePathReusesEncryptionKey() throws {
+		let pair = try Self.pair()
+		let bobIndex = try #require(
+			pair.groupA.tree.nonBlankLeaves().map(\.0).first {
+				$0 != pair.groupA.myLeafIndex
+			})
+		let bobRecord = try #require(pair.groupA.tree.leaf(at: bobIndex))
+		let record = try #require(pair.groupA.tree.leaf(at: pair.groupA.myLeafIndex))
+		var leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+		leaf.encryptionKey = bobRecord.encryptionKey
+		leaf.source = .commit(parentHash: Data(repeating: 1, count: 32))
+		leaf.signature = try MLS.signWithLabel(
+			Self.provider, privateKey: pair.alice.signingKey, label: "LeafNodeTBS",
+			content: try leaf.toBeSigned(
+				placement: .inGroup(
+					groupID: pair.groupA.context.groupID,
+					leafIndex: pair.groupA.myLeafIndex)))
+		Self.expectRejected(
+			pair,
+			try Self.craftedCommit(
+				pair, proposals: [], path: .init(leafNode: leaf, nodes: [])),
 			throws: .updatePathReusesEncryptionKey)
+	}
+
+	/// §12.4.2's first sentence — "Validate the LeafNode as specified in
+	/// Section 7.3" — was unimplemented for the UpdatePath leaf until the
+	/// stage-5 review found `.commitUpdatePath` dead: the committer's new
+	/// identity binding entered the tree without the policy checks every
+	/// other leaf gets. The group here carries a required_capabilities
+	/// its members satisfy; the crafted path leaf does not.
+	@Test("an UpdatePath leaf that fails section 7.3 policy is rejected")
+	func updatePathLeafFailsPolicy() throws {
+		let provider = Self.provider
+		let required = MLS.RFC9420.ExtensionType(rawValue: 99)
+		let alice = try SelfInteropTests.member("alice", capabilityExtensions: [required])
+		let bob = try SelfInteropTests.member("bob", capabilityExtensions: [required])
+
+		var writer = MLS.Writer()
+		try writer.encode(MLS.RFC9420.RequiredCapabilities(extensionTypes: [required]))
+		let requirement = MLS.RFC9420.Extension(
+			type: .init(.requiredCapabilities), data: Data(writer.bytes))
+
+		var groupA = try MLS.RFC9420.Group.create(
+			provider, groupID: provider.randomBytes(32),
+			leafNode: alice.keyPackage.leafNode,
+			leafSecretKey: alice.leafSecretKey,
+			extensions: [requirement],
+			epochSecret: provider.randomBytes(provider.hashSize))
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// A commit-sourced leaf, really signed by Alice, with a fresh key
+		// -- valid in every way except its capabilities omit the required
+		// extension type.
+		let (_, freshKey) = try provider.hpkeGenerateKeyPair()
+		var leaf = MLS.RFC9420.LeafNode(
+			encryptionKey: freshKey,
+			signatureKey: alice.keyPackage.leafNode.signatureKey,
+			credential: alice.keyPackage.leafNode.credential,
+			capabilities: .init(
+				versions: [.mls10], cipherSuites: [.curve25519Aes128],
+				extensions: [], proposals: [], credentials: [.init(.basic)]),
+			source: .commit(parentHash: Data(repeating: 1, count: 32)),
+			extensions: [], signature: Data())
+		leaf.signature = try MLS.signWithLabel(
+			provider, privateKey: alice.signingKey, label: "LeafNodeTBS",
+			content: try leaf.toBeSigned(
+				placement: .inGroup(
+					groupID: groupA.context.groupID,
+					leafIndex: groupA.myLeafIndex)))
+		let content = MLS.RFC9420.FramedContent(
+			groupID: groupA.context.groupID, epoch: groupA.context.epoch,
+			sender: .member(groupA.myLeafIndex), authenticatedData: Data(),
+			content: .commit(
+				.init(
+					proposals: [],
+					path: .init(leafNode: leaf, nodes: []))))
+		let message = try MLS.RFC9420.protectPublic(
+			provider, content: content, groupContext: groupA.context,
+			confirmationTag: MLS.ConfirmationTag(Data(repeating: 0xAB, count: 32)),
+			signingKey: alice.signingKey,
+			membershipKey: groupA.epoch.membershipKey)
+		#expect(throws: MLS.RFC9420.GroupError.requiredCapabilitiesNotMet) {
+			try groupB.process(
+				provider, commit: message, proposals: [:], psk: { _ in nil })
+		}
 	}
 
 	/// The first of the two standing holes: a fully valid commit whose
@@ -147,8 +246,7 @@ struct ConstructedRejectionTests {
 	@Test("S12/S25: a wrong confirmation tag on an otherwise-valid commit is rejected")
 	func confirmationTagMismatch() throws {
 		let pair = try Self.pair()
-		var groupA = pair.groupA
-		let out = try groupA.committing(
+		let out = try pair.groupA.committing(
 			Self.provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(Self.provider))
 		var message = out.commit

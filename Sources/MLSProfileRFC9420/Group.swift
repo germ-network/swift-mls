@@ -208,11 +208,11 @@ extension MLS.RFC9420.Group {
 		let tree = try MLS.TreeKEM.RatchetTree(nodes)
 
 		// bullet 8 (tree-integrity sub-bullets, plus every non-blank
-		// leaf's own signature -- §7.3's authenticity half). §7.3's
-		// *policy* half (lifetime bounds, capability/extension
-		// consistency, `required_capabilities` satisfaction) is phase 6's,
-		// per this phase's own explicit scope decision -- unlike a
-		// signature, policy needs the group's current extensions/time,
+		// leaf's own signature -- §7.3's authenticity half, plus, since
+		// phase 6, the policy half: capability/extension consistency,
+		// mutual credential support, `required_capabilities`). Lifetime
+		// bounds stay caller opt-ins -- unlike a signature, a lifetime
+		// judgement needs a clock,
 		// which aren't this function's job to adjudicate.
 		try tree.validateNodeKinds()
 		try tree.validateNoTrailingBlank()
