@@ -118,37 +118,56 @@ The official suite contains no malformed input. Every rejection path in this
 codebase is therefore pinned by tests written here, and an adversarial review
 during phase 5b demonstrated the cost of assuming otherwise: **both**
 `checkUpdatePathKeysAreFresh` and the path-required check were deleted, and all
-330 commit epochs still passed (130 from
-`passive-client-handling-commit.json`, 200 from `passive-client-random.json`).
+382 commit epochs still passed (91 records x 2 epochs from
+`passive-client-handling-commit.json`, 200 from `passive-client-random.json` —
+an earlier revision of this document said 330, itself a counting error).
 
 Two consequences worth stating plainly.
 
 **Rejection coverage is partial, and only partly bounded by a signing oracle.**
-`Group.processing` can throw **16** distinct `GroupError` cases. It verifies the
-commit's framing signature at step 5, so a test that *mutates* a commit can only
-reach checks running before that point — but mutation is not the only route, and
-reasoning as though it were is what made the first draft of this section
-undercount.
+Counted from source (not reasoned — an earlier draft of this section
+undercounted twice by assuming commit *mutation* was the only route to a
+check): the commit-processing path, including phase 6a's §12.1/§12.2
+validation pass, can throw **35** distinct `GroupError` cases plus signature
+failures (`cipherSuiteMismatch` and `protocolVersionMismatch`, previously
+join-only, are now also commit-path — Add validation reuses them for §10.1's
+match-the-GroupContext bullet).
 
-**Eight are covered.** Five by mutation (`wrongEpoch`, `wrongGroup`,
-`notACommit`, `unsupportedSender`, `blankSenderLeaf`) and three by *supplying or
-withholding caller state*, which disturbs no signature at all because
-`processing` takes the `ProposalStore` and the PSK resolver on trust:
-`unknownProposalReference`, `unresolvedPreSharedKey`, and `updateFromNonMember`.
+**Twenty-five are covered.** (Twenty-five covered + six
+signing-oracle-bound + two holes + `cipherSuiteMismatch` and
+`protocolVersionMismatch`, covered by the join-path suite = thirty-five.) Five by commit mutation (`wrongEpoch`,
+`wrongGroup`, `notACommit`, `unsupportedSender`, `blankSenderLeaf`); three by
+withholding caller state (`unknownProposalReference`,
+`unresolvedPreSharedKey`, `updateFromNonMember`); ten more by *supplying*
+crafted `ProposalStore` state, which disturbs nothing the framing signature
+covers (`updateByCommitter`, `removeOfCommitter`, `duplicateProposalForLeaf`,
+`duplicatePreSharedKey`, `multipleGroupContextExtensions`,
+`wrongPskNonceLength`, `wrongLeafNodeSource`, `updateDidNotChangeEncryptionKey`,
+`keyPackageInitKeyReused`, `requiredCapabilitiesNotMet` — the last via a
+synthetic same-commit GroupContextExtensions, since all 28 vector GCEs are
+empty); and four §7.3 policy cases as direct units
+(`unsupportedExtensionInLeaf`, `credentialTypeNotInOwnCapabilities`,
+`credentialTypeUnsupportedByMember`, `memberCredentialUnsupportedByLeaf`, and
+the two opt-in lifetime bounds).
+Signature verification on installed leaves is pinned in both directions: a
+tampered Add KeyPackage and a garbage-signed Update leaf are both rejected,
+and `duplicateSignatureKey` is now exercised on the *commit* path (two
+individually-valid Adds sharing a key), not only at join.
 
-**Six need a commit that is both malformed and validly signed by the
+**Six still need a commit that is both malformed and validly signed by the
 committer** — `pathRequired`, `removeOfNonMember`,
 `updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey` (thrown at two
 sites: the committer's own previous leaf key, and the UpdatePath key-freshness
 sweep), `removedFromGroup`, and `unsupportedReInit`. The vectors supply the
-joiner's secrets, never a committer's signing key, so no test here can construct
-one. Those rest on reading, and `CommitRejectionTests` records the limit in its
+joiner's secrets, never a committer's signing key, so no test here can
+construct one. Those rest on reading until phase 6b's commit construction
+provides a signing member, and `CommitRejectionTests` records the limit in its
 own header.
 
 **Two are real holes rather than inherent limits**, since neither needs a
 committer secret: `confirmationTagMismatch` (a wrong tag can simply be written
-in) and `unsupportedResumptionUsage` (reachable by the same store-supplied route
-as `updateFromNonMember`). Both should be covered; neither currently is.
+in) and `unsupportedResumptionUsage` (reachable by the store route). Neither is
+currently covered.
 
 The store-supplied route is worth naming on its own, because it is where the
 one real defect this audit found lived. `processing` reads a by-reference

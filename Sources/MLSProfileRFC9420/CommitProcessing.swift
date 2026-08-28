@@ -112,6 +112,25 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
+		// §12.2 list validation and §12.1 per-proposal validity, over the
+		// resolved list -- "decide what's valid to apply", the half phase
+		// 5 explicitly left here. Runs against the *provisional*
+		// extensions per §12.3 ("The new extensions MUST be used when
+		// evaluating other proposals in this list"), so GCE is folded in
+		// before anything is judged. The reinit/branch PSK-usage rejection
+		// stays `resolvePsk`'s (`unsupportedResumptionUsage`, at the
+		// availability step just below) -- this pass checks only what
+		// §12.1.4 adds, the nonce length.
+		var provisionalExtensions = context.extensions
+		for stored in resolved {
+			if case .groupContextExtensions(let extensions) = stored.proposal {
+				provisionalExtensions = extensions
+			}
+		}
+		try validateProposalList(
+			resolved, committer: senderIndex,
+			provisionalExtensions: provisionalExtensions, provider: provider)
+
 		// §12.4.2 makes PSK *availability* its own step, five bullets
 		// before the tree is touched: "Verify that all PreSharedKey
 		// proposals in the proposals vector are available." Resolved here,
@@ -191,12 +210,6 @@ extension MLS.RFC9420.Group {
 		// `TreeEditError.notATreeEditingProposal`'s own doc comment --
 		// passing one to `apply` is a caller error by design, exactly as
 		// for preSharedKey/reInit/externalInit.
-		var provisionalExtensions = context.extensions
-		for stored in resolved {
-			if case .groupContextExtensions(let extensions) = stored.proposal {
-				provisionalExtensions = extensions
-			}
-		}
 
 		var provisionalTree = tree
 		var blankedNodes: Set<UInt32> = []
@@ -258,6 +271,24 @@ extension MLS.RFC9420.Group {
 					?? false
 			}) {
 				addedLeaves.insert(added.index)
+			}
+		}
+
+		// §12.2's closing rule: the commit is invalid if "After
+		// processing the Commit the ratchet tree is invalid, in
+		// particular, if it contains any leaf node that is invalid
+		// according to Section 7.3." The per-proposal pass above validated
+		// each leaf *individually*; what only the post-application tree
+		// can show is a §7.3 uniqueness violation introduced by
+		// combination -- two Adds in one commit, each fine alone, sharing
+		// a signature key. Join-side validation never sees this: it runs
+		// once, at join.
+		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
+			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
+			else {
+				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}
 		}
 
@@ -431,6 +462,147 @@ extension MLS.RFC9420.Group {
 	/// rejected outright for the same reason `join` rejects it: those
 	/// carry §12.4.3.1 rules that are meaningless without ReInit/branching
 	/// support, which this project defers project-wide.
+	/// RFC 9420 §12.2 (list rules) and §12.1 (per-proposal validity), over
+	/// the resolved list. This is the authenticity payload of phase 6a as
+	/// much as the policy one: before this pass, an Update's or Add's
+	/// LeafNode was installed into the tree with **no signature check at
+	/// all** -- `processing` takes the `ProposalStore` (proposal *and*
+	/// sender) on trust, so an unverified leaf could enter the tree and
+	/// every later message from that member would verify against a key
+	/// nothing ever proved anyone holds.
+	private func validateProposalList(
+		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex,
+		provisionalExtensions: [MLS.RFC9420.Extension],
+		provider: any MLS.CipherSuiteProvider
+	) throws {
+		let groupRequirements = try provisionalExtensions.requiredCapabilities()
+
+		// One decode pass over the members, shared by every leaf check.
+		var memberCapabilities: [MLS.RFC9420.Capabilities] = []
+		var memberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
+		for (_, record) in tree.nonBlankLeaves() {
+			let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			memberCapabilities.append(leaf.capabilities)
+			memberCredentialTypes.insert(leaf.credential.credentialType)
+		}
+
+		var updatedOrRemoved: Set<MLS.LeafIndex> = []
+		var seenPskIDs: Set<Data> = []
+		var seenGroupContextExtensions = false
+
+		for stored in resolved {
+			switch stored.proposal {
+			case .add(let keyPackage):
+				// §12.1.1 delegates to §10.1 wholesale; §10.1's own
+				// bullets include the KeyPackage signature and the leaf's
+				// §7.3 validity for a KeyPackage.
+				try keyPackage.validate(
+					provider, groupContext: context,
+					groupRequirements: groupRequirements,
+					memberCredentialTypes: memberCredentialTypes,
+					memberCapabilities: memberCapabilities)
+
+			case .update(let leafNode):
+				guard case .member(let updateSender) = stored.sender else {
+					throw MLS.RFC9420.GroupError.unsupportedSender
+				}
+				// §12.2: "It contains an Update proposal generated by the
+				// committer." An inline Update is attributed to the
+				// committer by construction, so an inline Update is
+				// always invalid -- correct, not a bug: an Update in your
+				// own commit is yours, and UpdatePath exists for that.
+				guard updateSender != committer else {
+					throw MLS.RFC9420.GroupError.updateByCommitter
+				}
+				// The membership lookup comes FIRST, and it is a read,
+				// never a write: the replaced leaf is both the
+				// `updateFromNonMember` guard (load-bearing -- see that
+				// case's doc comment) and the input to §7.3's
+				// changed-encryption-key rule.
+				guard let replacedRecord = tree.leaf(at: updateSender) else {
+					throw MLS.RFC9420.GroupError.updateFromNonMember(
+						leaf: updateSender)
+				}
+				let replaced = try MLS.RFC9420.LeafNode(
+					mlsEncoded: replacedRecord.encoded)
+				guard updatedOrRemoved.insert(updateSender).inserted else {
+					throw MLS.RFC9420.GroupError.duplicateProposalForLeaf(
+						leaf: updateSender)
+				}
+				try leafNode.verifySignature(
+					provider,
+					placement: .inGroup(
+						groupID: context.groupID, leafIndex: updateSender))
+				try leafNode.validatePolicy(
+					.updateProposal(replacing: replaced),
+					groupRequirements: groupRequirements,
+					memberCredentialTypes: memberCredentialTypes,
+					memberCapabilities: memberCapabilities)
+
+			case .remove(let removed):
+				// §12.2: a self-remove must come through someone else's
+				// commit; §12.1.3's non-blank rule is re-checked at apply
+				// time against the provisional tree (`removeOfNonMember`),
+				// but the committer rule is list-level and lives here.
+				guard removed != committer else {
+					throw MLS.RFC9420.GroupError.removeOfCommitter
+				}
+				guard tree.leaf(at: removed) != nil else {
+					throw MLS.RFC9420.GroupError.removeOfNonMember(
+						leaf: removed)
+				}
+				guard updatedOrRemoved.insert(removed).inserted else {
+					throw MLS.RFC9420.GroupError.duplicateProposalForLeaf(
+						leaf: removed)
+				}
+
+			case .preSharedKey(let id):
+				// §12.1.4: nonce length equals the suite's KDF.Nh. Read
+				// from the provider -- suite 5 is SHA512 (Nh = 64), which
+				// a hand table gets wrong. The reinit/branch usage
+				// rejection deliberately stays in `resolvePsk`.
+				if case .external(_, let nonce) = id {
+					guard nonce.count == provider.hashSize else {
+						throw MLS.RFC9420.GroupError.wrongPskNonceLength(
+							expected: provider.hashSize,
+							actual: nonce.count)
+					}
+				}
+				if case .resumption(_, let nonce) = id {
+					guard nonce.count == provider.hashSize else {
+						throw MLS.RFC9420.GroupError.wrongPskNonceLength(
+							expected: provider.hashSize,
+							actual: nonce.count)
+					}
+				}
+				// §12.2: "Multiple PSK proposals that reference the same
+				// PreSharedKeyID."
+				guard seenPskIDs.insert(try id.mlsEncoded()).inserted else {
+					throw MLS.RFC9420.GroupError.duplicatePreSharedKey
+				}
+
+			case .groupContextExtensions:
+				guard !seenGroupContextExtensions else {
+					throw MLS.RFC9420.GroupError.multipleGroupContextExtensions
+				}
+				seenGroupContextExtensions = true
+
+			case .reInit:
+				// Rejected later in `processing` with its own explicit
+				// error (`unsupportedReInit`); list validation has
+				// nothing to add.
+				break
+			case .externalInit:
+				// §12.2 forbids ExternalInit in a regular commit. No
+				// explicit rejection here by prior decision: it fails
+				// closed -- an unapplied ExternalInit diverges the key
+				// schedule and dies at the confirmation tag, which the
+				// vector gate exercises. Documented rather than doubled.
+				break
+			}
+		}
+	}
+
 	private func resolvePsk(
 		_ id: MLS.RFC9420.PreSharedKeyIdentifier,
 		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?

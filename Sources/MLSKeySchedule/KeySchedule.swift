@@ -179,6 +179,6 @@ extension MLS {
 		// of the epoch fan-out; deriving a *per-message* key/nonce from it
 		// is framing's job, not the key schedule's. It lived here only
 		// because MLSFraming didn't exist yet when phase 2 needed it
-		// tested. See germ-swift-mls/docs/status.md's "Phase 3" section.
+		// tested.
 	}
 }

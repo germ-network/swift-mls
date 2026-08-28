@@ -9,9 +9,11 @@ import Testing
 
 /// The rejection branches `Group.processing` grew in 5b. The vector gate
 /// proves the **accept** path only — an adversarial review deleted both
-/// `checkUpdatePathKeysAreFresh` and the path-required check and all 330
-/// commit epochs still passed (130 from `passive-client-handling-commit`,
-/// 200 from `passive-client-random`). Everything here exists because of that.
+/// `checkUpdatePathKeysAreFresh` and the path-required check and all 382
+/// commit epochs still passed (91 records x 2 epochs from
+/// `passive-client-handling-commit`, 200 from `passive-client-random` --
+/// an earlier version of this header said 330, itself a counting error).
+/// Everything here exists because of that.
 ///
 /// **What is coverable without a signing oracle, and what isn't.**
 /// `processing` can throw 16 distinct `GroupError` cases. It verifies the

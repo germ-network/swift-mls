@@ -343,13 +343,14 @@ struct GroupMutationTests {
 		for leaf in [leafA, leafB] {
 			try MLS.RFC9420.Group.validateLeaves(
 				try MLS.TreeKEM.RatchetTree(nodes: [.leaf(leaf)]), groupID: Data(),
-				provider)
+				groupExtensions: [], provider)
 		}
 
 		#expect(
 			throws: MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: .init(value: 1))
 		) {
-			try MLS.RFC9420.Group.validateLeaves(tree, groupID: Data(), provider)
+			try MLS.RFC9420.Group.validateLeaves(
+				tree, groupID: Data(), groupExtensions: [], provider)
 		}
 	}
 
