@@ -214,18 +214,46 @@ application-message ratchet with cross-epoch out-of-order delivery. It is a
 materially stronger signal than the self-interop gate, because the *runner*
 chose the call sequence, not us.
 
-**What it does not yet do, and why the badge stays withheld.** Both clients
-in the matrix above are this library. `spec/README.md` defines *conformant*
-as verified "against at least one independent implementation" — so the
-remaining step is the same harness run swift ↔ mls-rs (and, if cheap,
-swift ↔ OpenMLS). The server is built and driver-proven for that run; it
-needs the peer harness built and pointed at the same runner. Two of this
-project's own defects were bugs both sides of a shared codebase missed
-(the phase-6 review's pathless-lockout and §12.1.7 brick), which is exactly
-the failure class an *independent* peer catches and a self-run cannot —
-so the badge waiting on it is not a formality.
+**swift ↔ mls-rs — the independent-implementation half, now run.** The same
+harness, a second `-client` pointed at mls-rs's own `harness_client` (Wickr
+MLS), suite 1, both handshake-public. Under `ClientModeAll` the runner runs
+every actor→client assignment, so each scenario runs with swift creating and
+mls-rs joining, mls-rs creating and swift joining, and each same-stack pair —
+the same wire bytes leaving one implementation and consumed by the other:
 
-Until that cross-implementation run lands, `MLSProfileRFC9420` ships as a
-product that passes every official vector and the full runner-driven
-self-interop matrix, but whose own specification directory still declines
-the badge.
+| config | cross-impl result |
+|---|---|
+| `application` (all 3 scripts) | **pass, both directions** |
+| `welcome_join` (path, no-path, external-tree, with-psk) | **pass, both directions** |
+| `commit`: add, empty, remove, external_psk, group_context_extensions | **pass, both directions** |
+| `commit`: `update` with mls-rs proposing, swift committing | **pass** — our commit-of-a-peer's-Update path agrees with mls-rs |
+| `commit`: `update` with swift proposing | swift-side deferred (the updater key-handoff, GER-2368) |
+| `commit`: `resumption_psk`, `all_together_*` | swift-side deferred (reinit/branch resumption PSKs) |
+
+Every failure is a swift-side **documented deferred feature** being invoked,
+never a wire disagreement: when both stacks use only implemented paths, they
+agree byte-for-byte on every group operation — create, key package, welcome
+and join in both tree-delivery modes and with PSKs, add, remove,
+group-context-extensions, path and pathless commits, and the full
+application-message ratchet across epochs and out of order.
+
+This satisfies both halves of `spec/README.md`'s **conformant** definition —
+the official test vectors (all 16 consumed, phases 0–6) *and* an independent
+implementation (mls-rs, here). The one honest caveat on the badge is scope,
+not correctness: `MLS.RFC9420` defers the updater self-proposal (GER-2368)
+and, project-wide, ReInit and branching — so it is conformant over a feature
+set that is complete for the core group lifecycle but not yet for those. The
+maturity marker should read *conformant (core lifecycle; ReInit/branch and
+self-Update deferred)* rather than an unqualified badge, until those land.
+
+**Agreement was proven without a public `Export` or `StateAuth` surface.**
+Across all three configs the runner never calls either RPC — every
+convergence check runs through `epoch_authenticator` alone, already public on
+`Group.epoch`. `mls-interop-server`'s `Export` answers `unsupported`, and
+`MLS.KeySchedule.exportSecret` stays `package`-scoped. That was a deliberate
+bet recorded when the harness was built (no forward secrecy on that path,
+recent drafts favor safe-export, "not as an adopter-facing API"); this run is
+the first real evidence for it — nothing exercised needed more than the
+authenticator to settle whether two independent implementations derived the
+identical key schedule. Revisit only if a future scenario config genuinely
+requires it; neither the mlswg nor the mls-rs config sets do today.
