@@ -41,6 +41,11 @@ extension MLS.RFC9420 {
 		/// commit and on policy change.
 		var resumptionPsks: [UInt64: Data]
 
+		/// Per-epoch application-message state (secret tree, ratchets,
+		/// epoch snapshots) — the §9.2 consuming store, bounded by
+		/// `retention.messageSecretsDepth`. See `MessageProtection.swift`.
+		var messageSecrets: [UInt64: MessageSecrets] = [:]
+
 		mutating func pruneResumptionPsks(currentEpoch: UInt64) {
 			// Saturating: at epochs below the depth, everything survives.
 			// (An unchecked subtraction here traps -- the fixture epochs
@@ -288,10 +293,15 @@ extension MLS.RFC9420.Group {
 			provider, confirmed: groupInfo.groupContext.confirmedTranscriptHash,
 			confirmationTag: groupInfo.confirmationTag)
 
-		return MLS.RFC9420.Group(
+		var group = MLS.RFC9420.Group(
 			context: groupInfo.groupContext, tree: tree,
 			interimTranscriptHash: interimTranscriptHash, myLeafIndex: myLeafIndex,
 			epoch: EpochSecrets(retaining: epoch), secretKeys: secretKeys,
 			resumptionPsks: [groupInfo.groupContext.epoch: epoch.resumptionPsk])
+		try group.installMessageSecrets(
+			context: groupInfo.groupContext,
+			senderDataSecret: epoch.senderDataSecret,
+			encryptionSecret: epoch.encryptionSecret, tree: tree, provider)
+		return group
 	}
 }

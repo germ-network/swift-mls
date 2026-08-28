@@ -29,6 +29,15 @@ extension MLS {
 
 		/// `Nh` — the hash/KDF's native digest size in bytes.
 		var hashSize: Int { get }
+
+		/// Fresh random bytes. A protocol requirement (with a CSPRNG
+		/// default below) rather than an extension-only method, so a
+		/// conforming test provider can substitute deterministic bytes
+		/// through `any CipherSuiteProvider` — statically-dispatched
+		/// extension defaults cannot be overridden that way, which would
+		/// make anything generating randomness internally untestable
+		/// byte-for-byte.
+		func randomBytes(_ count: Int) -> Data
 		func hash(_ data: Data) throws -> Data
 
 		/// RFC 5869 `Extract(salt, ikm) -> PRK`.

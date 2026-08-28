@@ -175,6 +175,33 @@ extension MLS.RFC9420 {
 		/// an internal invariant violation surfaced as a throw rather
 		/// than a silently incomplete Welcome.
 		case welcomeCoverageIncomplete
+		/// A `PrivateMessage` from an epoch whose message secrets are no
+		/// longer retained (or never existed). Below the retention floor
+		/// this is an expected, §15.3-shaped rejection, not an anomaly.
+		case messageFromUnretainedEpoch(epoch: UInt64)
+		/// The generation's key was consumed (or its whole subtree was) —
+		/// §9.2 deletion doubles as the replay authority: a deleted key
+		/// cannot be re-derived, so a replay is *rejected*, never
+		/// re-decrypted.
+		case generationAlreadyConsumed(generation: UInt32)
+		/// §15.3: the requested generation is further ahead of the chain
+		/// head than policy allows. Checked before any derivation.
+		case generationJumpTooLarge(requested: UInt32, head: UInt32)
+		/// §15.3: deriving this generation would retain more skipped
+		/// key/nonce pairs for one sender than policy allows.
+		case tooManySkippedKeys(leaf: MLS.LeafIndex)
+		/// GER-adjacent hardening both peers have: a member must not
+		/// decrypt its own message — its own ratchet is for sending, and
+		/// "decrypting yourself" is always a reflection or a bug.
+		case cannotDecryptOwnMessage
+		/// The message names this group's id or an epoch inconsistently
+		/// with its framing — routed and rejected before any ratchet is
+		/// touched.
+		case wrongContentType(MLS.ContentType)
+		/// Own send ratchet exhausted (generation == UInt32.max): refuse
+		/// rather than wrap or trap. §15.2's AEAD-volume MUST is reached
+		/// long before this in any real deployment.
+		case sendGenerationExhausted
 		/// S19: this commit removed us. Note what is and isn't proven:
 		/// the framing signature and membership MAC have both passed, so
 		/// an *authenticated member* sent it — but the confirmation tag

@@ -398,6 +398,10 @@ extension MLS.RFC9420.Group {
 		// against the old epoch with a small depth could evict the entry
 		// this very commit added.
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
+		try updated.installMessageSecrets(
+			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
+			encryptionSecret: newEpoch.encryptionSecret, tree: provisionalTree,
+			provider)
 		return updated
 	}
 

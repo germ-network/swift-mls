@@ -82,12 +82,16 @@ extension MLS.RFC9420.Group {
 		let interim = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: Data(), confirmationTag: confirmationTag)
 
-		return MLS.RFC9420.Group(
+		var group = MLS.RFC9420.Group(
 			context: context, tree: tree, interimTranscriptHash: interim,
 			myLeafIndex: MLS.LeafIndex(value: 0),
 			epoch: EpochSecrets(retaining: fanOut),
 			secretKeys: [0: leafSecretKey],
 			resumptionPsks: [0: fanOut.resumptionPsk])
+		try group.installMessageSecrets(
+			context: context, senderDataSecret: fanOut.senderDataSecret,
+			encryptionSecret: fanOut.encryptionSecret, tree: tree, provider)
+		return group
 	}
 
 	/// RFC 9420 §12.4.1, start to finish: validate the list, apply the
@@ -311,6 +315,9 @@ extension MLS.RFC9420.Group {
 			confirmationTag: confirmationTag)
 		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
+		try updated.installMessageSecrets(
+			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
+			encryptionSecret: newEpoch.encryptionSecret, tree: newTree, provider)
 
 		let welcome = try makeWelcome(
 			provider, resolved: resolved, applied: applied, stage: stage,
