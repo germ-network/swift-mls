@@ -5,7 +5,7 @@ import MLSCrypto
 extension MLS.Framing {
 	/// RFC 9420 §6.2: `MAC(membership_key, AuthenticatedContentTBM)`.
 	public static func membershipTag(
-		_ provider: any MLS.CipherSuiteProvider, membershipKey: Data,
+		_ provider: any MLS.CipherSuiteProvider, membershipKey: some ContiguousBytes,
 		signedContent: SignedContent, encodedAuthData: Data
 	) throws -> MLS.MembershipTag {
 		let tbm = try signedContent.toBeMACed(encodedAuthData: encodedAuthData)

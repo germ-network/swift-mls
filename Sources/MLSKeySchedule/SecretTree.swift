@@ -52,7 +52,7 @@ extension MLS.KeySchedule {
 	/// `leafSecret` stays as the vector-pinned stateless oracle the store
 	/// is differentially tested against.
 	public static func splitTreeNode(
-		_ provider: any MLS.CipherSuiteProvider, secret: Data
+		_ provider: any MLS.CipherSuiteProvider, secret: some ContiguousBytes
 	) throws -> (left: Data, right: Data) {
 		(
 			try MLS.expandWithLabel(
@@ -65,13 +65,13 @@ extension MLS.KeySchedule {
 	}
 
 	public static func handshakeRatchetSecret(
-		_ provider: any MLS.CipherSuiteProvider, leafSecret: Data
+		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
 	) throws -> Data {
 		try MLS.deriveSecret(provider, secret: leafSecret, label: "handshake")
 	}
 
 	public static func applicationRatchetSecret(
-		_ provider: any MLS.CipherSuiteProvider, leafSecret: Data
+		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
 	) throws -> Data {
 		try MLS.deriveSecret(provider, secret: leafSecret, label: "application")
 	}
@@ -93,7 +93,7 @@ extension MLS.KeySchedule {
 	/// key or nonce first.
 	public static func ratchetStep(
 		_ provider: any MLS.CipherSuiteProvider,
-		secret: Data,
+		secret: some ContiguousBytes,
 		generation: UInt32
 	) throws -> RatchetStep {
 		try RatchetStep(

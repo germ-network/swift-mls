@@ -43,7 +43,7 @@ extension MLS.RFC9420 {
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		groupContext: GroupContext,
 		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
-		membershipKey: Data
+		membershipKey: some ContiguousBytes
 	) throws -> PublicMessage {
 		let (signedContent, signature) = try signPublic(
 			provider, content: content, groupContext: groupContext,
@@ -86,7 +86,7 @@ extension MLS.RFC9420 {
 	public static func sealPublic(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		signedContent: MLS.Framing.SignedContent, signature: MLS.Signature,
-		confirmationTag: MLS.ConfirmationTag?, membershipKey: Data
+		confirmationTag: MLS.ConfirmationTag?, membershipKey: some ContiguousBytes
 	) throws -> PublicMessage {
 		let auth = MLS.FramedContentAuthData(
 			signature: signature, confirmationTag: confirmationTag)
@@ -108,7 +108,7 @@ extension MLS.RFC9420 {
 	public static func verifyPublic(
 		_ provider: any MLS.CipherSuiteProvider, message: PublicMessage,
 		groupContext: GroupContext,
-		verificationKey: MLS.SignaturePublicKey, membershipKey: Data
+		verificationKey: MLS.SignaturePublicKey, membershipKey: some ContiguousBytes
 	) throws -> Bool {
 		// §6's MUST-NOT is a receive-side rule as much as a send-side one:
 		// `PublicMessage`'s own decoder must still accept an
@@ -151,7 +151,8 @@ extension MLS.RFC9420 {
 		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
 		content: FramedContent, groupContext: GroupContext, generation: UInt32,
 		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
-		senderDataSecret: Data, reuseGuard: MLS.Framing.ReuseGuard, paddingLength: Int
+		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
 	) throws -> PrivateMessage {
 		guard case .member(let leafIndex) = content.sender else {
 			throw MLS.FramingError.privateMessageRequiresMemberSender
@@ -218,7 +219,7 @@ extension MLS.RFC9420 {
 	/// consume.
 	public static func openSenderData(
 		_ provider: any MLS.CipherSuiteProvider, message: PrivateMessage,
-		senderDataSecret: Data
+		senderDataSecret: some ContiguousBytes
 	) throws -> MLS.Framing.SenderData {
 		let senderDataAAD = MLS.Framing.SenderDataAAD(
 			groupID: message.groupID, epoch: message.epoch,
@@ -288,7 +289,7 @@ extension MLS.RFC9420 {
 		message: PrivateMessage,
 		groupContext: GroupContext,
 		verificationKey: (MLS.LeafIndex) throws -> MLS.SignaturePublicKey,
-		senderDataSecret: Data
+		senderDataSecret: some ContiguousBytes
 	) throws -> AuthenticatedContent {
 		let senderData = try openSenderData(
 			provider, message: message, senderDataSecret: senderDataSecret)

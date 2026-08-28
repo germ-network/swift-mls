@@ -41,9 +41,9 @@ extension MLS {
 		func hash(_ data: Data) throws -> Data
 
 		/// RFC 5869 `Extract(salt, ikm) -> PRK`.
-		func kdfExtract(salt: Data, ikm: Data) throws -> Data
+		func kdfExtract(salt: some ContiguousBytes, ikm: Data) throws -> Data
 		/// RFC 5869 `Expand(prk, info, L) -> OKM`.
-		func kdfExpand(prk: Data, info: Data, length: Int) throws -> Data
+		func kdfExpand(prk: some ContiguousBytes, info: Data, length: Int) throws -> Data
 
 		func sign(privateKey: SignatureSecretKey, content: Data) throws -> Data
 		func verify(publicKey: SignaturePublicKey, content: Data, signature: Data) throws
@@ -102,7 +102,7 @@ extension MLS.CipherSuiteProvider {
 	/// exactly. Promote to a requirement, with this as the default body, if
 	/// a conformer ever needs a MAC that genuinely differs from its own
 	/// KDF's Extract — nothing here would need to move.
-	public func mac(key: Data, data: Data) throws -> Data {
+	public func mac(key: some ContiguousBytes, data: Data) throws -> Data {
 		try kdfExtract(salt: key, ikm: data)
 	}
 }

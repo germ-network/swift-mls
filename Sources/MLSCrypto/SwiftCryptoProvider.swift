@@ -43,40 +43,60 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
-	func kdfExtract(salt: Data, ikm: Data) throws -> Data {
-		switch cipherSuite {
-		case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
-			Data(
-				HKDF<SHA256>.extract(
-					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
-		case .p384Aes256:
-			Data(
-				HKDF<SHA384>.extract(
-					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
-		case .p521Aes256:
-			Data(
-				HKDF<SHA512>.extract(
-					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
-		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+	/// `salt` is `some ContiguousBytes` so a zeroizing secret type can be
+	/// passed without copying its bytes into a `Data` first. Unwrapped once
+	/// here rather than at every call site: `UnsafeRawBufferPointer`
+	/// satisfies both `ContiguousBytes` and the `DataProtocol` HKDF wants,
+	/// so this borrows rather than copies.
+	func kdfExtract(salt: some ContiguousBytes, ikm: Data) throws -> Data {
+		try salt.withUnsafeBytes { salt in
+			switch cipherSuite {
+			case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
+				Data(
+					HKDF<SHA256>.extract(
+						inputKeyMaterial: SymmetricKey(data: ikm),
+						salt: salt))
+			case .p384Aes256:
+				Data(
+					HKDF<SHA384>.extract(
+						inputKeyMaterial: SymmetricKey(data: ikm),
+						salt: salt))
+			case .p521Aes256:
+				Data(
+					HKDF<SHA512>.extract(
+						inputKeyMaterial: SymmetricKey(data: ikm),
+						salt: salt))
+			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+			}
 		}
 	}
 
-	func kdfExpand(prk: Data, info: Data, length: Int) throws -> Data {
-		let key: SymmetricKey
-		switch cipherSuite {
-		case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
-			key = HKDF<SHA256>.expand(
-				pseudoRandomKey: SymmetricKey(data: prk), info: info,
-				outputByteCount: length)
-		case .p384Aes256:
-			key = HKDF<SHA384>.expand(
-				pseudoRandomKey: SymmetricKey(data: prk), info: info,
-				outputByteCount: length)
-		case .p521Aes256:
-			key = HKDF<SHA512>.expand(
-				pseudoRandomKey: SymmetricKey(data: prk), info: info,
-				outputByteCount: length)
-		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+	/// `prk` is `some ContiguousBytes` so a zeroizing secret type can be
+	/// passed without first copying its bytes into a `Data` — see
+	/// `kdfExtract`.
+	///
+	/// The `Data` on the way *out* is a separate question, deliberately not
+	/// answered here: HKDF hands back a `SymmetricKey` (already zeroizing)
+	/// and this copies it into an unprotected buffer. Closing that means
+	/// changing what every derivation in the key schedule returns, which is
+	/// its own change with its own review.
+	func kdfExpand(prk: some ContiguousBytes, info: Data, length: Int) throws -> Data {
+		let key: SymmetricKey = try prk.withUnsafeBytes { prk in
+			switch cipherSuite {
+			case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
+				HKDF<SHA256>.expand(
+					pseudoRandomKey: SymmetricKey(data: prk), info: info,
+					outputByteCount: length)
+			case .p384Aes256:
+				HKDF<SHA384>.expand(
+					pseudoRandomKey: SymmetricKey(data: prk), info: info,
+					outputByteCount: length)
+			case .p521Aes256:
+				HKDF<SHA512>.expand(
+					pseudoRandomKey: SymmetricKey(data: prk), info: info,
+					outputByteCount: length)
+			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+			}
 		}
 		return key.withUnsafeBytes { Data($0) }
 	}

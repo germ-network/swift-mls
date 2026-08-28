@@ -22,6 +22,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
+        // Zeroizing storage for held secrets. Floor is iOS 16 / macOS 13,
+        // below this package's own, so it imposes nothing on adopters.
         // Interop-harness only — never a dependency of any library product
         // (grpc-swift 2 requires macOS 15+; the executable target below is
         // the sole consumer). Pinned major versions keep the checked-in

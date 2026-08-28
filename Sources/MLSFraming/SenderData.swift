@@ -60,7 +60,8 @@ extension MLS.Framing {
 	/// doesn't know who sent a message, or its generation, until *after*
 	/// decrypting the sender data that names them.
 	public static func senderDataKeyNonce(
-		_ provider: any MLS.CipherSuiteProvider, secret: Data, ciphertextSample: Data
+		_ provider: any MLS.CipherSuiteProvider, secret: some ContiguousBytes,
+		ciphertextSample: Data
 	) throws -> (key: Data, nonce: Data) {
 		let sample = Data(ciphertextSample.prefix(provider.hashSize))
 		let key = try MLS.expandWithLabel(
