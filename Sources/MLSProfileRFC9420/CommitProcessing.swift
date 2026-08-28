@@ -74,7 +74,59 @@ extension MLS.RFC9420.Group {
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
-		// 1-3: cheap framing checks, before any tree work.
+		// A PublicMessage-framed commit authenticates via the membership
+		// MAC plus the framing signature; both run here, then the core
+		// takes over on an already-authenticated frame. This is §12.4.2
+		// step 2's first branch.
+		guard message.content.epoch == context.epoch else {
+			throw MLS.RFC9420.GroupError.wrongEpoch(
+				expected: context.epoch, actual: message.content.epoch)
+		}
+		guard message.content.groupID == context.groupID else {
+			throw MLS.RFC9420.GroupError.wrongGroup
+		}
+		// Cheapest framing rejection, before any crypto -- also keeps this
+		// error ahead of `verifyPublic`, which refuses application content
+		// in a PublicMessage with a different error.
+		guard case .commit = message.content.content else {
+			throw MLS.RFC9420.GroupError.notACommit
+		}
+		guard case .member(let senderIndex) = message.content.sender else {
+			throw MLS.RFC9420.GroupError.unsupportedSender
+		}
+		guard let senderLeafRecord = tree.leaf(at: senderIndex) else {
+			throw MLS.RFC9420.GroupError.blankSenderLeaf
+		}
+		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderLeafRecord.encoded)
+		guard
+			try MLS.RFC9420.verifyPublic(
+				provider, message: message, groupContext: context,
+				verificationKey: senderLeaf.signatureKey,
+				membershipKey: epoch.membershipKey)
+		else {
+			throw MLS.CryptoError.signatureVerificationFailed
+		}
+		return try processing(
+			provider,
+			authenticatedContent: MLS.RFC9420.AuthenticatedContent(
+				wireFormat: .publicMessage, content: message.content,
+				auth: message.auth),
+			proposals: proposals, psk: psk)
+	}
+
+	/// The commit-processing core, on an *already authenticated* frame —
+	/// §12.4.2 from step 3 on. A `PublicMessage`-framed commit reaches
+	/// here after its membership MAC and framing signature are checked; a
+	/// `PrivateMessage`-framed one (`unprotect`) reaches here after its
+	/// AEAD and signature are checked. Either way the frame is trusted on
+	/// entry, and the epoch/group/member/blank-leaf checks below still run
+	/// because the private path does not repeat them.
+	public func processing(
+		_ provider: any MLS.CipherSuiteProvider,
+		authenticatedContent message: MLS.RFC9420.AuthenticatedContent,
+		proposals: MLS.RFC9420.ProposalStore,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+	) throws -> MLS.RFC9420.Group {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
 				expected: context.epoch, actual: message.content.epoch)
@@ -85,9 +137,6 @@ extension MLS.RFC9420.Group {
 		guard case .commit(let commit) = message.content.content else {
 			throw MLS.RFC9420.GroupError.notACommit
 		}
-
-		// 4: external commits are deferred project-wide, so a non-member
-		// sender is rejected outright rather than silently mishandled.
 		guard case .member(let senderIndex) = message.content.sender else {
 			throw MLS.RFC9420.GroupError.unsupportedSender
 		}
@@ -95,19 +144,6 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.blankSenderLeaf
 		}
 		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderLeafRecord.encoded)
-
-		// 5: one call covers both the membership MAC and the
-		// FramedContentTBS signature. The signature is checked against the
-		// sender's *pre-commit* leaf key -- the UpdatePath's new leaf key
-		// has not been merged yet and must not be used here.
-		guard
-			try MLS.RFC9420.verifyPublic(
-				provider, message: message, groupContext: context,
-				verificationKey: senderLeaf.signatureKey,
-				membershipKey: epoch.membershipKey)
-		else {
-			throw MLS.CryptoError.signatureVerificationFailed
-		}
 
 		// 6: resolve the proposal list in list order. An unresolvable
 		// reference is an error, never a skip -- applying a commit with a
@@ -344,9 +380,13 @@ extension MLS.RFC9420.Group {
 				leafCount: provisionalTree.leafCount)
 		}
 
-		// 11
+		// 11. The wire format is part of §8.2's confirmed-transcript-hash
+		// input, and a private-framed commit carries `.privateMessage` --
+		// so this must be the frame's actual format, not a constant, or a
+		// private commit's transcript (and thus its confirmation tag)
+		// diverges from its sender's.
 		let signedContent = MLS.Framing.SignedContent(
-			protocolVersion: .mls10, wireFormat: .publicMessage,
+			protocolVersion: .mls10, wireFormat: message.wireFormat,
 			encodedContent: try message.content.mlsEncoded(),
 			encodedGroupContext: nil)
 		guard let signature = message.auth.signature else {

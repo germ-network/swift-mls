@@ -297,6 +297,61 @@ struct SelfInteropTests {
 		}
 	}
 
+	/// A proposal framed as a PrivateMessage, unprotected into a
+	/// `ProposalStore` entry, then committed by reference — the
+	/// receive-side private-handshake path the phase-7a AuthenticatedContent
+	/// refactor exists for. `Group.unprotect` computes the `ProposalRef`
+	/// itself (it binds the framed `AuthenticatedContent`, and unprotecting
+	/// is the last moment anyone holds it), so the committer needs nothing
+	/// but the returned ref.
+	@Test("a private-framed Add proposal round-trips through unprotect and commits")
+	func privateFramedProposalRoundTrips() throws {
+		let provider = Self.provider
+		let alice = try Self.member("alice")
+		let bob = try Self.member("bob")
+		let carol = try Self.member("carol")
+
+		var groupA = try Self.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Bob frames an Add proposal (of Carol) as a PrivateMessage.
+		let framed = try groupB.protectContent(
+			provider, content: .proposal(.add(carol.keyPackage)),
+			authenticatedData: Data(), signingKey: bob.signingKey,
+			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+			paddingLength: 0)
+
+		// Alice receives and unprotects it -> a ProposalStore entry.
+		let opened = try groupA.unprotect(provider, message: framed)
+		guard case .proposal(let proposal, let ref) = opened.content else {
+			Issue.record("expected a proposal")
+			return
+		}
+		let store: MLS.RFC9420.ProposalStore = [
+			ref: .init(proposal: proposal, sender: .member(opened.sender))
+		]
+
+		// Alice commits it by reference; both existing members converge,
+		// and Carol joins from the Welcome.
+		let commit = try groupA.committing(
+			provider, proposals: [.reference(ref)], proposalStore: store,
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = commit.group
+		try groupB.process(
+			provider, commit: commit.commit, proposals: store, psk: { _ in nil })
+		let groupC = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(commit.welcome),
+			credentials: carol.joinCredentials, psk: { _ in nil })
+		Self.assertConverged(groupA, groupB)
+		Self.assertConverged(groupA, groupC)
+	}
+
 	/// An Update proposed by a non-committer, referenced by the committer —
 	/// exercises proposal framing, the store, and §12.3 application end to
 	/// end. Bob's own post-update secret is patched directly into his
