@@ -190,7 +190,7 @@ extension MLS.RFC9420 {
 		/// §15.3: deriving this generation would retain more skipped
 		/// key/nonce pairs for one sender than policy allows.
 		case tooManySkippedKeys(leaf: MLS.LeafIndex)
-		/// GER-adjacent hardening both peers have: a member must not
+		/// Peer-derived hardening both mls-rs and OpenMLS have: a member must not
 		/// decrypt its own message — its own ratchet is for sending, and
 		/// "decrypting yourself" is always a reflection or a bug.
 		case cannotDecryptOwnMessage

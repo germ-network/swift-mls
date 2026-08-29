@@ -1,19 +1,31 @@
 # RFC 9420 conformance: what is verified, and what is not
 
-`MLSProfileRFC9420` is a SwiftPM library product. It is **not yet
-`conformant`** by this directory's own definition, and this document says
-exactly where the gap is rather than leaving it implied.
+`MLSProfileRFC9420` is a SwiftPM library product. It now meets both clauses
+of this directory's `conformant` bar — **over the core group lifecycle**,
+which is the qualifier that keeps the claim honest, and this document says
+exactly what that scope includes and excludes rather than leaving it implied.
 
 `README.md` sets the bar at two clauses:
 
 > **conformant** — implements a published RFC; verified against the official
 > test vectors **and against at least one independent implementation**
 
-The first clause is met: every official mlswg vector file the profile's scope
-covers is vendored and asserted against, with no unconsumed file left in the
-tree. The second is not. It requires the gRPC interop harness, which is phase
-7's work. Until then the honest label is **implements RFC 9420; vector-verified,
-not interop-verified**.
+The first clause: every official mlswg vector file the profile's scope covers
+is vendored and asserted against, with no unconsumed file left in the tree.
+
+The second clause: the mlswg gRPC harness runs swift-mls against **mls-rs**
+under the mlswg Go test-runner, and every scenario exercising a feature both
+stacks implement agrees — in both directions, with the runner choosing the
+call sequence. Section 5 has the matrix.
+
+**The qualifier matters and is not boilerplate.** Conformance here covers
+group creation, key packages, welcome/join in both tree-delivery modes,
+add/remove/PSK/GroupContextExtensions proposals, path and pathless commits,
+and the application-message ratchet including out-of-order delivery within
+and across epochs. It does **not** cover ReInit, branching, external
+join/commit, external senders, or a member proposing an Update for itself —
+all deferred project-wide and rejected explicitly rather than silently
+mishandled. A deployment needing any of those is not covered by this claim.
 
 Two things are worth separating, because passing vectors invites conflating
 them. Vectors demonstrate that this code and the implementations that generated
@@ -232,7 +244,7 @@ the same wire bytes leaving one implementation and consumed by the other:
 | `welcome_join` (path, no-path, external-tree, with-psk) | **pass, both directions** |
 | `commit`: add, empty, remove, external_psk, group_context_extensions | **pass, both directions** |
 | `commit`: `update` with mls-rs proposing, swift committing | **pass** — our commit-of-a-peer's-Update path agrees with mls-rs |
-| `commit`: `update` with swift proposing | swift-side deferred (the updater key-handoff, GER-2368) |
+| `commit`: `update` with swift proposing | swift-side deferred (the updater key-handoff) |
 | `commit`: `resumption_psk`, `all_together_*` | swift-side deferred (reinit/branch resumption PSKs) |
 
 Every failure is a swift-side **documented deferred feature** being invoked,
@@ -244,12 +256,18 @@ application-message ratchet across epochs and out of order.
 
 This satisfies both halves of `spec/README.md`'s **conformant** definition —
 the official test vectors (all 16 consumed, phases 0–6) *and* an independent
-implementation (mls-rs, here). The one honest caveat on the badge is scope,
-not correctness: `MLS.RFC9420` defers the updater self-proposal (GER-2368)
-and, project-wide, ReInit and branching — so it is conformant over a feature
-set that is complete for the core group lifecycle but not yet for those. The
-maturity marker should read *conformant (core lifecycle; ReInit/branch and
-self-Update deferred)* rather than an unqualified badge, until those land.
+implementation (mls-rs, here). The maturity table now carries the badge, with
+the scope qualifier rather than unqualified.
+
+The caveat is scope, not correctness. `MLS.RFC9420` defers the updater
+self-proposal and, project-wide, ReInit, branching, external join/commit and
+external senders — so it is conformant over a feature set complete for the
+core group lifecycle and not yet for those. Every one of them fails closed
+with a named error (§3), so a caller invoking a deferred path gets a
+rejection, never a plausible-looking result. What the interop run adds is
+that on everything *not* deferred, two independently written implementations
+agree on the bytes — which vectors alone cannot show, because vectors are
+inputs both sides were given rather than inputs either side chose.
 
 **Agreement was proven without a public `Export` or `StateAuth` surface.**
 Across all three configs the runner never calls either RPC — every
