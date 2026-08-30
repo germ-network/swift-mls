@@ -54,6 +54,15 @@ for name in tree-validation tree-operations treekem; do
         -o "$DEST/${name}.json"
 done
 
+echo "Fetching phase-5 official vectors (mlswg/mls-implementations)..."
+echo "  Vendored whole (see Vectors/README.md) -- these are large (~4 MB combined) but"
+echo "  a fetch-time filter would permanently diverge the vendored bytes from upstream,"
+echo "  same reasoning already applied to tree-validation.json/treekem.json."
+for name in passive-client-welcome passive-client-random passive-client-handling-commit; do
+    curl -sSfL "https://raw.githubusercontent.com/mlswg/mls-implementations/main/test-vectors/${name}.json" \
+        -o "$DEST/${name}.json"
+done
+
 echo "Done. Not fetched here — no official mlswg equivalent exists (see Vectors/README.md"
 echo "for what each is and why it's still vendored, or why a similarly-named mls-rs"
 echo "vector was deliberately NOT used):"

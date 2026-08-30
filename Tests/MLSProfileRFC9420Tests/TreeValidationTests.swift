@@ -171,6 +171,29 @@ struct TreeValidationTests {
 		}
 	}
 
+	/// §7.1's "sorted in increasing order" means *strictly* — a duplicated
+	/// entry is still non-decreasing, so a sortedness check written as
+	/// "equals its own sorted copy" waves it through, and the justification
+	/// walk can't catch it either since that pass dedupes through a `Set`.
+	/// Left unchecked it's a desync primitive, not a tidiness matter:
+	/// `resolution(of:)` maps entries to node indices unconditionally, so
+	/// the duplicate lands in the resolution twice and shifts every later
+	/// ciphertext position in an `UpdatePath`.
+	@Test("a duplicated unmerged-leaf entry is rejected, not read as sorted")
+	func mutationDuplicateUnmergedLeafRejected() throws {
+		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())
+		try tree.validateUnmergedLeaves()  // sanity: valid before mutation
+
+		var p = try #require(tree.parent(at: 11))
+		let existing = try #require(p.unmergedLeaves.first)
+		p.unmergedLeaves = [existing, existing]
+		tree.setParent(11, to: p)
+
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
+			try tree.validateUnmergedLeaves()
+		}
+	}
+
 	@Test("S14: a trailing blank leaf is rejected, not silently trimmed", arguments: records)
 	func rejectsTrailingBlank(_ record: TreeValidationVector) throws {
 		var reader = MLS.Reader(record.tree.bytes)

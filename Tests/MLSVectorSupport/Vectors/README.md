@@ -16,7 +16,10 @@ Refresh with `Scripts/fetch-vectors.sh` and commit the diff.
 | `message-protection.json` | `mlswg/mls-implementations` `test-vectors/message-protection.json` | yes — public/private message protect+unprotect round trip, membership tag, sender-data seal; **not** the same file as `mls-rs-pq/mls-rs/test_data/framing.json`, which carries an extra `confirmation_tag` key and different data — that mirror file is not used here |
 | `transcript-hashes.json` | `mlswg/mls-implementations` `test-vectors/transcript-hashes.json` | yes |
 | `messages.json` | `mlswg/mls-implementations` `test-vectors/messages.json` | yes — decode/re-encode byte-identity for every top-level RFC 9420 structure (Welcome, GroupInfo, KeyPackage, ratchet_tree, GroupSecrets, all seven proposal bodies, Commit, three PublicMessage shapes, PrivateMessage); vendored in full (2.7 MB) rather than trimmed like `hpke-base-mode.json` — that file's trim removed genuinely redundant KEM/KDF/AEAD combinations, this one's 300 records don't have an equivalent redundant axis to filter on, and 2.7 MB is not large enough to be worth losing coverage over |
-| `welcome.json` | `mlswg/mls-implementations` `test-vectors/welcome.json` | yes — structural only for now; full decrypt-and-verify needs the welcome key/nonce derivation `MLSKeySchedule` doesn't have yet (phase 5) |
+| `welcome.json` | `mlswg/mls-implementations` `test-vectors/welcome.json` | yes — full decrypt-and-verify (phase 5): HPKE-decrypt `GroupSecrets`, AEAD-decrypt `GroupInfo` via `MLSKeySchedule.welcomeKeyNonce`, verify the signature, recompute `confirmation_tag`. No tree in this file at all — `passive-client-welcome.json` covers that half |
+| `passive-client-welcome.json` | `mlswg/mls-implementations` `test-vectors/passive-client-welcome.json` | yes — 56 records × up to 7 suites; the full `Group.join` path (tree decode/validate, both tree-delivery modes — external field vs. `GroupInfo` extension — both PSK modes, own-leaf-find, path-secret install), checked against the vector's own `initial_epoch_authenticator`. `epochs` is empty in every record here — commit application is the other two files' job |
+| `passive-client-random.json` | `mlswg/mls-implementations` `test-vectors/passive-client-random.json` | yes — 1 record, suite 1 only, 200 epochs — the held-key-staleness stress test for commit application (phase 5b) |
+| `passive-client-handling-commit.json` | `mlswg/mls-implementations` `test-vectors/passive-client-handling-commit.json` | yes — 91 records × up to 7 suites, 2 epochs each — by-value and by-reference proposals, add/update/remove/psk/group-context-extensions, external and resumption PSKs, pathless and path commits (phase 5b) |
 | `deserialization.json` | `mlswg/mls-implementations` `test-vectors/deserialization.json` | yes — pure varint-header decode, consumed by `MLSCodecTests` rather than a phase-3 target |
 | `key_package_ref.json` | mirrored from `mls-rs-pq/mls-rs/test_data/key_package_ref.json` | **no** — self-contained (`input` is a serialized `KeyPackage`, `output` its `RefHash`); doubles as a `HashReference` test before any wire structure exists and a `KeyPackage` round-trip test once one does |
 | `proposal_ref.json` | mirrored from `mls-rs-pq/mls-rs/test_data/proposal_ref.json` | **no** — self-contained (`input` is a serialized `AuthenticatedContent`), same dual use as `key_package_ref.json` |
@@ -45,6 +48,14 @@ earlier version of this project's plan:
   (`mls-rs/src/group/padding.rs`), which is mls-rs's own padding policy, not an RFC
   9420 requirement. RFC 9420 only specifies "append zero bytes; reject non-zero
   padding on decode" — this vector is non-normative, not merely non-official.
+- `interop_passive_client_welcome.json` / `interop_passive_client_random.json` /
+  `interop_passive_client_handle_commit.json` — do not exist upstream under those
+  names (phase 5/GER-2296). The real files are `passive-client-welcome.json`,
+  `passive-client-random.json`, `passive-client-handling-commit.json`, listed
+  above. The likely source of the wrong names: `mlswg/mls-implementations` also
+  has an `interop/passive/` directory, but that holds gRPC-harness *configs*
+  (phase 7's job, not test vectors) — a plausible mix-up, not a real vector set
+  to reach for instead.
 
 Verified byte-identical to the local `mls-rs-pq` checkout's copy at fetch time
 (2026-08-18): `crypto-basics.json` ≡ `basic_crypto.json`, `tree-math.json` ⊇ `tree_math.json`

@@ -124,12 +124,12 @@ struct AddExclusionTests {
 		let provider = try #require(
 			Self.provider.cipherSuiteProvider(for: .curve25519Aes128))
 
-		let secret = try scenario.committerTree.decapCommitPath(
+		let result = try scenario.committerTree.decapCommitPath(
 			heldSecretKeys: [6: scenario.leaf3SecretKey], sender: scenario.sender,
 			pathNodes: scenario.pathNodes, groupContext: scenario.groupContext,
 			excluding: [scenario.joiner], provider)
 
-		#expect(secret == scenario.commitSecret)
+		#expect(result.commitSecret == scenario.commitSecret)
 	}
 
 	/// The excluding fix, demonstrated without touching the source: the

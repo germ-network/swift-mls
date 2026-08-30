@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import MLSCrypto
 import MLSFraming
 import MLSTreeMath
 
@@ -56,5 +57,35 @@ extension MLS.RFC9420.GroupInfo {
 		try writer.encode(confirmationTag)
 		try writer.encode(signer)
 		return Data(writer.bytes)
+	}
+
+	/// RFC 9420 §12.4.3.1: verify `signature` under `SignWithLabel`'s
+	/// "GroupInfoTBS" label. Throws rather than returning `Bool` — a
+	/// caller cannot silently ignore a throw the way it can drop a `Bool`,
+	/// matching `unprotectPrivate`'s choice over `verifyPublic`'s
+	/// (`Protect.swift`) for exactly this reason.
+	public func verifySignature(
+		_ provider: any MLS.CipherSuiteProvider, signatureKey: MLS.SignaturePublicKey
+	) throws {
+		let valid = try MLS.verifyWithLabel(
+			provider, publicKey: signatureKey, label: "GroupInfoTBS",
+			content: try toBeSigned(), signature: signature)
+		guard valid else { throw MLS.CryptoError.signatureVerificationFailed }
+	}
+
+	/// The `ratchet_tree` extension's payload decoded to `[Node?]`, or nil
+	/// if this `GroupInfo` carries none. Lives in `extensions`, **not**
+	/// `groupContext.extensions` — the two are distinct vectors, and only
+	/// this one is where RFC 9420 puts the out-of-band tree.
+	public func ratchetTreeExtension() throws -> [MLS.RFC9420.Node?]? {
+		guard
+			let treeExtension = extensions.first(where: {
+				$0.type == MLS.RFC9420.ExtensionType(.ratchetTree)
+			})
+		else { return nil }
+		var reader = MLS.Reader(treeExtension.data)
+		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector()
+		try reader.finish()
+		return nodes
 	}
 }

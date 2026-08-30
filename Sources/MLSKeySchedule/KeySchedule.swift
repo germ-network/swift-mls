@@ -99,6 +99,24 @@ extension MLS {
 			)
 		}
 
+		/// RFC 9420 §12.4.3.1: the AEAD key/nonce pair that seals
+		/// `Welcome.encrypted_group_info`.
+		///   welcome_nonce = ExpandWithLabel(welcome_secret, "nonce", "", AEAD.Nn)
+		///   welcome_key   = ExpandWithLabel(welcome_secret, "key",   "", AEAD.Nk)
+		/// The context is empty in both -- not the group context, which
+		/// doesn't exist yet from a joiner's perspective at this point.
+		public static func welcomeKeyNonce(
+			_ provider: any CipherSuiteProvider, welcomeSecret: Data
+		) throws -> (key: Data, nonce: Data) {
+			let key = try expandWithLabel(
+				provider, secret: welcomeSecret, label: "key", context: Data(),
+				length: provider.aeadKeySize)
+			let nonce = try expandWithLabel(
+				provider, secret: welcomeSecret, label: "nonce", context: Data(),
+				length: provider.aeadNonceSize)
+			return (key, nonce)
+		}
+
 		/// RFC 9420 §8.5's MLS-Exporter: `ExpandWithLabel(DeriveSecret(
 		/// exporterSecret, label), "exported", Hash(context), length)`.
 		///

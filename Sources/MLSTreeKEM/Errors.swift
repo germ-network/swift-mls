@@ -33,6 +33,11 @@ extension MLS.TreeKEM {
 		case unmergedLeavesNotSorted
 		case unmergedLeafNotAtExpectedPosition
 		case duplicateUnmergedLeaf
+		/// An encryption key appears at more than one node in the tree --
+		/// checked by `validateNoDuplicateEncryptionKeys`, whose doc
+		/// comment carries the three sections this spans (§12.4.3.1 for
+		/// parents, §7.3 for leaves, §16.7 for the general form).
+		case duplicateEncryptionKey(node: UInt32)
 		/// The tree's last node is blank -- RFC 9420 §12.4.3.3: "the sender
 		/// MUST NOT include blank nodes after the last non-blank node. The
 		/// receiver MUST check that the last node in ratchet_tree is
