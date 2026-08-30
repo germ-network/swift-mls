@@ -14,6 +14,7 @@ specification alone, without reading the Swift.
 | document | covers |
 |---|---|
 | [`conformance.md`](conformance.md) | What `MLS.RFC9420` actually verifies, per official test vector, and what it does not |
+| [`snapshot.md`](snapshot.md) | The `MLS.RFC9420` Snapshot (persisted group state) format and the Transition persistence contract — **draft** |
 
 RFC 9420 itself is the specification for the `MLS.RFC9420` profile; *profile*
 documents appear here only for profiles that are not an existing RFC or draft.
