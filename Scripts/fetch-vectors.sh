@@ -45,6 +45,15 @@ for name in psk_secret message-protection transcript-hashes messages welcome des
         -o "$DEST/${name}.json"
 done
 
+echo "Fetching phase-4 official vectors (mlswg/mls-implementations)..."
+echo "  Vendored whole, not suite-filtered at fetch time (see Vectors/README.md) --"
+echo "  filtering to supported suites happens at test-load time instead, matching"
+echo "  message-protection.json's own pattern."
+for name in tree-validation tree-operations treekem; do
+    curl -sSfL "https://raw.githubusercontent.com/mlswg/mls-implementations/main/test-vectors/${name}.json" \
+        -o "$DEST/${name}.json"
+done
+
 echo "Done. Not fetched here — no official mlswg equivalent exists (see Vectors/README.md"
 echo "for what each is and why it's still vendored, or why a similarly-named mls-rs"
 echo "vector was deliberately NOT used):"

@@ -1,37 +1,15 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSTreeKEM
 import MLSTreeMath
 
 extension MLS.RFC9420 {
-	/// `struct { HPKEPublicKey encryption_key; opaque parent_hash<V>;
-	/// LeafIndex unmerged_leaves<V>; } ParentNode;`
-	public struct ParentNode: Sendable, Equatable, MLSCodable {
-		public var encryptionKey: MLS.HpkePublicKey
-		public var parentHash: Data
-		public var unmergedLeaves: [MLS.LeafIndex]
-
-		public init(
-			encryptionKey: MLS.HpkePublicKey, parentHash: Data,
-			unmergedLeaves: [MLS.LeafIndex]
-		) {
-			self.encryptionKey = encryptionKey
-			self.parentHash = parentHash
-			self.unmergedLeaves = unmergedLeaves
-		}
-
-		public func encode(to writer: inout MLS.Writer) throws {
-			try writer.encode(encryptionKey)
-			try writer.writeOpaque(parentHash)
-			try writer.encodeVector(unmergedLeaves)
-		}
-
-		public init(from reader: inout MLS.Reader) throws {
-			encryptionKey = try MLS.HpkePublicKey(from: &reader)
-			parentHash = Data(try reader.readOpaque())
-			unmergedLeaves = try reader.decodeVector()
-		}
-	}
+	/// `ParentNode` itself lives in `MLSTreeKEM` (see that file's doc
+	/// comment) — the tree hash needs to re-encode a *filtered* copy of it,
+	/// so the encoder has to live where that filtering happens. This
+	/// typealias means nothing here ever has to say `MLS.TreeKEM.ParentNode`.
+	public typealias ParentNode = MLS.TreeKEM.ParentNode
 
 	/// `enum { reserved(0), leaf(1), parent(2), (255) } NodeType;`
 	public enum NodeType: UInt8, MLSClosedEnum {
@@ -45,10 +23,15 @@ extension MLS.RFC9420 {
 	/// `ratchet_tree`'s wire form is `optional<Node> ratchet_tree<V>` — a
 	/// vector of *optional* nodes (blank tree slots are absent, not a
 	/// third `Node` case) — so this type only needs to represent "a node,"
-	/// never "no node"; `[Node?]` at the call site covers the rest. Types
-	/// only, per this phase's scope: no tree-hash, parent-hash, or
-	/// resolution algorithms — those are phase 4 (`MLSTreeKEM`)'s job, and
-	/// nothing here presumes how they'll be built.
+	/// never "no node"; `[Node?]` at the call site covers the rest.
+	///
+	/// `MLSTreeKEM`'s `RatchetTree` stores a `LeafRecord` projection at each
+	/// leaf slot, not a `LeafNode` directly (see that type's doc comment),
+	/// so converting between `[Node?]` and a `RatchetTree` is this file's
+	/// job, not `MLSTreeKEM`'s — see `RatchetTreeConversion.swift`. A
+	/// `LeafNode` has no length prefix on the wire, so it can't be skipped
+	/// without parsing it; only the profile, which knows `LeafNode`'s
+	/// shape, can do that.
 	public enum Node: Sendable, Equatable {
 		case leaf(LeafNode)
 		case parent(ParentNode)

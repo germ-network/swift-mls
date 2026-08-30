@@ -8,6 +8,7 @@ extension MLS.RFC9420 {
 		case unknownProposalType(UInt16)
 		case unknownProposalOrRefType(UInt8)
 		case unknownContentType(MLS.ContentType)
+		case unsupportedProtocolVersion(MLS.ProtocolVersion)
 		/// `groupContext` must be supplied to `LeafNode.toBeSigned` iff
 		/// `source` is `.update` or `.commit` (RFC 9420 §7.2's
 		/// `LeafNodeTBS`) — never for `.keyPackage`.
