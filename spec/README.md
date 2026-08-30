@@ -40,7 +40,7 @@ Current levels:
 
 | profile | level | why |
 |---|---|---|
-| `MLS.RFC9420` | **conformant** — core group lifecycle | Both clauses met: every official vector in scope is consumed and asserted against, and the mlswg gRPC harness runs this profile against mls-rs under the mlswg Go test-runner, agreeing in both directions on every feature both stacks implement. The qualifier is load-bearing — ReInit, branching, external join/commit, external senders, and self-proposed Updates are deferred and refused explicitly. See [`conformance.md`](conformance.md) |
+| `MLS.RFC9420` | **conformant** — core group lifecycle | Both clauses met: every official vector in scope is consumed and asserted against, and the mlswg gRPC harness runs this profile against mls-rs under the mlswg Go test-runner, agreeing in both directions on every feature both stacks implement. The qualifier is load-bearing — ReInit, branching, external join/commit, external senders, and self-proposed Updates are deferred and refused explicitly. Persistence is outside the claim entirely: [`snapshot.md`](snapshot.md) is draft and its vectors do not yet exist. See [`conformance.md`](conformance.md) |
 
 The bar is only worth stating if it is applied to us too, which cuts both ways:
 this profile withheld the label until interop actually ran, and now carries it

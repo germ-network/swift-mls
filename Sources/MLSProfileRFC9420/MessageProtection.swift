@@ -89,12 +89,17 @@ extension MLS.RFC9420.Group {
 		var skipped: [UInt32: (key: Data, nonce: Data)] = [:]
 	}
 
-	/// Everything unprotecting a *retained* epoch's message needs — a
-	/// snapshot, because the live group has moved on: the group context
+	/// Everything unprotecting a *retained* epoch's `PrivateMessage` needs
+	/// — frozen, because the live group has moved on: the group context
 	/// this epoch's signatures bind, each member's signature key as of
 	/// this epoch, and the consuming message-secret state. Deliberately
 	/// NOT the epoch's `init_secret` or key-schedule tail (§9.2 requires
-	/// those gone once the next epoch exists).
+	/// those gone once the next epoch exists), and not its `membership_key`
+	/// either — so a retained epoch's `PublicMessage` cannot be verified.
+	///
+	/// "Frozen" rather than "snapshot": `Snapshot` is the glossary term for
+	/// a whole group's persisted state (`spec/snapshot.md`), which this is
+	/// one section of.
 	struct MessageSecrets: Sendable {
 		let groupContext: MLS.RFC9420.GroupContext
 		let senderDataSecret: Data
