@@ -126,9 +126,15 @@ extension MLS {
 		/// independent `Extract`, in order, over an all-zero starting
 		/// accumulator — never a plain concatenation, so no PSK's
 		/// contribution can be inferred without knowing every other one.
+		///
+		/// `encodedID` is a fully-encoded `PreSharedKeyID` (the wire type
+		/// itself lives in a profile, per this component's "no wire types"
+		/// rule — see `Labels.swift`'s `pskLabel`), so this works
+		/// identically for external and resumption PSKs; this component
+		/// never needs to know which one it was given.
 		public static func pskSecret(
 			_ provider: any CipherSuiteProvider,
-			psks: [(id: Data, nonce: Data, psk: Data)]
+			psks: [(encodedID: Data, psk: Data)]
 		) throws -> Data {
 			let zero = Data(repeating: 0, count: provider.hashSize)
 			guard let count = UInt16(exactly: psks.count) else {
@@ -138,8 +144,8 @@ extension MLS {
 			var secret = zero
 			for (index, entry) in psks.enumerated() {
 				let extracted = try provider.kdfExtract(salt: zero, ikm: entry.psk)
-				let label = try pskLabel(
-					id: entry.id, nonce: entry.nonce, index: UInt16(index),
+				let label = pskLabel(
+					encodedID: entry.encodedID, index: UInt16(index),
 					count: count)
 				let input = try expandWithLabel(
 					provider, secret: extracted, label: "derived psk",
@@ -149,25 +155,12 @@ extension MLS {
 			return secret
 		}
 
-		/// RFC 9420 §6.3.2: the sender-data key/nonce, derived from the
-		/// first `Nh` bytes of the ciphertext itself (or the whole
-		/// ciphertext, if shorter) — not from any per-message secret,
-		/// since the recipient doesn't know who sent a message, or its
-		/// generation, until *after* decrypting the sender data that
-		/// names them.
-		public static func senderDataKeyNonce(
-			_ provider: any CipherSuiteProvider,
-			senderDataSecret: Data,
-			ciphertext: Data
-		) throws -> (key: Data, nonce: Data) {
-			let sample = ciphertext.prefix(provider.hashSize)
-			let key = try expandWithLabel(
-				provider, secret: senderDataSecret, label: "key",
-				context: Data(sample), length: provider.aeadKeySize)
-			let nonce = try expandWithLabel(
-				provider, secret: senderDataSecret, label: "nonce",
-				context: Data(sample), length: provider.aeadNonceSize)
-			return (key, nonce)
-		}
+		// Sender-data key/nonce derivation (RFC 9420 §6.3.2) moved to
+		// MLSFraming (`MLS.Framing.senderDataKeyNonce`) once that target
+		// existed — this component produces `sender_data_secret` as part
+		// of the epoch fan-out; deriving a *per-message* key/nonce from it
+		// is framing's job, not the key schedule's. It lived here only
+		// because MLSFraming didn't exist yet when phase 2 needed it
+		// tested. See germ-swift-mls/docs/status.md's "Phase 3" section.
 	}
 }

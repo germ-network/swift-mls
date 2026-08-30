@@ -95,9 +95,10 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 				for: content
 			).derRepresentation
 		case .p521Aes256:
-			try P521.Signing.PrivateKey(rawRepresentation: privateKey.data).signature(
-				for: content
-			).derRepresentation
+			try P521.Signing.PrivateKey(rawRepresentation: p521Padded(privateKey.data))
+				.signature(
+					for: content
+				).derRepresentation
 		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
 		}
 	}
@@ -440,8 +441,10 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 					.publicKey.x963Representation)
 		case .p521Aes256:
 			.init(
-				try P521.KeyAgreement.PrivateKey(rawRepresentation: secretKey.data)
-					.publicKey.x963Representation)
+				try P521.KeyAgreement.PrivateKey(
+					rawRepresentation: p521Padded(secretKey.data)
+				)
+				.publicKey.x963Representation)
 		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
 		}
 	}
@@ -469,5 +472,18 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 			}
 		}
 		throw MLS.CryptoError.invalidKey
+	}
+
+	/// P-521's scalar is 66 bytes (⌈521/8⌉), but the top byte holds only
+	/// one significant bit, so roughly half of all P-521 private keys have
+	/// a leading zero byte in that representation — and some encoders
+	/// (confirmed: the official `message-protection.json` RFC 9420 test
+	/// vector) strip it as a minimal-length integer, producing 65 bytes.
+	/// swift-crypto's `P521....PrivateKey(rawRepresentation:)` requires
+	/// exactly 66 and throws otherwise. Left-padding restores the value
+	/// without changing it — zero-extending a big-endian integer is a
+	/// no-op on its magnitude.
+	private func p521Padded(_ raw: Data) -> Data {
+		raw.count >= 66 ? raw : Data(repeating: 0, count: 66 - raw.count) + raw
 	}
 }

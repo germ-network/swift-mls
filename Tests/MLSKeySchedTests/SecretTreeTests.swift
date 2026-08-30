@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSFraming
 import MLSVectorSupport
 import Testing
 
@@ -63,9 +64,9 @@ struct SecretTreeTests {
 			}
 		}
 
-		let (key, nonce) = try MLS.KeySchedule.senderDataKeyNonce(
-			provider, senderDataSecret: record.senderData.senderDataSecret.bytes,
-			ciphertext: record.senderData.ciphertext.bytes
+		let (key, nonce) = try MLS.Framing.senderDataKeyNonce(
+			provider, secret: record.senderData.senderDataSecret.bytes,
+			ciphertextSample: record.senderData.ciphertext.bytes
 		)
 		#expect(key == record.senderData.key.bytes)
 		#expect(nonce == record.senderData.nonce.bytes)
