@@ -12,11 +12,15 @@ extension MLS.RFC9420 {
 	/// or Commit. Value type, no actors or shared mutable state — the app
 	/// owns storage, this owns nothing but its own fields.
 	public struct Group: Sendable {
-		public private(set) var context: GroupContext
-		public private(set) var tree: MLS.TreeKEM.RatchetTree
-		public private(set) var interimTranscriptHash: Data
-		public private(set) var myLeafIndex: MLS.LeafIndex
-		public private(set) var epoch: MLS.KeySchedule.Epoch
+		// `internal(set)`, not `private(set)`: Swift scopes `private` to the
+		// file, and commit processing lives in `CommitProcessing.swift`.
+		// Publicly these stay read-only -- a caller mutates a `Group` only
+		// through `join`/`process`.
+		public internal(set) var context: GroupContext
+		public internal(set) var tree: MLS.TreeKEM.RatchetTree
+		public internal(set) var interimTranscriptHash: Data
+		public internal(set) var myLeafIndex: MLS.LeafIndex
+		public internal(set) var epoch: MLS.KeySchedule.Epoch
 
 		/// Every HPKE secret key this member currently holds, keyed by
 		/// *node* index — its own leaf (`2 * myLeafIndex`) plus whatever
