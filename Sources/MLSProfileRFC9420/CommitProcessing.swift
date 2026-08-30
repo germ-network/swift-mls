@@ -150,6 +150,30 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.pathRequired
 		}
 
+		// A ReInit-bearing commit is rejected rather than applied, because
+		// the alternative here is uniquely bad: it would *succeed*.
+		//
+		// RFC 9420 §12.4.2: "If the Commit included a ReInit proposal, the
+		// client MUST NOT use the group to send messages anymore. Instead,
+		// it MUST wait for a Welcome message from the committer meeting
+		// the requirements of Section 11.2." ReInit is deferred
+		// project-wide, so there is no state to transition into and no
+		// Welcome path to wait on.
+		//
+		// Every other unhandled proposal type fails closed on its own --
+		// an ExternalInit in a regular commit diverges the key schedule
+		// and dies at the confirmation tag. ReInit does not touch the key
+		// schedule at all, so processing it silently returns a
+		// live-looking `Group` that the caller must not send from. That is
+		// the one case where "unimplemented" and "succeeded" are
+		// indistinguishable to a caller, which is why it gets an explicit
+		// rejection instead.
+		if resolved.contains(where: {
+			if case .reInit = $0.proposal { true } else { false }
+		}) {
+			throw MLS.RFC9420.GroupError.unsupportedReInit
+		}
+
 		// 8: apply proposals in §12.3's order, NOT list order.
 		//
 		// GroupContextExtensions is computed first and separately, because
@@ -212,9 +236,7 @@ extension MLS.RFC9420.Group {
 
 		for stored in resolved {
 			guard case .add(let keyPackage) = stored.proposal else { continue }
-			let before = provisionalTree.leafCount
 			try provisionalTree.apply(stored.proposal, sender: senderIndex)
-			_ = before
 			if let added = provisionalTree.nonBlankLeaves().first(where: {
 				(try? $0.record.encoded == keyPackage.leafNode.mlsEncoded())
 					?? false
@@ -239,10 +261,26 @@ extension MLS.RFC9420.Group {
 		let commitSecret: Data
 
 		if let path = commit.path {
-			// 9a/9b: §12.4.2's own checks on the committer's new leaf.
+			// 9a: §12.4.2's path bullet is two sentences, and both bind:
+			// "Validate the LeafNode as specified in Section 7.3. The
+			// leaf_node_source field MUST be set to commit."
+			//
+			// §7.3 splits into an authenticity half (the leaf's own
+			// signature, over a TBS that binds `(group_id, leaf_index)`
+			// for a commit-sourced leaf) and a policy half (lifetime,
+			// capabilities, required_capabilities). This phase implements
+			// the authenticity half everywhere and defers the policy half
+			// to phase 6 -- the same split `join` already applies to every
+			// leaf in the tree. Verifying it here matters more than
+			// anywhere else: this leaf is the committer's *new* identity
+			// binding, and installing it unverified means every later
+			// message from that member verifies against a key nothing ever
+			// proved they hold.
 			guard case .commit = path.leafNode.source else {
 				throw MLS.RFC9420.GroupError.updatePathLeafNotCommitSource
 			}
+			try path.leafNode.verifySignature(
+				provider, groupContext: (context.groupID, senderIndex))
 			guard path.leafNode.encryptionKey != senderLeaf.encryptionKey else {
 				throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
 			}
@@ -385,11 +423,20 @@ extension MLS.RFC9420.Group {
 		return resumptionPsks[resumption.epoch]
 	}
 
-	/// §6's rule, in order: drop keys at nodes this commit blanked, drop
-	/// keys on the committer's direct path (which `applyUpdatePath` just
-	/// re-keyed), then keep only what is still on our own path. Steps 1-2
-	/// must precede the merge of fresh keys, or a stale entry overwrites a
-	/// fresh one at the same index.
+	/// RFC 9420 §7.5: "After processing the update, each recipient MUST
+	/// delete outdated key material" — §6 is Message Framing and was a
+	/// mis-citation. The three-step order below is this implementation's
+	/// own construction, not the section's text: drop keys at nodes this
+	/// commit blanked, drop keys on the committer's direct path (which
+	/// `applyUpdatePath` just re-keyed), then keep only what is still on
+	/// our own path. Steps 1-2 must precede the merge of fresh keys, or a
+	/// stale entry overwrites a fresh one at the same index.
+	///
+	/// Under-pruning is functionally invisible — a re-keyed node this
+	/// member still covers gets overwritten by the same commit's decap,
+	/// and blanked nodes never appear in a resolution — so it breaks no
+	/// test while still violating §7.5's forward-secrecy MUST. That is
+	/// exactly why the rule is written out here rather than left implicit.
 	private func prunedSecretKeys(
 		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: UInt32
 	) -> [UInt32: MLS.HpkeSecretKey] {
