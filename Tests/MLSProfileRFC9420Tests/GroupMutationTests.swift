@@ -79,6 +79,49 @@ struct GroupMutationTests {
 
 	enum TestFailure: Error { case unexpectedShape }
 
+	/// Re-seals a mutated `GroupInfo` into a self-consistent `Welcome`.
+	/// Needed by any test that changes a field *inside* `GroupInfo`:
+	/// `encrypted_group_info`'s own ciphertext bytes are the HPKE context
+	/// `GroupSecrets` was encrypted under (`decryptGroupSecrets`'s doc
+	/// comment), so `GroupSecrets` must be re-encrypted to match or
+	/// `join()` fails HPKE authentication before ever reaching whatever
+	/// the test actually means to exercise -- confirmed by tracing a
+	/// first attempt that skipped this and got exactly that failure.
+	private static func reseal(
+		_ scenario: Scenario, groupInfo: MLS.RFC9420.GroupInfo
+	) throws -> MLS.RFC9420.Welcome {
+		let keyPackageRef = try scenario.keyPackage.reference(scenario.provider)
+		let groupSecrets = try scenario.welcome.decryptGroupSecrets(
+			scenario.provider, keyPackageRef: keyPackageRef,
+			initKey: scenario.credentials.initKey)
+		let pskSecret = try MLS.KeySchedule.pskSecret(scenario.provider, psks: [])
+		let epochSeed = try scenario.provider.kdfExtract(
+			salt: groupSecrets.joinerSecret, ikm: pskSecret)
+		let welcomeSecret = try MLS.deriveSecret(
+			scenario.provider, secret: epochSeed, label: "welcome")
+		let (key, nonce) = try MLS.KeySchedule.welcomeKeyNonce(
+			scenario.provider, welcomeSecret: welcomeSecret)
+		let resealedGroupInfo = try scenario.provider.aeadSeal(
+			key: key, nonce: nonce, aad: nil, plaintext: try groupInfo.mlsEncoded())
+
+		let (enc, ciphertext) = try MLS.encryptWithLabel(
+			scenario.provider, publicKey: scenario.credentials.keyPackage.initKey,
+			label: "Welcome", context: resealedGroupInfo,
+			plaintext: try groupSecrets.mlsEncoded())
+
+		var welcome = scenario.welcome
+		welcome.encryptedGroupInfo = resealedGroupInfo
+		welcome.secrets = welcome.secrets.map {
+			var entry = $0
+			if entry.newMember == keyPackageRef {
+				entry.encryptedGroupSecrets = MLS.HpkeCiphertext(
+					kemOutput: enc, ciphertext: ciphertext)
+			}
+			return entry
+		}
+		return welcome
+	}
+
 	@Test("scenario itself joins cleanly (sanity check for every mutation test below)")
 	func scenarioJoinsCleanly() throws {
 		let scenario = try Self.buildScenario()
@@ -126,29 +169,70 @@ struct GroupMutationTests {
 		}
 	}
 
-	/// S5, weaker form: blanking the signer's own leaf must never be
-	/// silently accepted. Not asserting the specific `blankSignerLeaf`
-	/// error here -- this join() deliberately validates tree structure
-	/// (S7-S9) *before* checking the signer specifically (see `join`'s own
-	/// doc comment on why bullet ordering was changed from the RFC's), and
-	/// blanking a leaf that already has parent-hash chains validated
-	/// through it trips `treeHashMismatch`/`parentHashMismatch` first on
-	/// this vector's own tree shape -- which is a real, earlier rejection,
-	/// just not this specific one. `blankSignerLeaf` itself is exercised
-	/// directly, error-case-only, by construction in `join`'s own logic;
-	/// reaching it black-box needs a tree where the signer's leaf can be
-	/// blanked with no other structural fallout, which this vector's
-	/// trees don't happen to offer.
+	/// S5, weaker form, arrived at empirically rather than assumed: a
+	/// blank `GroupInfo.signer` leaf is never silently accepted, but
+	/// pinning down `blankSignerLeaf` specifically as the black-box
+	/// result needs more than blanking the leaf in place -- two layered
+	/// reasons, both traced by hand, not guessed:
+	///
+	/// 1. `tree_hash` lives *inside* the AEAD-sealed `GroupInfo`, and
+	///    `GroupSecrets` is HPKE-bound to `GroupInfo`'s own ciphertext
+	///    bytes as context (`decryptGroupSecrets`'s doc comment). So a
+	///    tree mutation needs `GroupInfo` re-sealed with the new
+	///    `tree_hash` *and* `GroupSecrets` re-encrypted against the new
+	///    ciphertext bytes, or `join()` fails at HPKE-decrypting
+	///    `GroupSecrets` (`authenticationFailure`) before ever reaching
+	///    the tree at all -- confirmed by trying the partial construction
+	///    first and observing exactly that failure.
+	/// 2. Once *that* is right (as it is below), blanking the signer's
+	///    leaf still fails the *parent-hash chain* check first
+	///    (`TreeError.parentHashMismatch`), not `blankSignerLeaf` --
+	///    also confirmed by observation, not assumption. This isn't a
+	///    quirk of one record: the signer is whoever committed most
+	///    recently, so their own leaf is structurally the freshest
+	///    anchor for their ancestors' parent-hash claims -- blanking it
+	///    orphans exactly the claims that leaf's own commit just made.
+	///
+	/// So this test builds the fully-reconstructed Welcome (both layers
+	/// above) and asserts rejection without pinning the specific error --
+	/// `blankSignerLeaf` is exercised directly, by construction, in
+	/// `join()`'s own logic instead.
 	@Test("S5: blanking GroupInfo.signer's leaf is never silently accepted")
 	func blankSignerLeafRejected() throws {
 		let scenario = try Self.buildScenario()
-		var tree = scenario.externalTree
-		tree[2 * Int(scenario.groupInfo.signer.value)] = nil
+
+		var mutatedNodes = scenario.externalTree
+		mutatedNodes[2 * Int(scenario.groupInfo.signer.value)] = nil
+		let mutatedTree = try MLS.TreeKEM.RatchetTree(mutatedNodes)
+
+		var groupInfo = scenario.groupInfo
+		groupInfo.groupContext.treeHash = try mutatedTree.treeHash(scenario.provider)
+		let welcome = try Self.reseal(scenario, groupInfo: groupInfo)
+
 		#expect(throws: (any Error).self) {
 			_ = try MLS.RFC9420.Group.join(
-				scenario.provider, welcome: scenario.welcome,
+				scenario.provider, welcome: welcome,
 				credentials: scenario.credentials,
-				externalTree: tree, psk: { _ in nil })
+				externalTree: mutatedNodes, psk: { _ in nil })
+		}
+	}
+
+	/// S6: `GroupInfo.group_context.cipher_suite` disagreeing with the
+	/// joiner's own `KeyPackage.cipher_suite` must be rejected -- distinct
+	/// from S2, which checks the *Welcome's* own outer `cipher_suite`
+	/// field, not the one sealed inside `GroupInfo`.
+	@Test("S6: GroupInfo.group_context.cipher_suite mismatched against our own KeyPackage's")
+	func groupContextCipherSuiteMismatch() throws {
+		let scenario = try Self.buildScenario()
+		var groupInfo = scenario.groupInfo
+		groupInfo.groupContext.cipherSuite = .init(id: 2)
+		let welcome = try Self.reseal(scenario, groupInfo: groupInfo)
+
+		#expect(throws: MLS.RFC9420.GroupError.cipherSuiteMismatch) {
+			_ = try MLS.RFC9420.Group.join(
+				scenario.provider, welcome: welcome,
+				credentials: scenario.credentials,
+				externalTree: scenario.externalTree, psk: { _ in nil })
 		}
 	}
 

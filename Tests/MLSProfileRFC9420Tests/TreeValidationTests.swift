@@ -194,6 +194,57 @@ struct TreeValidationTests {
 		}
 	}
 
+	@Test("every vector tree's unmerged-leaf entries are all justified", arguments: records)
+	func vectorTreesHaveValidUnmergedLeaves(_ record: TreeValidationVector) throws {
+		let tree = try Self.decodeTree(record)
+		#expect(throws: Never.self) { try tree.validateUnmergedLeaves() }
+	}
+
+	@Test("every vector tree has no duplicate encryption key", arguments: records)
+	func vectorTreesHaveNoDuplicateEncryptionKeys(_ record: TreeValidationVector) throws {
+		let tree = try Self.decodeTree(record)
+		#expect(throws: Never.self) { try tree.validateNoDuplicateEncryptionKeys() }
+	}
+
+	/// S9b: an `unmerged_leaves` entry with no leaf whose direct-path walk
+	/// actually reaches it (leaf 4's walk stops one level below node 11,
+	/// at non-blank node 9, which doesn't list leaf 4 -- confirmed against
+	/// this exact record) is rejected, not silently accepted. Inserted in
+	/// sorted position (`[4, 7]`, not appended as `[7, 4]`) so this
+	/// isolates the "orphan entry" check from the separate sortedness
+	/// check -- both would otherwise fire on the same unsorted mutation.
+	@Test("S9b: an unmerged-leaf entry no leaf's walk justifies is rejected")
+	func mutationOrphanUnmergedLeafRejected() throws {
+		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())
+		try tree.validateUnmergedLeaves()  // sanity: valid before mutation
+
+		var p = try #require(tree.parent(at: 11))
+		let bogus = MLS.LeafIndex(value: 4)
+		try #require(!p.unmergedLeaves.contains(bogus))
+		p.unmergedLeaves.insert(bogus, at: 0)
+		tree.setParent(11, to: p)
+
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeafNotAtExpectedPosition) {
+			try tree.validateUnmergedLeaves()
+		}
+	}
+
+	/// S9b: an unsorted `unmerged_leaves` list is rejected outright, ahead
+	/// of (and independent from) the orphan-entry walk above.
+	@Test("S9b: an unsorted unmerged-leaves list is rejected")
+	func mutationUnsortedUnmergedLeavesRejected() throws {
+		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())
+		try tree.validateUnmergedLeaves()  // sanity: valid before mutation
+
+		var p = try #require(tree.parent(at: 11))
+		p.unmergedLeaves = [MLS.LeafIndex(value: 7), MLS.LeafIndex(value: 4)]
+		tree.setParent(11, to: p)
+
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
+			try tree.validateUnmergedLeaves()
+		}
+	}
+
 	@Test("S14: a trailing blank leaf is rejected, not silently trimmed", arguments: records)
 	func rejectsTrailingBlank(_ record: TreeValidationVector) throws {
 		var reader = MLS.Reader(record.tree.bytes)
