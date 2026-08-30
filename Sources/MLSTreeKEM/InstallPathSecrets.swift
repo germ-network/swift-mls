@@ -20,14 +20,20 @@ extension MLS.TreeKEM.RatchetTree {
 	/// actually participate in, not something still mid-commit.
 	///
 	/// Returns the derived secret keys in root-to-leaf order, one per
-	/// direct-path entry from `startIndex` up to (and including) the
-	/// root — the caller installs them at the corresponding node indices.
+	/// *unfiltered* direct-path entry from the LCA up to (and including)
+	/// the root — the caller installs them at the corresponding node
+	/// indices. A filtered entry (empty copath resolution at that level —
+	/// mls-rs's `private.rs`'s `if *f { continue; }`) is skipped entirely:
+	/// no key to check there (nobody encrypted to an empty resolution) and
+	/// no chain advance, exactly `beginCommitPath`/`decapCommitPath`'s own
+	/// unfiltered-entries-only semantics.
 	public func installPathSecrets(
 		forLeaf leafIndex: MLS.LeafIndex, from signer: MLS.LeafIndex, pathSecret: Data,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> [(node: UInt32, secretKey: MLS.HpkeSecretKey)] {
 		let signerPath = try MLS.TreeMath.directPath(
 			from: 2 * signer.value, leafCount: leafCount)
+		let signerFiltered = try filteredDirectPath(from: signer)
 		let selfPath = Set(
 			try MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
 				.map(\.path))
@@ -39,7 +45,8 @@ extension MLS.TreeKEM.RatchetTree {
 
 		var secret = pathSecret
 		var installed: [(node: UInt32, secretKey: MLS.HpkeSecretKey)] = []
-		for step in signerPath[lcaIndex...] {
+		for (step, isFiltered) in zip(signerPath[lcaIndex...], signerFiltered[lcaIndex...])
+		where !isFiltered {
 			let (secretKey, publicKey) = try MLS.TreeKEM.nodeKeyPair(
 				provider, pathSecret: secret)
 			guard let treeKey = parent(at: step.path)?.encryptionKey,

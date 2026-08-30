@@ -37,6 +37,16 @@ extension MLS.TreeKEM {
 		/// key comes from the profile signing a fresh `LeafNode` (step 3
 		/// of encap), not from this component.
 		fileprivate let unfilteredPathSecrets: [Data]
+		/// The committer's own private half of every unfiltered
+		/// direct-path node's fresh key pair — index `i` corresponds to
+		/// `unfilteredPathSecrets[i]` (and, after `finishCommitPath`, to
+		/// `pathNodes[i]`), the same *unfiltered*-entries-only indexing
+		/// used everywhere else in this pair of functions. Not consumed by
+		/// `finishCommitPath` — it derives public keys itself from the
+		/// path secrets it already has — but the caller (the profile)
+		/// needs these to populate the committer's own private tree state
+		/// after the commit lands, since `beginCommitPath` only ever wrote
+		/// the *public* keys into the tree.
 		public let nodeSecretKeys: [MLS.HpkeSecretKey]
 		/// The committer's own new leaf's `parent_hash` — install this on
 		/// the `LeafNode` being signed (encap step 3) before computing the
@@ -118,9 +128,12 @@ extension MLS.TreeKEM.RatchetTree {
 
 		for (step, isFiltered) in zip(stage.path, stage.filtered) where !isFiltered {
 			let pathSecret = stage.unfilteredPathSecrets[pathIndex]
-			let publicKey = try MLS.TreeKEM.nodeKeyPair(
-				provider, pathSecret: pathSecret
-			).publicKey
+			// `beginCommitPath` already installed this exact key into the
+			// tree via `setParent` -- reading it back avoids re-deriving
+			// an HPKE key pair from the path secret a second time.
+			guard let publicKey = parent(at: step.path)?.encryptionKey else {
+				throw MLS.TreeKEM.TreeError.notAMember
+			}
 			let recipients = resolution(of: step.sibling).filter {
 				!excludedNodeIndices.contains($0)
 			}
@@ -137,9 +150,19 @@ extension MLS.TreeKEM.RatchetTree {
 			pathIndex += 1
 		}
 
-		let rootPathSecret = stage.unfilteredPathSecrets.last ?? stage.firstPathSecret
-		let commitSecret = try MLS.TreeKEM.commitSecret(
-			provider, rootPathSecret: rootPathSecret)
+		// One step past the last path secret actually used. When every
+		// direct-path entry was filtered, none was used at all -- the
+		// chain never advanced past `firstPathSecret` itself, so *that* is
+		// the commit secret, not one derivation past it (mirrors mls-rs's
+		// `PathSecretGenerator`: its first `next_secret()` call, wherever
+		// it lands, returns the seed unadvanced).
+		let commitSecret: Data
+		if let lastUsed = stage.unfilteredPathSecrets.last {
+			commitSecret = try MLS.TreeKEM.commitSecret(
+				provider, rootPathSecret: lastUsed)
+		} else {
+			commitSecret = stage.firstPathSecret
+		}
 		return (pathNodes, commitSecret)
 	}
 

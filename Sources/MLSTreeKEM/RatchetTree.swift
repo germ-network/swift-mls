@@ -20,11 +20,16 @@ extension MLS.TreeKEM {
 		/// always agree with `nodes.count` and mutation never invalidates
 		/// that relationship on its own.
 		public var leafCount: UInt32 {
-			// Never throws in practice: `nodes.count` only grows by
-			// `insertLeaf`/`setParent`, both of which only ever produce a
-			// count `paddedLeafCount` already accepted once at `init`, or
-			// grow it by exactly the amount `insertLeaf` needs to reach the
-			// next valid leaf slot.
+			// Never throws in practice: every grower (`insertLeaf`,
+			// `setParent`/`setLeaf` on an index past the current array --
+			// `applyUpdatePath` does this routinely on a trimmed tree) only
+			// ever reaches an index tree-math already computed against the
+			// current (valid) `leafCount`, so the array can't grow past
+			// what `paddedLeafCount` accepts. A pathological node index
+			// handed to `setParent` directly, bypassing tree-math, could
+			// still trap this -- not reachable from decode or from
+			// anything in this module, only from misusing `setParent`'s
+			// own (module-internal) contract.
 			try! MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)
 		}
 
@@ -61,11 +66,13 @@ extension MLS.TreeKEM {
 				nodes[i] = value
 				return
 			}
-			// Growing past the current array only happens through
-			// `insertLeaf`, which grows exactly as far as needed
-			// (mirrors mls-rs `NodeVec::insert_leaf`) — reached here only
-			// by that path, never by `setParent`/`blank*` on an
-			// already-in-range index.
+			// Growing past the current array happens through `insertLeaf`
+			// (mirrors mls-rs `NodeVec::insert_leaf`, growing exactly as
+			// far as needed) and through `setParent`/`setLeaf` on an index
+			// past a trimmed tree's current physical length —
+			// `applyUpdatePath` does the latter routinely, since a
+			// direct-path ancestor can legitimately sit past where trailing
+			// blanks were trimmed away.
 			while UInt32(nodes.count) < index { nodes.append(nil) }
 			nodes.append(value)
 		}
