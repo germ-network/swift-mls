@@ -87,4 +87,40 @@ struct MessagesTests {
 		try treeWriter.encodeVector(nodes)
 		#expect(Data(treeWriter.bytes) == record.ratchetTree.bytes)
 	}
+
+	/// RFC 9420 §10: "If a client receives a KeyPackage carried within an
+	/// MLSMessage object, then it MUST verify that the version field of
+	/// the KeyPackage has the same value as the version field of the
+	/// MLSMessage."
+	///
+	/// Built by re-encoding a genuine vector `key_package` with only the
+	/// inner `KeyPackage.version` altered, so the outer `MLSMessage`
+	/// version stays `mls10` and the two disagree exactly as the MUST
+	/// describes. Everything else — including the KeyPackage's signature,
+	/// which no longer covers the mutated field — is untouched, which is
+	/// the point: the version disagreement must be caught at decode, not
+	/// left to a later signature check that this profile does not perform
+	/// at decode time.
+	@Test("§10: a KeyPackage whose own version disagrees with its MLSMessage is rejected")
+	func keyPackageVersionMustMatchMessage() throws {
+		let record = try #require(Self.records.first)
+
+		var reader = MLS.Reader(record.mlsKeyPackage.bytes)
+		guard case .keyPackage(var keyPackage) = try MLS.RFC9420.Message(from: &reader)
+		else {
+			Issue.record("expected wire_format == mls_key_package")
+			return
+		}
+		try reader.finish()
+		#expect(keyPackage.version == MLS.ProtocolVersion.mls10)
+
+		keyPackage.version = MLS.ProtocolVersion(id: 0xFFFF)
+		let tampered = try MLS.RFC9420.Message.keyPackage(keyPackage).mlsEncoded()
+
+		var tamperedReader = MLS.Reader(tampered)
+		#expect(throws: MLS.RFC9420.WireError.unsupportedProtocolVersion(.init(id: 0xFFFF)))
+		{
+			_ = try MLS.RFC9420.Message(from: &tamperedReader)
+		}
+	}
 }

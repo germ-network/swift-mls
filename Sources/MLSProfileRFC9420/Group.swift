@@ -53,6 +53,47 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
+	/// Every non-blank leaf's own signature (RFC 9420 §7.3's authenticity
+	/// half), plus §7.3's last bullet: "Verify that the following fields
+	/// are unique among the members of the group: signature_key,
+	/// encryption_key."
+	///
+	/// The `encryption_key` half is `validateNoDuplicateEncryptionKeys`,
+	/// which is deliberately whole-tree (broader than this bullet, per its
+	/// own doc comment). The `signature_key` half can only live here: it is
+	/// scoped to *members*, and `MLSTreeKEM`'s `LeafRecord` projection
+	/// carries no signature key at all — reading one means decoding a
+	/// `LeafNode`, which is this profile's job. Folded into the loop that
+	/// already decodes every leaf for its signature, so it costs no extra
+	/// decode pass.
+	///
+	/// Split out of `join` rather than inlined **so it can be tested at
+	/// all**. Through `join` this check is unreachable: every leaf mutation
+	/// available to a test also perturbs the subtree hashes that parent
+	/// nodes' stored `parent_hash` values were computed over, so
+	/// `validateParentHashChain` rejects the tree first. Two successive
+	/// attempts at a black-box test passed with this check deleted before
+	/// that was traced — the check is real, the black-box route to it is
+	/// not.
+	static func validateLeaves(
+		_ tree: MLS.TreeKEM.RatchetTree, groupID: Data,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws {
+		var seenSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		for (leafIndex, record) in tree.nonBlankLeaves() {
+			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			let leafContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
+			switch leafNode.source {
+			case .keyPackage: leafContext = nil
+			case .update, .commit: leafContext = (groupID, leafIndex)
+			}
+			try leafNode.verifySignature(provider, groupContext: leafContext)
+			guard seenSignatureKeys.insert(leafNode.signatureKey).inserted else {
+				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
+			}
+		}
+	}
+
 	/// RFC 9420 §12.4.3.1, reordered so every structural check on the tree
 	/// precedes the first cryptographic judgement that reads from it (the
 	/// RFC's own bullet 5, the `GroupInfo` signature check, reads its
@@ -140,21 +181,24 @@ extension MLS.RFC9420.Group {
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch
 		}
-		for (leafIndex, record) in tree.nonBlankLeaves() {
-			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
-			let leafContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
-			switch leafNode.source {
-			case .keyPackage: leafContext = nil
-			case .update, .commit:
-				leafContext = (groupInfo.groupContext.groupID, leafIndex)
-			}
-			try leafNode.verifySignature(provider, groupContext: leafContext)
-		}
+		try validateLeaves(tree, groupID: groupInfo.groupContext.groupID, provider)
 
-		// bullet 7
+		// bullet 7. RFC 9420 §10.1 pairs these two in one sentence --
+		// "Verify that the cipher suite and protocol version of the
+		// KeyPackage match those in the GroupContext" -- so they are one
+		// check, not a cipher-suite check with a version check bolted on.
+		// The version half has no bite today (`mls10` is the only value
+		// RFC 9420 defines, and this profile's `Message` decoder rejects
+		// anything else at its dispatch point), but this library exists to
+		// produce protocol variants: the moment a second version is
+		// representable, a joiner that never compares versions accepts
+		// whatever the inviter claims.
 		guard groupInfo.groupContext.cipherSuite == credentials.keyPackage.cipherSuite
 		else {
 			throw MLS.RFC9420.GroupError.cipherSuiteMismatch
+		}
+		guard groupInfo.groupContext.version == credentials.keyPackage.version else {
+			throw MLS.RFC9420.GroupError.protocolVersionMismatch
 		}
 
 		// bullet 5
