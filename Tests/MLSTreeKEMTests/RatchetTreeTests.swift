@@ -49,23 +49,24 @@ struct RatchetTreeTests {
 		#expect(tree.parent(at: 1) == nil)
 	}
 
-	@Test("trim removes only the trailing run of blanks, never an interior one")
-	func trimOnlyTrailing() throws {
+	@Test("serializedNodeCount stops at the last non-blank node, keeping interior blanks")
+	func serializedNodeCountStopsAtLastNonBlank() throws {
 		var tree = try MLS.TreeKEM.RatchetTree(
 			nodes: [
 				.leaf(syntheticLeaf(1)), nil, nil, nil, .leaf(syntheticLeaf(2)),
 				nil, nil,
 			])
-		tree.trim()
-		// Interior blanks (indices 1-3) must survive; only the trailing
-		// pair (indices 5-6) is removed.
+		// The array is held full-width (nodeCount 7), but only the run up to
+		// the last non-blank node (index 4) is content — the trailing pair
+		// (5-6) is what encode drops. Interior blanks (1-3) are not trailing.
+		#expect(tree.serializedNodeCount == 5)
 		#expect(tree.leaf(at: .init(value: 0)) == syntheticLeaf(1))
 		#expect(tree.leaf(at: .init(value: 2)) == syntheticLeaf(2))
 		#expect(tree.isBlank(at: 1))
 		#expect(tree.isBlank(at: 3))
-		// Leaf index 2 (node 4) is present, so this is still a 4-leaf-
-		// capacity tree — trim only drops the physically-redundant
-		// trailing blank (leaf index 3), it doesn't shrink leafCount.
+		// Leaf index 2 (node 4) is occupied, so the right half is not empty
+		// and §7.7 truncation leaves leafCount at 4.
+		tree.truncate()
 		#expect(tree.leafCount.value == 4)
 	}
 
@@ -248,8 +249,8 @@ struct RatchetTreeGrowthTests {
 		) {
 			try tree.setLeaf(MLS.LeafIndex(value: index), to: nil)
 		}
-		// And the tree is untouched -- no partial growth happened.
-		#expect(tree.physicalNodeCount == 1)
+		// And the tree is untouched -- it is still a single-leaf tree.
+		#expect(tree.leafCount.value == 1)
 	}
 
 	@Test("the doubling step still works: a full tree grows by exactly one leaf pair")
@@ -258,17 +259,53 @@ struct RatchetTreeGrowthTests {
 		let index = try tree.insertLeaf(leaf(2))
 		#expect(index.value == 1)
 		#expect(tree.leafCount.value == 2)
+		// The reallocation to the larger nodeCount must preserve every
+		// existing node at its own index (array index == node index).
+		#expect(tree.leaf(at: .init(value: 0)) == leaf(1))
+		#expect(tree.leaf(at: .init(value: 1)) == leaf(2))
 	}
 
-	@Test("filling a trimmed-away slot inside the padded tree still works")
+	@Test("truncate shrinks leafCount once a Remove empties the rightmost subtree (§7.7)")
+	func truncateShrinksAfterRightRemove() throws {
+		// A full 4-leaf tree (leaves at node indices 0, 2, 4, 6).
+		var tree = try MLS.TreeKEM.RatchetTree(nodes: [
+			.leaf(leaf(1)), nil, .leaf(leaf(2)), nil,
+			.leaf(leaf(3)), nil, .leaf(leaf(4)),
+		])
+		#expect(tree.leafCount.value == 4)
+		// Remove both right-half leaves — this empties the entire right
+		// subtree and the root.
+		try tree.blankLeafAndDirectPath(.init(value: 3))
+		try tree.blankLeafAndDirectPath(.init(value: 2))
+		tree.truncate()
+		// §7.7: the tree drops to the smallest power of two that still holds
+		// its non-blank leaves — here, two.
+		#expect(tree.leafCount.value == 2)
+		#expect(tree.leaf(at: .init(value: 0)) == leaf(1))
+		#expect(tree.leaf(at: .init(value: 1)) == leaf(2))
+		// A leaf in the right half must not truncate: keep leaf 2, remove
+		// only leaf 3 — leaf 1 (right of the 2-leaf split) holds it open.
+		var kept = try MLS.TreeKEM.RatchetTree(nodes: [
+			.leaf(leaf(1)), nil, .leaf(leaf(2)), nil,
+			.leaf(leaf(3)), nil, .leaf(leaf(4)),
+		])
+		try kept.blankLeafAndDirectPath(.init(value: 3))
+		kept.truncate()
+		// Leaf index 2 (node 4) still occupies the right half, holding the
+		// tree open at four leaves.
+		#expect(kept.leafCount.value == 4)
+	}
+
+	@Test("a wire slot trimmed away on decode is still settable in the padded tree")
 	func trimmedFillStillWorks() throws {
-		// Physical length 3 (leafCount 2); parent slot 1 exists, leaf
-		// slot 2 exists. Padded nodeCount is 3 -- setting index 2 fills
-		// within it even though a trimmed array might not carry it.
+		// Wire array of length 2 -> leafCount 2, padded to full width
+		// (nodeCount 3). Node 2 exists even though the trimmed wire array
+		// didn't carry it, so setLeaf(1) lands within the tree.
 		var tree = try MLS.TreeKEM.RatchetTree(nodes: [.leaf(leaf(1)), nil])
-		#expect(tree.physicalNodeCount == 2)
+		#expect(tree.leafCount.value == 2)
+		#expect(tree.serializedNodeCount == 1)  // only node 0 is non-blank
 		try tree.setLeaf(MLS.LeafIndex(value: 1), to: leaf(2))
 		#expect(tree.leafCount.value == 2)
-		#expect(tree.physicalNodeCount == 3)
+		#expect(tree.serializedNodeCount == 3)  // node 2 now non-blank
 	}
 }

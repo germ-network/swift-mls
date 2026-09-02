@@ -17,7 +17,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// than in `MLSTreeKEM`, since it consumes `Proposal`/`LeafNode` —
 	/// `MLSTreeKEM` only supplies the primitives this is built from
 	/// (`insertLeaf`, `setLeaf`, `blankLeafAndDirectPath`,
-	/// `addUnmergedLeaf`, `trim`).
+	/// `addUnmergedLeaf`, `truncate`).
 	///
 	/// Proposal validation (does the sender have permission, is the tree
 	/// state consistent with the proposal) is *not* this function's job —
@@ -47,13 +47,13 @@ extension MLS.TreeKEM.RatchetTree {
 			// ancestor chain (whose keys nobody can vouch for against the
 			// member's new encryption key) goes blank.
 			try setLeaf(sender, to: leafNode.record)
-			blankDirectPath(of: sender)
+			try blankDirectPath(of: sender)
 		case .remove(let removed):
 			try blankLeafAndDirectPath(removed)
 		case .preSharedKey, .reInit, .externalInit, .groupContextExtensions:
 			throw MLS.RFC9420.TreeEditError.notATreeEditingProposal
 		}
-		trim()
+		truncate()
 		return addedIndex
 	}
 }

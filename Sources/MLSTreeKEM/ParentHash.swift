@@ -78,7 +78,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// sweep at the end, not the mismatch itself.
 	public func validateParentHashChain(_ provider: any MLS.CipherSuiteProvider) throws {
 		var toValidate = Set<UInt32>()
-		for i in stride(from: UInt32(1), to: physicalNodeCount, by: 2) {
+		for i in stride(from: UInt32(1), to: serializedNodeCount, by: 2) {
 			if parent(at: i) != nil { toValidate.insert(i) }
 		}
 		for (leafIndex, _) in nonBlankLeaves() {

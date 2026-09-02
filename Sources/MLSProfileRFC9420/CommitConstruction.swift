@@ -244,7 +244,11 @@ extension MLS.RFC9420.Group {
 			commitSecret = Data(repeating: 0, count: provider.hashSize)
 		}
 
-		try newTree.validateNoTrailingBlank()
+		// No trailing-blank check on the send side: the tree is serialized
+		// via `serializedNodeCount`, which trims trailing blanks by
+		// construction, so a built tree can never produce a malformed wire
+		// form. (It was a receive-side wire property; that check now lives on
+		// the decoded array in `Group.join`.)
 
 		// Frame, sign under the OLD context, chain the transcript.
 		let commit = MLS.RFC9420.Commit(proposals: proposalList, path: updatePath)

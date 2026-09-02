@@ -811,7 +811,7 @@ extension MLS.RFC9420.Group {
 		_ path: MLS.RFC9420.UpdatePath, in tree: MLS.TreeKEM.RatchetTree
 	) throws {
 		var existing: Set<MLS.HpkePublicKey> = []
-		for i in 0..<tree.physicalNodeCount {
+		for i in 0..<tree.serializedNodeCount {
 			if MLS.TreeMath.isLeaf(i) {
 				if let record = tree.leaf(at: .init(value: i / 2)) {
 					existing.insert(record.encryptionKey)

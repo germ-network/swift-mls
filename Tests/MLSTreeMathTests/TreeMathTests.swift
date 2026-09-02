@@ -83,11 +83,10 @@ struct TreeMathTests {
 	}
 
 	/// The ceiling half of `init(validating:)`, which the power-of-two cases
-	/// above never reach. Directly pinned because this is exactly the
-	/// boundary where an unbounded tree detonates: `RatchetTree.leafCount`
-	/// computes its value with `try!`, so a count that reaches 2^24 aborts
-	/// the process rather than throwing (see `RatchetTree.leafCount`'s
-	/// own comment).
+	/// above never reach. Directly pinned because this is the boundary a
+	/// growing tree must not cross: `RatchetTree` stops here too, via
+	/// `LeafCount.doubled()` returning `nil` rather than naming a tree past
+	/// the ceiling.
 	@Test("LeafCount accepts the largest legal tree and rejects the next power of two")
 	func leafCountCeilingBoundary() throws {
 		let largest = MLS.LeafIndex.ceiling / 2
@@ -137,7 +136,7 @@ struct TreeMathTests {
 	func paddedLeafCountMatchesVector() throws {
 		for record in Self.records {
 			#expect(
-				try MLS.TreeMath.paddedLeafCount(nodeArrayCount: Int(record.nNodes))
+				try MLS.LeafCount(nodeArrayCount: Int(record.nNodes))
 					.value
 					== record.nLeaves)
 		}
@@ -154,7 +153,7 @@ struct TreeMathTests {
 		throws
 	{
 		#expect(
-			try MLS.TreeMath.paddedLeafCount(nodeArrayCount: pair.nodeArrayCount).value
+			try MLS.LeafCount(nodeArrayCount: pair.nodeArrayCount).value
 				== pair.expected)
 	}
 
@@ -164,7 +163,7 @@ struct TreeMathTests {
 	@Test("paddedLeafCount rejects a result at or beyond LeafIndex.ceiling")
 	func paddedLeafCountRejectsCeilingOverflow() {
 		#expect(throws: MLS.TreeMathError.invalidLeafCount(MLS.LeafIndex.ceiling)) {
-			_ = try MLS.TreeMath.paddedLeafCount(
+			_ = try MLS.LeafCount(
 				nodeArrayCount: Int(MLS.LeafIndex.ceiling) * 2 - 1)
 		}
 	}

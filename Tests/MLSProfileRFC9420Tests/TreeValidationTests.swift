@@ -51,9 +51,14 @@ struct TreeValidationTests {
 		"every vector tree has correctly-parity-matched node kinds and no trailing blank",
 		arguments: records)
 	func vectorTreesAreStructurallyWellFormed(_ record: TreeValidationVector) throws {
-		let tree = try Self.decodeTree(record)
+		var reader = MLS.Reader(record.tree.bytes)
+		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector()
+		try reader.finish()
+		// No-trailing-blank is a property of the wire array, checked before
+		// decode; node-kind parity is a property of the decoded tree.
+		#expect(throws: Never.self) { try MLS.RFC9420.validateNoTrailingBlank(nodes) }
+		let tree = try MLS.TreeKEM.RatchetTree(nodes)
 		#expect(throws: Never.self) { try tree.validateNodeKinds() }
-		#expect(throws: Never.self) { try tree.validateNoTrailingBlank() }
 	}
 
 	@Test("every vector tree's parent-hash chain validates cleanly", arguments: records)
@@ -154,14 +159,14 @@ struct TreeValidationTests {
 		try tree.validateParentHashChain(provider)  // sanity: valid before mutation
 
 		let topmost = try #require(
-			stride(from: UInt32(1), to: tree.physicalNodeCount, by: 2).first {
+			stride(from: UInt32(1), to: tree.serializedNodeCount, by: 2).first {
 				tree.parent(at: $0)?.parentHash.isEmpty == true
 			})
 		var p = try #require(tree.parent(at: topmost))
 		// Any *other* node's key works as the substitute -- a well-formed
 		// HPKE key that simply isn't the one the chain below committed to.
 		let donor = try #require(
-			stride(from: UInt32(1), to: tree.physicalNodeCount, by: 2).lazy
+			stride(from: UInt32(1), to: tree.serializedNodeCount, by: 2).lazy
 				.compactMap { tree.parent(at: $0)?.encryptionKey }
 				.first { $0 != p.encryptionKey })
 		p.encryptionKey = donor
@@ -253,11 +258,12 @@ struct TreeValidationTests {
 		try reader.finish()
 		// Every vector tree already has no trailing blank (confirmed by
 		// `vectorTreesAreStructurallyWellFormed` above) — appending one
-		// explicit blank slot is a deliberate, direct mutation, not
-		// something insertLeaf or any other real operation would produce.
-		let tree = try MLS.TreeKEM.RatchetTree(nodes + [nil])
+		// explicit blank makes the wire array end in a blank, which the
+		// wire-array check rejects before decode. It has to run there: a
+		// trailing blank would inflate the padded leaf count, so a
+		// full-width `RatchetTree` could no longer see it.
 		#expect(throws: MLS.TreeKEM.TreeError.trailingBlankLeaves) {
-			try tree.validateNoTrailingBlank()
+			try MLS.RFC9420.validateNoTrailingBlank(nodes + [nil])
 		}
 	}
 }
