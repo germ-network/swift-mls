@@ -86,12 +86,9 @@ extension MLS.RFC9420.Group {
 		var seenSignatureKeys: Set<MLS.SignaturePublicKey> = []
 		for (leafIndex, record) in tree.nonBlankLeaves() {
 			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
-			let leafContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
-			switch leafNode.source {
-			case .keyPackage: leafContext = nil
-			case .update, .commit: leafContext = (groupID, leafIndex)
-			}
-			try leafNode.verifySignature(provider, groupContext: leafContext)
+			try leafNode.verifySignature(
+				provider,
+				placement: .inGroup(groupID: groupID, leafIndex: leafIndex))
 			guard seenSignatureKeys.insert(leafNode.signatureKey).inserted else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}

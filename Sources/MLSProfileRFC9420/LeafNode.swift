@@ -99,6 +99,35 @@ extension MLS.RFC9420.LeafNode: MLSDecodable {
 }
 
 extension MLS.RFC9420.LeafNode {
+	/// Where a `LeafNode` was found. Not "what to append to the TBS" — RFC
+	/// 9420 §7.2's second `select (LeafNodeTBS.leaf_node_source)` decides
+	/// that from the leaf's own `source`, and nothing else.
+	///
+	/// GER-2345. `toBeSigned` used to take the binding itself, as an
+	/// optional `(groupID, leafIndex)`, and throw when it disagreed with
+	/// `source`. That made two things wrong at once. Callers had to
+	/// pre-compute the `source` switch to decide what to pass, so
+	/// `Group.validateLeaves` carried a copy of the same three-way match
+	/// this file already performs; and the mismatch it threw on was API
+	/// misuse, not a wire condition, so an unreachable error case sat in
+	/// the middle of a validation path.
+	///
+	/// Taking the *placement* instead makes the API-misuse half
+	/// unrepresentable — a caller states where it found the leaf, which it
+	/// always knows, and never chooses the encoding. What survives as a
+	/// throw is a real §7.3/§10 violation: a leaf in a KeyPackage whose
+	/// source claims a group it cannot have been in.
+	public enum Placement: Sendable, Equatable {
+		/// At a known index in a known group's ratchet tree — a tree being
+		/// joined, an Update proposal, or a Commit's `UpdatePath`. A
+		/// `key_package`-sourced leaf reached this way is normal (a member
+		/// added but never yet updated) and still signs without the
+		/// binding.
+		case inGroup(groupID: Data, leafIndex: MLS.LeafIndex)
+		/// In a `KeyPackage`, which belongs to no group yet.
+		case keyPackage
+	}
+
 	/// `LeafNodeTBS` — the six pre-signature fields above, then `group_id`
 	/// and `leaf_index` iff `source` is `update` or `commit` (never for
 	/// `key_package`, where a leaf isn't yet bound to any group).
@@ -109,18 +138,7 @@ extension MLS.RFC9420.LeafNode {
 	/// fields the way a later profile's TBH needs a second encoding of
 	/// `FramedContentTBS`'s content. If that need arises, this is the
 	/// function to split.
-	public func toBeSigned(groupContext: (groupID: Data, leafIndex: MLS.LeafIndex)?) throws
-		-> Data
-	{
-		let needsContext: Bool
-		switch source {
-		case .keyPackage: needsContext = false
-		case .update, .commit: needsContext = true
-		}
-		guard (groupContext != nil) == needsContext else {
-			throw MLS.RFC9420.WireError.leafNodeTBSContextMismatch
-		}
-
+	public func toBeSigned(placement: Placement) throws -> Data {
 		var writer = MLS.Writer()
 		try writer.encode(encryptionKey)
 		try writer.encode(signatureKey)
@@ -128,9 +146,15 @@ extension MLS.RFC9420.LeafNode {
 		try writer.encode(capabilities)
 		try writer.encode(source)
 		try writer.encodeVector(extensions)
-		if let (groupID, leafIndex) = groupContext {
+		switch (source, placement) {
+		case (.keyPackage, _):
+			break
+		case (.update, .inGroup(let groupID, let leafIndex)),
+			(.commit, .inGroup(let groupID, let leafIndex)):
 			try writer.writeOpaque(groupID)
 			try writer.encode(leafIndex)
+		case (.update, .keyPackage), (.commit, .keyPackage):
+			throw MLS.RFC9420.WireError.leafNodeSourceNotKeyPackage
 		}
 		return Data(writer.bytes)
 	}
@@ -143,17 +167,15 @@ extension MLS.RFC9420.LeafNode {
 	/// deferred). The "LeafNodeTBS" label and the signed structure itself
 	/// are §7.2's; §12.4.3.1's tree-integrity bullet delegates here
 	/// ("validate the LeafNode as described in Section 7.3"), which is why
-	/// a joiner runs this over every non-blank leaf. `groupContext` supplies
-	/// `(group_id, leaf_index)` for `update`/`commit`-sourced leaves, nil
-	/// for `key_package`-sourced ones -- see `toBeSigned`'s own doc
-	/// comment.
+	/// a joiner runs this over every non-blank leaf. `placement` says where
+	/// the leaf was found; the leaf's own `source` decides what the TBS
+	/// binds -- see `toBeSigned`'s own doc comment.
 	public func verifySignature(
-		_ provider: any MLS.CipherSuiteProvider,
-		groupContext: (groupID: Data, leafIndex: MLS.LeafIndex)?
+		_ provider: any MLS.CipherSuiteProvider, placement: Placement
 	) throws {
 		let valid = try MLS.verifyWithLabel(
 			provider, publicKey: signatureKey, label: "LeafNodeTBS",
-			content: try toBeSigned(groupContext: groupContext), signature: signature)
+			content: try toBeSigned(placement: placement), signature: signature)
 		guard valid else { throw MLS.CryptoError.signatureVerificationFailed }
 	}
 }

@@ -26,7 +26,7 @@ private struct TwoMemberSecretTree: MLS.RFC9420.MessageKeySource {
 	{
 		let leafSecret = try MLS.KeySchedule.leafSecret(
 			provider, encryptionSecret: encryptionSecret, leafIndex: leafIndex.value,
-			numLeaves: 2)
+			numLeaves: try MLS.LeafCount(validating: 2))
 		let ratchetSecret =
 			contentType == .application
 			? try MLS.KeySchedule.applicationRatchetSecret(

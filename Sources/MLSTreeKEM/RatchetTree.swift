@@ -19,7 +19,7 @@ extension MLS.TreeKEM {
 		/// array length — recomputed on access, not cached, since it must
 		/// always agree with `nodes.count` and mutation never invalidates
 		/// that relationship on its own.
-		public var leafCount: UInt32 {
+		public var leafCount: MLS.LeafCount {
 			// Never throws in practice: every grower (`insertLeaf`,
 			// `setParent`/`setLeaf` on an index past the current array --
 			// `applyUpdatePath` does this routinely on a trimmed tree) only
@@ -99,7 +99,7 @@ extension MLS.TreeKEM {
 
 		/// Every non-blank leaf, in ascending index order.
 		public func nonBlankLeaves() -> [(index: MLS.LeafIndex, record: LeafRecord)] {
-			stride(from: 0, to: leafCount, by: 1).compactMap { i in
+			stride(from: 0, to: leafCount.value, by: 1).compactMap { i in
 				let index = MLS.LeafIndex(value: i)
 				return leaf(at: index).map { (index, $0) }
 			}
@@ -148,8 +148,8 @@ extension MLS.TreeKEM {
 		)
 			-> MLS.LeafIndex?
 		{
-			guard hint.value < leafCount else { return nil }
-			for i in hint.value..<leafCount {
+			guard hint.value < leafCount.value else { return nil }
+			for i in hint.value..<leafCount.value {
 				let index = MLS.LeafIndex(value: i)
 				if leaf(at: index) == nil { return index }
 			}
@@ -168,7 +168,7 @@ extension MLS.TreeKEM {
 				setLeaf(blank, to: record)
 				return blank
 			}
-			let newIndex = MLS.LeafIndex(value: leafCount)
+			let newIndex = MLS.LeafIndex(value: leafCount.value)
 			setNode(at: 2 * newIndex.value, to: .leaf(record))
 			return newIndex
 		}

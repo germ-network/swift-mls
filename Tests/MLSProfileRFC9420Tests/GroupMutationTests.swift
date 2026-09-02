@@ -120,7 +120,7 @@ struct GroupMutationTests {
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(
 			provider, privateKey: signingKey, label: "LeafNodeTBS",
-			content: try leaf.toBeSigned(groupContext: nil))
+			content: try leaf.toBeSigned(placement: .keyPackage))
 		return try leaf.record
 	}
 

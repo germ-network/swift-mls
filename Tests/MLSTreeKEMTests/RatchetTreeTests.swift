@@ -26,7 +26,7 @@ struct RatchetTreeTests {
 	@Test("a fresh single-leaf tree has one leaf, no parents, and the right leaf count")
 	func singleLeaf() {
 		let tree = MLS.TreeKEM.RatchetTree(singleLeaf: syntheticLeaf(1))
-		#expect(tree.leafCount == 1)
+		#expect(tree.leafCount.value == 1)
 		#expect(tree.leaf(at: .init(value: 0)) == syntheticLeaf(1))
 	}
 
@@ -66,7 +66,7 @@ struct RatchetTreeTests {
 		// Leaf index 2 (node 4) is present, so this is still a 4-leaf-
 		// capacity tree — trim only drops the physically-redundant
 		// trailing blank (leaf index 3), it doesn't shrink leafCount.
-		#expect(tree.leafCount == 4)
+		#expect(tree.leafCount.value == 4)
 	}
 
 	@Test("insertLeaf fills the leftmost blank leaf before ever growing the tree")
@@ -76,7 +76,7 @@ struct RatchetTreeTests {
 		let index = tree.insertLeaf(syntheticLeaf(3))
 		#expect(index == MLS.LeafIndex(value: 1))
 		#expect(tree.leaf(at: .init(value: 1)) == syntheticLeaf(3))
-		#expect(tree.leafCount == 2)
+		#expect(tree.leafCount.value == 2)
 	}
 
 	@Test("insertLeaf grows the tree (doubling the padded leaf count) once every leaf is full")
@@ -86,10 +86,10 @@ struct RatchetTreeTests {
 				.leaf(syntheticLeaf(1)), .parent(syntheticParent(9)),
 				.leaf(syntheticLeaf(2)),
 			])
-		#expect(tree.leafCount == 2)
+		#expect(tree.leafCount.value == 2)
 		let index = tree.insertLeaf(syntheticLeaf(3))
 		#expect(index == MLS.LeafIndex(value: 2))
-		#expect(tree.leafCount == 4)
+		#expect(tree.leafCount.value == 4)
 		#expect(tree.leaf(at: .init(value: 2)) == syntheticLeaf(3))
 		#expect(tree.leaf(at: .init(value: 3)) == nil)
 	}
