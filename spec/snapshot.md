@@ -186,7 +186,7 @@ MessageSecretStore = {
 }
 
 SecretTreeState = {
-    0: leaf_count            ; uint, 1 <= leaf_count <= 2^31
+    0: leaf_count            ; uint, a power of two, 1 <= leaf_count < 2^24
     1: node_secrets          ; { * uint => bstr }   SECRET values (Nh)
 }
 
