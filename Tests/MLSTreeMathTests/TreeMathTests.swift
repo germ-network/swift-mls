@@ -63,10 +63,10 @@ struct TreeMathTests {
 	/// someone ever reintroduces a raw-`UInt32` entry point, the failure
 	/// mode goes back to wedging the run rather than failing it.
 	@Test(
-		"LeafCount rejects a non-power-of-two, so directPath cannot hang",
+		"LeafCount rejects a non-power-of-two or zero, so directPath cannot hang",
 		.timeLimit(.minutes(1)),
 		arguments: [
-			3, 5, 6, 7, 9,
+			0, 3, 5, 6, 7, 9,
 		])
 	func leafCountRejectsNonPowerOfTwo(_ leafCount: UInt32) {
 		#expect(throws: MLS.TreeMathError.invalidLeafCount(leafCount)) {
@@ -74,8 +74,10 @@ struct TreeMathTests {
 		}
 	}
 
-	/// The empty tree is the one valid non-power-of-two count.
-	@Test("LeafCount accepts zero and every power of two", arguments: [0, 1, 2, 4, 8, 1024])
+	/// Zero is rejected with the non-powers-of-two above: `LeafCount` stores
+	/// a height, so the smallest tree it can name is a single leaf. There is
+	/// no empty tree in MLS, and nothing in the codebase constructs one.
+	@Test("LeafCount accepts every power of two", arguments: [1, 2, 4, 8, 1024])
 	func leafCountAcceptsValidSizes(_ leafCount: UInt32) throws {
 		#expect(try MLS.LeafCount(validating: leafCount).value == leafCount)
 	}

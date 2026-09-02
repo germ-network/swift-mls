@@ -15,9 +15,8 @@ import MLSCodec
 extension MLS {
 	public enum TreeMath: Sendable {
 		/// `2n - 1` — the array size for a tree of `leafCount` leaves.
-		/// `0` leaves is `0` nodes: there is no node zero-of-nothing.
 		public static func nodeCount(leafCount: MLS.LeafCount) -> UInt32 {
-			leafCount.value == 0 ? 0 : 2 * leafCount.value - 1
+			2 * leafCount.value - 1
 		}
 
 		/// The middle index of the `2n - 1`-slot array, *not* its last
@@ -33,7 +32,7 @@ extension MLS {
 		/// trap, and `directPath` a separate `guard`, for the same
 		/// invariant; the type replaces both.
 		public static func root(leafCount: MLS.LeafCount) -> UInt32 {
-			leafCount.value == 0 ? 0 : leafCount.value - 1
+			leafCount.value - 1
 		}
 
 		public static func isLeaf(_ node: UInt32) -> Bool { node & 1 == 0 }
