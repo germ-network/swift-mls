@@ -116,7 +116,7 @@ extension MLS.RFC9420.Group {
 	public func committing(
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
-		proposalStore: MLS.RFC9420.ProposalStore = [:],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		signingKey: MLS.SignatureSecretKey,
 		randomness: CommitRandomness,
 		includePath: Bool = true,

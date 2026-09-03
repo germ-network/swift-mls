@@ -71,7 +71,7 @@ enum PassiveClientRunner {
 			// proposal the commit doesn't reference is simply never looked
 			// up -- RFC 9420 §12.4 explicitly does not make receivers
 			// enforce that they saw every referenced proposal and no more.
-			var store: MLS.RFC9420.ProposalStore = [:]
+			var store = MLS.RFC9420.ProposalStore()
 			for proposalBytes in epoch.proposals {
 				var reader = MLS.Reader(proposalBytes.bytes)
 				guard
@@ -83,15 +83,14 @@ enum PassiveClientRunner {
 					return
 				}
 				try reader.finish()
-				let content = MLS.RFC9420.AuthenticatedContent(
-					wireFormat: .publicMessage, content: message.content,
-					auth: message.auth)
-				guard case .proposal(let proposal) = message.content.content else {
+				guard case .proposal = message.content.content else {
 					Issue.record("epoch \(index): expected proposal content")
 					return
 				}
-				store[try MLS.RFC9420.proposalRef(provider, content)] = .init(
-					proposal: proposal, sender: message.content.sender)
+				let content = MLS.RFC9420.AuthenticatedContent(
+					wireFormat: .publicMessage, content: message.content,
+					auth: message.auth)
+				try store.insert(content, provider)
 			}
 
 			var commitReader = MLS.Reader(epoch.commit.bytes)

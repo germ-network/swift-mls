@@ -101,7 +101,7 @@ struct SelfInteropTests {
 	static func processPrivate(
 		_ group: inout MLS.RFC9420.Group, _ provider: any MLS.CipherSuiteProvider,
 		_ commit: MLS.RFC9420.Message,
-		proposals: MLS.RFC9420.ProposalStore = [:],
+		proposals: MLS.RFC9420.ProposalStore = .init(),
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil },
 		_ location: SourceLocation = #_sourceLocation
 	) throws {
@@ -344,13 +344,12 @@ struct SelfInteropTests {
 
 		// Alice receives and unprotects it -> a ProposalStore entry.
 		let opened = try groupA.unprotect(provider, message: framed)
-		guard case .proposal(let proposal, let ref) = opened.content else {
+		guard case .proposal(let framedProposal) = opened.content else {
 			Issue.record("expected a proposal")
 			return
 		}
-		let store: MLS.RFC9420.ProposalStore = [
-			ref: .init(proposal: proposal, sender: .member(opened.sender))
-		]
+		var store = MLS.RFC9420.ProposalStore()
+		let ref = try store.insert(framedProposal, provider)
 
 		// Alice commits it by reference; both existing members converge,
 		// and Carol joins from the Welcome.
@@ -405,16 +404,11 @@ struct SelfInteropTests {
 			provider, content: proposalContent, groupContext: groupB.context,
 			confirmationTag: nil, signingKey: bob.signingKey,
 			membershipKey: groupB.epoch.membershipKey)
-		let ref = try MLS.RFC9420.proposalRef(
-			provider,
+		var store = MLS.RFC9420.ProposalStore()
+		let ref = try store.insert(
 			.init(
 				wireFormat: .publicMessage, content: framedProposal.content,
-				auth: framedProposal.auth))
-		let store: MLS.RFC9420.ProposalStore = [
-			ref: .init(
-				proposal: .update(updateLeaf),
-				sender: .member(groupB.myLeafIndex))
-		]
+				auth: framedProposal.auth), provider)
 
 		// Alice commits it by reference.
 		let commit = try groupA.committing(

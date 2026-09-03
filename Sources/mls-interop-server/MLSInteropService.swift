@@ -360,13 +360,13 @@
 		private func proposalStore(
 			from proposalBytes: [Data], _ p: any MLS.CipherSuiteProvider
 		) throws -> MLS.RFC9420.ProposalStore {
-			var store: MLS.RFC9420.ProposalStore = [:]
+			var store = MLS.RFC9420.ProposalStore()
 			for bytes in proposalBytes {
 				var reader = MLS.Reader(bytes)
 				guard
 					case .publicMessage(let message) = try MLS.RFC9420.Message(
 						from: &reader),
-					case .proposal(let proposal) = message.content.content
+					case .proposal = message.content.content
 				else {
 					throw invalid(
 						"stored proposal is not a public proposal message")
@@ -374,8 +374,7 @@
 				let content = MLS.RFC9420.AuthenticatedContent(
 					wireFormat: .publicMessage, content: message.content,
 					auth: message.auth)
-				store[try MLS.RFC9420.proposalRef(p, content)] = .init(
-					proposal: proposal, sender: message.content.sender)
+				try store.insert(content, p)
 			}
 			return store
 		}

@@ -292,11 +292,11 @@ extension MLS.RFC9420.Group {
 extension MLS.RFC9420.Group {
 	public enum UnprotectedContent: Sendable {
 		case application(Data)
-		/// The proposal plus its `ProposalRef` — exactly what a
-		/// `ProposalStore` entry needs, computed here because the ref
-		/// binds the framed `AuthenticatedContent`, which unprotecting is
-		/// the last moment anyone holds.
-		case proposal(MLS.RFC9420.Proposal, ref: MLS.HashReference)
+		/// The framed proposal, ready for `ProposalStore.insert` — the
+		/// ref binds the framed `AuthenticatedContent`, which unprotecting
+		/// is the last moment anyone holds it, so `insert` is what derives
+		/// it now rather than this call computing it up front.
+		case proposal(MLS.RFC9420.AuthenticatedContent)
 		/// A commit needs the full processing pipeline; hand back the
 		/// authenticated frame for `processing` to take over.
 		case commit(MLS.RFC9420.AuthenticatedContent)
@@ -488,9 +488,8 @@ extension MLS.RFC9420.Group {
 		switch authenticated.content.content {
 		case .application(let data):
 			content = .application(data)
-		case .proposal(let proposal):
-			content = .proposal(
-				proposal, ref: try MLS.RFC9420.proposalRef(provider, authenticated))
+		case .proposal:
+			content = .proposal(authenticated)
 		case .commit:
 			content = .commit(authenticated)
 		}
