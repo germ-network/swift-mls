@@ -4,6 +4,7 @@ import MLSCrypto
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.RFC9420.Group {
 	/// The §9.2-conforming secret-tree state: a map of *live* node
@@ -17,19 +18,19 @@ extension MLS.RFC9420.Group {
 	/// therefore cannot be the store; it remains the vector-pinned oracle
 	/// this walker is differentially tested against.
 	struct ConsumingSecretTree: Sendable {
-		var nodeSecrets: [UInt32: Data]
+		var nodeSecrets: [UInt32: SecretBytes]
 		let leafCount: MLS.LeafCount
 
 		/// `encryptionSecret` is `some ContiguousBytes` so the epoch's
-		/// (zeroizing) `encryption_secret` seeds the tree with no copy at the
-		/// call site. The per-epoch message-secret store below is still
-		/// `Data` — its §9.2 consuming lifecycle is not yet zeroizing — so the
-		/// one copy out of zeroizing storage happens here, at that boundary.
-		init(encryptionSecret: some ContiguousBytes, leafCount: MLS.LeafCount) {
+		/// (zeroizing) `encryption_secret` seeds the tree directly, staying in
+		/// zeroizing storage — the retained node secrets it splits into are
+		/// `SecretBytes` too, so no unscrubbed `Data` copy of a ratchet secret
+		/// is minted here.
+		init(encryptionSecret: some ContiguousBytes, leafCount: MLS.LeafCount) throws {
 			self.leafCount = leafCount
 			self.nodeSecrets = [
 				MLS.TreeMath.root(leafCount: leafCount):
-					encryptionSecret.withUnsafeBytes { Data($0) }
+					try SecretBytes(bytes: encryptionSecret)
 			]
 		}
 
@@ -39,7 +40,7 @@ extension MLS.RFC9420.Group {
 		mutating func consumeLeafSecret(
 			for leafIndex: MLS.LeafIndex,
 			_ provider: any MLS.CipherSuiteProvider
-		) throws -> Data {
+		) throws -> SecretBytes {
 			let leafNode = 2 * leafIndex.value
 			guard leafIndex.value < leafCount.value else {
 				throw MLS.CryptoError.invalidKey
@@ -90,8 +91,12 @@ extension MLS.RFC9420.Group {
 	struct RatchetChain: Sendable {
 		var headGeneration: UInt32
 		/// nil once the chain is retired (head consumed with nothing
-		/// ahead retainable).
-		var headSecret: Data?
+		/// ahead retainable). Zeroizing: the whole forward chain derives from
+		/// it, so its exposure is the worst case.
+		var headSecret: SecretBytes?
+		/// The skipped-but-retainable AEAD (key, nonce) pairs stay `Data` —
+		/// they terminate at the AEAD, a nonce is not secret, and the ratchet
+		/// secret they came from is already consumed and gone.
 		var skipped: [UInt32: (key: Data, nonce: Data)] = [:]
 	}
 
@@ -108,7 +113,7 @@ extension MLS.RFC9420.Group {
 	/// one section of.
 	struct MessageSecrets: Sendable {
 		let groupContext: MLS.RFC9420.GroupContext
-		let senderDataSecret: Data
+		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
 		var tree: ConsumingSecretTree
 		var chains: [ChainKey: RatchetChain] = [:]
@@ -174,11 +179,12 @@ extension MLS.RFC9420.Group {
 			signatureKeys[leafIndex] =
 				try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded).signatureKey
 		}
-		messageSecrets[context.epoch] = MessageSecrets(
+		messageSecrets[context.epoch] = try MessageSecrets(
 			groupContext: context,
-			// Message-store boundary: the per-epoch message-secret store is
-			// still `Data`. One documented copy out of zeroizing storage, here.
-			senderDataSecret: senderDataSecret.withUnsafeBytes { Data($0) },
+			// Held zeroizing for the epoch's life: `senderDataSecret` seeds
+			// every message's sender-data key, so it is retained the whole
+			// epoch, not consumed in-flight.
+			senderDataSecret: SecretBytes(bytes: senderDataSecret),
 			signatureKeys: signatureKeys,
 			tree: ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))

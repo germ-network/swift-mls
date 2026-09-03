@@ -112,6 +112,21 @@ extension MLS {
 			provider, secret: secret, label: label, context: context, length: length)
 	}
 
+	/// `deriveTreeSecret` returning a zeroizing `SecretBytes` — for the one
+	/// tree-secret that is retained rather than consumed in-flight: a
+	/// ratchet's `nextSecret`, which feeds the next generation. The per
+	/// -generation key and nonce stay `Data`; they terminate at the AEAD.
+	public static func deriveTreeSecretSecret(
+		_ provider: any CipherSuiteProvider,
+		secret: some ContiguousBytes, label: String, generation: UInt32,
+		length: Int
+	) throws -> SecretBytes {
+		var generationBE = generation.bigEndian
+		let context = withUnsafeBytes(of: &generationBE) { Data($0) }
+		return try expandWithLabelSecret(
+			provider, secret: secret, label: label, context: context, length: length)
+	}
+
 	/// `SignWithLabel(SignatureKey, Label, Content) = Sign(SignatureKey,
 	/// Encode(SignContent))`.
 	public static func signWithLabel(

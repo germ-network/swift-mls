@@ -169,11 +169,11 @@ extension MLS {
 		/// The context is empty in both -- not the group context, which
 		/// doesn't exist yet from a joiner's perspective at this point.
 		/// The derived AEAD key/nonce are returned as `Data`: they are
-		/// consumed in-flight by the very next `aeadSeal`/`aeadOpen`, the
-		/// short-lived message-key surface not yet moved to zeroizing
-		/// storage, not a retained
-		/// key-schedule field. `welcomeSecret` is `some ContiguousBytes` so
-		/// the (now zeroizing) `Epoch.welcomeSecret` feeds it with no copy.
+		/// consumed in-flight by the very next `aeadSeal`/`aeadOpen`, whose
+		/// provider signature is `Data`-typed — a terminal AEAD key+nonce
+		/// pair, not a retained key-schedule secret. `welcomeSecret` is `some
+		/// ContiguousBytes` so the (zeroizing) `Epoch.welcomeSecret` feeds it
+		/// with no copy.
 		public static func welcomeKeyNonce(
 			_ provider: any CipherSuiteProvider, welcomeSecret: some ContiguousBytes
 		) throws -> (key: Data, nonce: Data) {

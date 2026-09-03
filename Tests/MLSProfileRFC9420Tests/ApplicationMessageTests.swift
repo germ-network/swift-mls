@@ -231,7 +231,7 @@ struct ApplicationMessageTests {
 		let provider = Self.provider
 		let encryptionSecret = provider.randomBytes(provider.hashSize)
 		let leafCount = try MLS.LeafCount(validating: 8)
-		var tree = MLS.RFC9420.Group.ConsumingSecretTree(
+		var tree = try MLS.RFC9420.Group.ConsumingSecretTree(
 			encryptionSecret: encryptionSecret, leafCount: leafCount)
 		for leaf in [5, 0, 7, 2, 6, 1, 3, 4] {
 			let index = MLS.LeafIndex(value: UInt32(leaf))
@@ -239,7 +239,7 @@ struct ApplicationMessageTests {
 			let oracle = try MLS.KeySchedule.leafSecret(
 				provider, encryptionSecret: encryptionSecret,
 				leafIndex: UInt32(leaf), numLeaves: leafCount)
-			#expect(consumed == oracle, "leaf \(leaf)")
+			#expect(consumed.withUnsafeBytes { Data($0) } == oracle, "leaf \(leaf)")
 		}
 		// And the root is long gone: no leaf can be derived twice.
 		#expect(throws: MLS.RFC9420.GroupError.self) {
