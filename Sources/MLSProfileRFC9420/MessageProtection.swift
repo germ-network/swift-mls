@@ -129,6 +129,19 @@ extension MLS.RFC9420.Group {
 		let advanced: RatchetChain?
 		let consumedGeneration: UInt32
 	}
+
+	/// A `MessageKeySource` that hands back one already-derived (key,
+	/// nonce) regardless of what is asked for — the send side has already
+	/// picked its own generation via `deriveMessageKey`, so `sealPrivate`'s
+	/// key-lookup callback is a formality here, not a second derivation.
+	struct OneShotKey: MLS.RFC9420.MessageKeySource {
+		let key: Data
+		let nonce: Data
+		func key(
+			for leafIndex: MLS.LeafIndex, generation: UInt32,
+			contentType: MLS.ContentType
+		) throws -> (key: Data, nonce: Data) { (key, nonce) }
+	}
 }
 
 extension MLS.RFC9420.Group {
@@ -347,14 +360,6 @@ extension MLS.RFC9420.Group {
 			isHandshake: isHandshake, provider)
 		commitConsumption(pending)
 
-		struct OneShotKey: MLS.RFC9420.MessageKeySource {
-			let key: Data
-			let nonce: Data
-			func key(
-				for leafIndex: MLS.LeafIndex, generation: UInt32,
-				contentType: MLS.ContentType
-			) throws -> (key: Data, nonce: Data) { (key, nonce) }
-		}
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: epochNumber,
 			sender: .member(myLeafIndex), authenticatedData: authenticatedData,
@@ -373,6 +378,51 @@ extension MLS.RFC9420.Group {
 			secrets.ownNextGeneration.application = generation + 1
 		}
 		messageSecrets[epochNumber] = secrets
+		return message
+	}
+
+	/// The commit-authoring counterpart to `protectContent`: seals a
+	/// commit's `FramedContent` — already framed, signed, and
+	/// transcript-chained by `committing` under the OLD epoch's
+	/// `wireFormat: .privateMessage` (see `signPrivate`) — as a
+	/// `PrivateMessage`, advancing the committer's own handshake ratchet
+	/// exactly as `protectContent` advances it for a proposal. Takes
+	/// `oldEpoch` explicitly: a commit is sent in the epoch it closes, not
+	/// the one `committing` has already installed into `self` by the time
+	/// this runs.
+	mutating func sealHandshakeCommit(
+		_ provider: any MLS.CipherSuiteProvider,
+		epoch oldEpoch: UInt64,
+		framed: MLS.RFC9420.FramedContent,
+		signature: MLS.Signature,
+		confirmationTag: MLS.ConfirmationTag,
+		reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
+	) throws -> MLS.RFC9420.PrivateMessage {
+		guard var secrets = messageSecrets[oldEpoch] else {
+			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(epoch: oldEpoch)
+		}
+		let generation = secrets.ownNextGeneration.handshake
+		guard generation != .max else {
+			throw MLS.RFC9420.GroupError.sendGenerationExhausted
+		}
+
+		// Same derive-then-immediately-consume rule as `protectContent`:
+		// our own send cannot "fail to decrypt".
+		let (key, nonce, pending) = try deriveMessageKey(
+			epoch: oldEpoch, leaf: myLeafIndex, generation: generation,
+			isHandshake: true, provider)
+		commitConsumption(pending)
+
+		let message = try MLS.RFC9420.sealPrivate(
+			provider, keySource: OneShotKey(key: key, nonce: nonce),
+			content: framed, signature: signature, generation: generation,
+			confirmationTag: confirmationTag, senderDataSecret: secrets.senderDataSecret,
+			reuseGuard: reuseGuard, paddingLength: paddingLength)
+
+		secrets = messageSecrets[oldEpoch]!
+		secrets.ownNextGeneration.handshake = generation + 1
+		messageSecrets[oldEpoch] = secrets
 		return message
 	}
 
