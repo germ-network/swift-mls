@@ -3,6 +3,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSVectorSupport
+import SecretBytes
 import Testing
 
 @testable import MLSKeySchedule
@@ -20,7 +21,8 @@ struct SecretTreeTests {
 	/// 9420's own skip-ahead cost. A vector row's generation is arbitrary,
 	/// not necessarily 0, exercising that this has no shortcut.
 	private func ratchetToGeneration(
-		_ provider: any MLS.CipherSuiteProvider, from baseSecret: Data, generation: UInt32
+		_ provider: any MLS.CipherSuiteProvider, from baseSecret: SecretBytes,
+		generation: UInt32
 	) throws -> (key: Data, nonce: Data) {
 		var secret = baseSecret
 		for g in 0...generation {

@@ -120,8 +120,12 @@ extension MLS.RFC9420.Welcome {
 		_ provider: any MLS.CipherSuiteProvider,
 		joinerSecret: Data, pskSecret: Data
 	) throws -> (groupInfo: MLS.RFC9420.GroupInfo, epoch: MLS.KeySchedule.Epoch) {
-		let epochSeed = try provider.kdfExtract(salt: joinerSecret, ikm: pskSecret)
-		let welcomeSecret = try MLS.deriveSecret(
+		// `epoch_seed` is the parent of the entire epoch fan-out — more
+		// sensitive than any single retained field — so it is derived on the
+		// zeroizing path even here, where only `welcome_secret` (for the AEAD
+		// that opens the GroupInfo) is needed before the full fan-out.
+		let epochSeed = try provider.kdfExtractSecret(salt: joinerSecret, ikm: pskSecret)
+		let welcomeSecret = try MLS.deriveSecretSecret(
 			provider, secret: epochSeed, label: "welcome")
 		let (key, nonce) = try MLS.KeySchedule.welcomeKeyNonce(
 			provider, welcomeSecret: welcomeSecret)

@@ -54,7 +54,12 @@ No profile of our own has landed yet, so there is no profile text to write.
 The open questions that exist today are about *coverage*, not specification,
 and live in [`conformance.md`](conformance.md):
 
-- Zeroization: unimplemented, and no test vector can detect it.
+- Zeroization: the retained secrets (the key-schedule epoch fan-out, retained
+  resumption PSKs, HPKE private keys, the per-message secret store, and the KDF
+  derivation seam) are held in zeroizing storage; what remains in `Data` is the
+  terminal AEAD/HPKE/wire material a secret must become to cross those seams. No
+  test vector can detect either state. See `SECURITY.md` for the ceiling this
+  buys and what it does not.
 - Rejection-path coverage bounded by the absence of a committer's signing key
   in any official vector.
 

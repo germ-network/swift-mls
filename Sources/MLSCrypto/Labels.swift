@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import SecretBytes
 
 /// `struct { uint16 length; opaque label<V>; opaque context<V>; } KDFLabel;`
 /// with `label = "MLS 1.0 " + Label`. Field order matters: it is signed and
@@ -74,6 +75,30 @@ extension MLS {
 			length: provider.hashSize)
 	}
 
+	/// `ExpandWithLabel` returning a zeroizing `SecretBytes` — the same
+	/// derivation as `expandWithLabel`, on the secret-returning KDF form, so
+	/// a value bound for a retained key-schedule field is built with no
+	/// unscrubbed `Data` between HKDF and storage.
+	public static func expandWithLabelSecret(
+		_ provider: any CipherSuiteProvider,
+		secret: some ContiguousBytes, label: String, context: Data, length: Int
+	) throws -> SecretBytes {
+		let info = try KDFLabel(length: UInt16(length), label: label, context: context)
+			.mlsEncoded()
+		return try provider.kdfExpandSecret(prk: secret, info: info, length: length)
+	}
+
+	/// `DeriveSecret` returning a zeroizing `SecretBytes` — see
+	/// `expandWithLabelSecret`.
+	public static func deriveSecretSecret(
+		_ provider: any CipherSuiteProvider, secret: some ContiguousBytes,
+		label: String
+	) throws -> SecretBytes {
+		try expandWithLabelSecret(
+			provider, secret: secret, label: label, context: Data(),
+			length: provider.hashSize)
+	}
+
 	/// The secret-tree ratchet's per-generation derivation: `ExpandWithLabel`
 	/// with the generation encoded as 4-byte big-endian context.
 	public static func deriveTreeSecret(
@@ -84,6 +109,21 @@ extension MLS {
 		var generationBE = generation.bigEndian
 		let context = withUnsafeBytes(of: &generationBE) { Data($0) }
 		return try expandWithLabel(
+			provider, secret: secret, label: label, context: context, length: length)
+	}
+
+	/// `deriveTreeSecret` returning a zeroizing `SecretBytes` — for the one
+	/// tree-secret that is retained rather than consumed in-flight: a
+	/// ratchet's `nextSecret`, which feeds the next generation. The per
+	/// -generation key and nonce stay `Data`; they terminate at the AEAD.
+	public static func deriveTreeSecretSecret(
+		_ provider: any CipherSuiteProvider,
+		secret: some ContiguousBytes, label: String, generation: UInt32,
+		length: Int
+	) throws -> SecretBytes {
+		var generationBE = generation.bigEndian
+		let context = withUnsafeBytes(of: &generationBE) { Data($0) }
+		return try expandWithLabelSecret(
 			provider, secret: secret, label: label, context: context, length: length)
 	}
 

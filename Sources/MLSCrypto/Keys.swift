@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import SecretBytes
 
 /// Thin `Data` wrappers, distinct per key kind so an HPKE ciphertext can
 /// never be passed where a public key is expected, and vice versa. All are
@@ -21,9 +22,17 @@ extension MLS {
 	// never puts one on the wire, and giving them an encoding would
 	// make "accidentally serialize a secret key" a type-checkable
 	// mistake instead of an impossible one.
+	//
+	// The private half is held in zeroizing storage. The
+	// `some ContiguousBytes` init throws only for empty input, which no
+	// real HPKE private key is; a `SecretBytes` passes through it too
+	// (it conforms to `ContiguousBytes`), so a caller already holding one
+	// needs no separate spelling.
 	public struct HpkeSecretKey: Sendable {
-		public var data: Data
-		public init(_ data: Data) { self.data = data }
+		public var data: SecretBytes
+		public init(_ bytes: some ContiguousBytes) throws {
+			self.data = try SecretBytes(bytes: bytes)
+		}
 	}
 
 	public struct SignaturePublicKey: Hashable, Sendable, MLSCodable {

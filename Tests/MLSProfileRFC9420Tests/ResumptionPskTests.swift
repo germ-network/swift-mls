@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSKeySchedule
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -33,9 +34,11 @@ struct ResumptionPskTests {
 		let psk = Data(repeating: 0xAB, count: 32)
 
 		let a = try MLS.KeySchedule.pskSecret(
-			Self.provider, psks: [(encodedID: try encoded(id), psk: psk)])
+			Self.provider,
+			psks: [(encodedID: try encoded(id), psk: SecretBytes(bytes: psk))])
 		let b = try MLS.KeySchedule.pskSecret(
-			Self.provider, psks: [(encodedID: try encoded(id), psk: psk)])
+			Self.provider,
+			psks: [(encodedID: try encoded(id), psk: SecretBytes(bytes: psk))])
 		#expect(a == b)
 		#expect(a.count == Self.provider.hashSize)
 	}
@@ -61,9 +64,11 @@ struct ResumptionPskTests {
 			pskID: groupIDWriter.data, nonce: nonce)
 
 		let resumptionSecret = try MLS.KeySchedule.pskSecret(
-			Self.provider, psks: [(encodedID: try encoded(resumption), psk: psk)])
+			Self.provider,
+			psks: [(encodedID: try encoded(resumption), psk: SecretBytes(bytes: psk))])
 		let externalSecret = try MLS.KeySchedule.pskSecret(
-			Self.provider, psks: [(encodedID: try encoded(external), psk: psk)])
+			Self.provider,
+			psks: [(encodedID: try encoded(external), psk: SecretBytes(bytes: psk))])
 
 		#expect(resumptionSecret != externalSecret)
 	}

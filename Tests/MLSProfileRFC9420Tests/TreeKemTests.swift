@@ -65,7 +65,7 @@ struct TreeKemTests {
 		// leaf key to find where it can decrypt).
 		let heldKeysByLeaf = try Dictionary(
 			uniqueKeysWithValues: record.leavesPrivate.map { lp in
-				var keys: [UInt32: MLS.HpkeSecretKey] = [
+				var keys: [UInt32: MLS.HpkeSecretKey] = try [
 					2 * lp.index: MLS.HpkeSecretKey(lp.encryptionPriv.bytes)
 				]
 				for entry in lp.pathSecrets {

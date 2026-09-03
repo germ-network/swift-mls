@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSKeySchedule
+import SecretBytes
 
 extension MLS.RFC9420.Group {
 	/// The subset of an epoch's key-schedule fan-out this profile retains
@@ -10,13 +11,14 @@ extension MLS.RFC9420.Group {
 	/// group member consumes a value, they MUST immediately delete (all
 	/// representations of) that value."
 	///
-	/// **"Not retained" is the honest claim — not "deleted".** Constructing
-	/// this narrowed value releases the dropped fields' `Data` buffers
-	/// without scrubbing them (copy-on-write shares, then frees), and the
-	/// full `Epoch` lives on as a local through the rest of `join`'s and
-	/// `processing`'s bodies. Erasure of freed bytes is a separate,
-	/// best-effort concern with its own limits, tracked as this project's
-	/// standing zeroization debt.
+	/// **"Not retained" is the honest claim — not "deleted".** The retained
+	/// fields below are held in zeroizing storage (`SecretBytes`), so *these*
+	/// scrub on release; but dropping a field means releasing
+	/// its zeroizing buffer, and the full `Epoch` still lives on as a local
+	/// through the rest of `join`'s and `processing`'s bodies (and value-type
+	/// copies, spills, and decode-time transients are outside what any
+	/// buffer-scrub reaches). Erasure timing is a best-effort concern with an
+	/// unprovable ceiling; see `SECURITY.md`.
 	///
 	/// What is dropped, and why it is safe:
 	/// - `joinerSecret`, `welcomeSecret`: consumed by Welcome processing —
@@ -47,10 +49,13 @@ extension MLS.RFC9420.Group {
 	/// there they are consumed per §9.2's own schedule, which a flat
 	/// retained field could never express.
 	public struct EpochSecrets: Sendable {
-		public let initSecret: Data
-		public let exporterSecret: Data
+		public let initSecret: SecretBytes
+		public let exporterSecret: SecretBytes
+		/// `Data`, not `SecretBytes`: RFC 9420 §8.6's public out-of-band
+		/// authenticator, read and compared by applications — see
+		/// `MLS.KeySchedule.Epoch`.
 		public let epochAuthenticator: Data
-		public let membershipKey: Data
+		public let membershipKey: SecretBytes
 
 		/// The §11 creation path: an epoch-0 fan-out has no joiner or
 		/// welcome secret to drop in the first place.

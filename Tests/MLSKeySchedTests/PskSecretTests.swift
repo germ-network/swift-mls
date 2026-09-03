@@ -1,6 +1,7 @@
 import MLSCodec
 import MLSCrypto
 import MLSVectorSupport
+import SecretBytes
 import Testing
 
 @testable import MLSKeySchedule
@@ -28,7 +29,10 @@ struct PskSecretTests {
 				writer.writeUInt8(1)
 				try! writer.writeOpaque($0.id.bytes)
 				try! writer.writeOpaque($0.nonce.bytes)
-				return (encodedID: writer.data, psk: $0.psk.bytes)
+				return (
+					encodedID: writer.data,
+					psk: try SecretBytes(bytes: $0.psk.bytes)
+				)
 			}
 		)
 		#expect(secret == record.pskSecret.bytes)

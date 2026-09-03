@@ -4,6 +4,7 @@ import MLSCrypto
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.RFC9420.Group {
 	/// The §9.2-conforming secret-tree state: a map of *live* node
@@ -17,13 +18,19 @@ extension MLS.RFC9420.Group {
 	/// therefore cannot be the store; it remains the vector-pinned oracle
 	/// this walker is differentially tested against.
 	struct ConsumingSecretTree: Sendable {
-		var nodeSecrets: [UInt32: Data]
+		var nodeSecrets: [UInt32: SecretBytes]
 		let leafCount: MLS.LeafCount
 
-		init(encryptionSecret: Data, leafCount: MLS.LeafCount) {
+		/// `encryptionSecret` is `some ContiguousBytes` so the epoch's
+		/// (zeroizing) `encryption_secret` seeds the tree directly, staying in
+		/// zeroizing storage — the retained node secrets it splits into are
+		/// `SecretBytes` too, so no unscrubbed `Data` copy of a ratchet secret
+		/// is minted here.
+		init(encryptionSecret: some ContiguousBytes, leafCount: MLS.LeafCount) throws {
 			self.leafCount = leafCount
 			self.nodeSecrets = [
-				MLS.TreeMath.root(leafCount: leafCount): encryptionSecret
+				MLS.TreeMath.root(leafCount: leafCount):
+					try SecretBytes(bytes: encryptionSecret)
 			]
 		}
 
@@ -33,7 +40,7 @@ extension MLS.RFC9420.Group {
 		mutating func consumeLeafSecret(
 			for leafIndex: MLS.LeafIndex,
 			_ provider: any MLS.CipherSuiteProvider
-		) throws -> Data {
+		) throws -> SecretBytes {
 			let leafNode = 2 * leafIndex.value
 			guard leafIndex.value < leafCount.value else {
 				throw MLS.CryptoError.invalidKey
@@ -84,9 +91,15 @@ extension MLS.RFC9420.Group {
 	struct RatchetChain: Sendable {
 		var headGeneration: UInt32
 		/// nil once the chain is retired (head consumed with nothing
-		/// ahead retainable).
-		var headSecret: Data?
-		var skipped: [UInt32: (key: Data, nonce: Data)] = [:]
+		/// ahead retainable). Zeroizing: the whole forward chain derives from
+		/// it, so its exposure is the worst case.
+		var headSecret: SecretBytes?
+		/// Skipped-but-not-yet-consumed message keys: retained at rest (up to
+		/// `maxSkippedKeysPerSender` per chain, across retained epochs) until a
+		/// late message consumes one or the epoch is pruned — so the key half is
+		/// held zeroizing like every other retained secret, copied out to `Data`
+		/// only at the AEAD call. The nonce stays `Data`: it is not secret.
+		var skipped: [UInt32: (key: SecretBytes, nonce: Data)] = [:]
 	}
 
 	/// Everything unprotecting a *retained* epoch's `PrivateMessage` needs
@@ -102,7 +115,7 @@ extension MLS.RFC9420.Group {
 	/// one section of.
 	struct MessageSecrets: Sendable {
 		let groupContext: MLS.RFC9420.GroupContext
-		let senderDataSecret: Data
+		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
 		var tree: ConsumingSecretTree
 		var chains: [ChainKey: RatchetChain] = [:]
@@ -151,7 +164,7 @@ extension MLS.RFC9420.Group {
 	/// path (`create`, `join`, `processing`, `committing`).
 	mutating func installMessageSecrets(
 		context: MLS.RFC9420.GroupContext,
-		senderDataSecret: Data, encryptionSecret: Data,
+		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
@@ -168,9 +181,12 @@ extension MLS.RFC9420.Group {
 			signatureKeys[leafIndex] =
 				try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded).signatureKey
 		}
-		messageSecrets[context.epoch] = MessageSecrets(
+		messageSecrets[context.epoch] = try MessageSecrets(
 			groupContext: context,
-			senderDataSecret: senderDataSecret,
+			// Held zeroizing for the epoch's life: `senderDataSecret` seeds
+			// every message's sender-data key, so it is retained the whole
+			// epoch, not consumed in-flight.
+			senderDataSecret: SecretBytes(bytes: senderDataSecret),
 			signatureKeys: signatureKeys,
 			tree: ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))
@@ -227,7 +243,7 @@ extension MLS.RFC9420.Group {
 					generation: generation)
 			}
 			return (
-				cached.key, cached.nonce,
+				cached.key.withUnsafeBytes { Data($0) }, cached.nonce,
 				PendingConsumption(
 					epoch: epoch, chain: chainKey, advanced: nil,
 					consumedGeneration: generation)
@@ -256,7 +272,7 @@ extension MLS.RFC9420.Group {
 			if g == generation {
 				stepped = (step.key, step.nonce)
 			} else {
-				advanced.skipped[g] = (step.key, step.nonce)
+				advanced.skipped[g] = (try SecretBytes(bytes: step.key), step.nonce)
 			}
 			secret = step.nextSecret
 		}

@@ -5,6 +5,7 @@ import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.RFC9420 {
 	/// A proposal a member has seen by reference this epoch, with the
@@ -233,7 +234,7 @@ extension MLS.RFC9420.Group {
 			guard case .preSharedKey(let id) = stored.proposal else { return nil }
 			return id
 		}
-		let resolvedPsks = try pskIDs.map { id -> (encodedID: Data, psk: Data) in
+		let resolvedPsks = try pskIDs.map { id -> (encodedID: Data, psk: SecretBytes) in
 			guard let secret = try resolvePsk(id, psk) else {
 				throw MLS.RFC9420.GroupError.unresolvedPreSharedKey
 			}
@@ -864,11 +865,22 @@ extension MLS.RFC9420.Group {
 	/// rejected outright for the same reason `join` rejects it: those
 	/// carry §12.4.3.1 rules that are meaningless without ReInit/branching
 	/// support, which this project defers project-wide.
+	/// Returns `SecretBytes?` so a resumption PSK never leaves zeroizing
+	/// storage: the resumption branch hands back the retained `SecretBytes`
+	/// directly, and the external branch takes custody of the app-supplied
+	/// `Data` on the way in. The external callback keeps its `Data?` shape —
+	/// the adopter API is unchanged.
 	func resolvePsk(
 		_ id: MLS.RFC9420.PreSharedKeyIdentifier,
 		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws -> Data? {
-		guard case .resumption(let resumption, _) = id else { return try external(id) }
+	) throws -> SecretBytes? {
+		guard case .resumption(let resumption, _) = id else {
+			guard let bytes = try external(id) else { return nil }
+			guard !bytes.isEmpty else {
+				throw MLS.RFC9420.GroupError.emptyPreSharedKey
+			}
+			return try SecretBytes(bytes: bytes)
+		}
 		guard resumption.usage == .application else {
 			throw MLS.RFC9420.GroupError.unsupportedResumptionUsage
 		}

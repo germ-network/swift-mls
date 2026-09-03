@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 
 /// RFC 9420 §9's secret tree: `encryption_secret` sits at the root of a
 /// tree with one leaf per group member (`MLS.TreeMath`'s pure index
@@ -53,12 +54,12 @@ extension MLS.KeySchedule {
 	/// is differentially tested against.
 	public static func splitTreeNode(
 		_ provider: any MLS.CipherSuiteProvider, secret: some ContiguousBytes
-	) throws -> (left: Data, right: Data) {
+	) throws -> (left: SecretBytes, right: SecretBytes) {
 		(
-			try MLS.expandWithLabel(
+			try MLS.expandWithLabelSecret(
 				provider, secret: secret, label: "tree",
 				context: Data("left".utf8), length: provider.hashSize),
-			try MLS.expandWithLabel(
+			try MLS.expandWithLabelSecret(
 				provider, secret: secret, label: "tree",
 				context: Data("right".utf8), length: provider.hashSize)
 		)
@@ -66,24 +67,27 @@ extension MLS.KeySchedule {
 
 	public static func handshakeRatchetSecret(
 		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
-	) throws -> Data {
-		try MLS.deriveSecret(provider, secret: leafSecret, label: "handshake")
+	) throws -> SecretBytes {
+		try MLS.deriveSecretSecret(provider, secret: leafSecret, label: "handshake")
 	}
 
 	public static func applicationRatchetSecret(
 		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
-	) throws -> Data {
-		try MLS.deriveSecret(provider, secret: leafSecret, label: "application")
+	) throws -> SecretBytes {
+		try MLS.deriveSecretSecret(provider, secret: leafSecret, label: "application")
 	}
 
 	public struct RatchetStep: Sendable {
+		/// The per-generation AEAD key and nonce — consumed in-flight by the
+		/// very next seal/open, so they terminate at the AEAD as `Data`.
 		public let key: Data
 		public let nonce: Data
 		/// Feeds back into `ratchetStep` as `secret`, for `generation + 1`.
-		/// The caller owns discarding it once the next generation is
-		/// derived — RFC 9420's forward secrecy comes from that discard,
-		/// not from anything this function does.
-		public let nextSecret: Data
+		/// Retained (a chain head, or a cached copath secret), so it is held
+		/// in zeroizing storage. The caller owns discarding it once the next
+		/// generation is derived — RFC 9420's forward secrecy comes from that
+		/// discard, not from anything this function does.
+		public let nextSecret: SecretBytes
 	}
 
 	/// One step of a handshake or application ratchet: `ExpandWithLabel`
@@ -103,7 +107,7 @@ extension MLS.KeySchedule {
 			nonce: MLS.deriveTreeSecret(
 				provider, secret: secret, label: "nonce", generation: generation,
 				length: provider.aeadNonceSize),
-			nextSecret: MLS.deriveTreeSecret(
+			nextSecret: MLS.deriveTreeSecretSecret(
 				provider, secret: secret, label: "secret", generation: generation,
 				length: provider.hashSize)
 		)
