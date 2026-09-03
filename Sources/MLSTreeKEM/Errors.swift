@@ -16,7 +16,7 @@ extension MLS.TreeKEM {
 		/// they were added in this same commit). Checked explicitly here
 		/// because nothing upstream of tree processing can check it --
 		/// this is exactly the validation `Commit.path`'s wire types were
-		/// split out to require, per GER-2295.
+		/// split out to require.
 		case wrongCiphertextCount(pathIndex: Int, expected: Int, actual: Int)
 		/// A derived HPKE public key didn't match the key it was checked
 		/// against -- the wire `UpdatePathNode.encryptionKey` during

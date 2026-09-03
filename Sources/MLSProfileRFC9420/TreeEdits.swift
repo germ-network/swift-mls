@@ -21,7 +21,7 @@ extension MLS.TreeKEM.RatchetTree {
 	///
 	/// Proposal validation (does the sender have permission, is the tree
 	/// state consistent with the proposal) is *not* this function's job —
-	/// per GER-2295's scope, that's phase 6 (commit construction/
+	/// this phase's scope, that's phase 6 (commit construction/
 	/// application). This applies a proposal already taken as valid,
 	/// exactly what `tree-operations.json` exercises.
 	public mutating func apply(_ proposal: MLS.RFC9420.Proposal, sender: MLS.LeafIndex) throws {

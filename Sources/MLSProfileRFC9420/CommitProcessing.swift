@@ -233,7 +233,7 @@ extension MLS.RFC9420.Group {
 
 		for stored in resolved {
 			guard case .remove(let removed) = stored.proposal else { continue }
-			// GER-2355's second half: mls-rs errors
+			// The peer-derived half of remove validation: mls-rs errors
 			// (`RemovingNonExistingMember`) rather than blanking an
 			// already-blank leaf. The tree's own primitives stay
 			// unconditional by design; "is this leaf a member" is context
@@ -401,12 +401,16 @@ extension MLS.RFC9420.Group {
 		var updated = self
 		updated.context = newContext
 		updated.tree = provisionalTree
-		updated.epoch = newEpoch
+		updated.epoch = MLS.RFC9420.Group.EpochSecrets(retaining: newEpoch)
 		updated.secretKeys = newSecretKeys
 		updated.interimTranscriptHash = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
 		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
+		// Against the *new* epoch, after the insert above -- pruning
+		// against the old epoch with a small depth could evict the entry
+		// this very commit added.
+		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
 		return updated
 	}
 

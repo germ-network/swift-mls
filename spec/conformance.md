@@ -157,15 +157,23 @@ own to check. An Update naming a leaf beyond the tree used to grow the ratchet
 tree's backing array toward 2²⁵ entries and then abort the process on a `try!` —
 the guard and its test now exist, and the structural fix is tracked separately.
 
-**Zeroization is unimplemented, and no vector will ever notice.** Open since
-phase 1 and corroborated by three independent peer reviews as the one real
-standing gap. Phase 5 deepened it: `Group` now retains HPKE secret keys and an
-unbounded resumption-PSK history in plain `Data`. Swift gives no reliable
-guarantee that a `Data`'s bytes are erased, and value semantics mean copies
-propagate. This is a real weakness against an attacker with memory access, it
-is not a conformance failure, and it needs a design decision — not more tests.
+**Retention is now bounded; erasure still is not.** §9.2's deletion schedule
+is partially in effect: the Welcome-processing secrets and the confirmation
+key are consumed at epoch establishment and are no longer retained at all —
+`Group` keeps a narrowed six-field epoch state, so retaining them does not
+compile — and the resumption-PSK history is bounded (default: the current
+epoch plus three past, matching mls-rs; every official-vector reference is to
+the immediately preceding epoch, so the default is peer parity, not an
+empirically validated bound). §7.5's held-key pruning has a direct test. Two
+honest limits remain. First, "not retained" is not "deleted": Swift gives no
+reliable guarantee that a released `Data`'s bytes are erased, value semantics
+mean copies propagate, and that erasure question — open since phase 1 and
+corroborated by three independent peer reviews — still needs a design
+decision, not more tests. Second, §9.2's per-message MUSTs (delete the
+`encryption_secret` and ratchet secrets as messages are consumed) await
+phase 6, which is where message consumption itself arrives.
 
-**One planned hardening item did not ship.** GER-2352's two own-leaf guards in
+**One planned hardening item did not ship.** Two own-leaf guards in
 `Protect.swift` (reject decrypting your own message; verify the sender is the
 self leaf) are not implemented. Neither is spec-mandated — they are properties
 mls-rs has that this profile does not — but the deferral reason ("whichever

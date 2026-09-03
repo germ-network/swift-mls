@@ -156,6 +156,13 @@ struct CommitRejectionTests {
 		}
 		let (record, epochIndex) = try #require(chosen)
 		let provider = try #require(Self.provider.cipherSuiteProvider(for: .init(id: 1)))
+		return try buildFixture(record: record, epochIndex: epochIndex, provider: provider)
+	}
+
+	static func buildFixture(
+		record: PassiveClientVector, epochIndex: Int,
+		provider: any MLS.CipherSuiteProvider
+	) throws -> Fixture {
 
 		var kpReader = MLS.Reader(record.keyPackage.bytes)
 		guard case .keyPackage(let keyPackage) = try MLS.RFC9420.Message(from: &kpReader)

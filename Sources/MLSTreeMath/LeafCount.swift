@@ -34,7 +34,8 @@ extension MLS {
 		/// empty — or that reaches `LeafIndex.ceiling`. The ceiling check is
 		/// not decoration: `RatchetTree.leafCount` computes its value with
 		/// `try!`, so a count that reaches 2^24 aborts the process rather
-		/// than throwing (GER-2363).
+		/// than throwing; bounding that growth structurally is a tracked
+		/// follow-up.
 		public init(validating value: UInt32) throws {
 			guard value.nonzeroBitCount == 1, value < MLS.LeafIndex.ceiling else {
 				throw MLS.TreeMathError.invalidLeafCount(value)

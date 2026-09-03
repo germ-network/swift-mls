@@ -8,7 +8,7 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-/// `key_package`/`welcome` structural round-trip, plus (GER-2296) the full
+/// `key_package`/`welcome` structural round-trip, plus (phase 5) the full
 /// join-flow crypto chain this vector was originally deferred for: HPKE-
 /// decrypt `GroupSecrets` with `init_priv`, AEAD-decrypt the embedded
 /// `GroupInfo`, verify its signature with `signer_pub`, derive the epoch

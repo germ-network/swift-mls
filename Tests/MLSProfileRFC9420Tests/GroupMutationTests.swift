@@ -10,7 +10,7 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-/// GER-2296's own security checklist (S1-S13, the Welcome half): each row
+/// Phase 5's own security checklist (S1-S13, the Welcome half): each row
 /// broken deliberately, asserting the *specific* check fails and not a
 /// neighbor. Built against one fixed `passive-client-welcome.json` record
 /// (suite 1, external tree supplied, no PSKs -- the simplest shape that
