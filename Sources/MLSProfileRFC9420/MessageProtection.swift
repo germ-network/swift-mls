@@ -138,6 +138,14 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
 		var signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey] = [:]
+		// Two decodes per touched leaf: commit processing already decoded the
+		// added/updated/committer LeafNodes for validation, and this decodes
+		// every non-blank leaf again purely for `signatureKey` -- plus unchanged
+		// leaves are re-decoded each epoch though their key is stable. Kept eager
+		// because the snapshot persists decoded keys (spec/snapshot.md 4.3
+		// `signature_keys`), not leaf bytes, so a future incremental build (carry
+		// the prior epoch's map forward, patch only the commit's changed leaves)
+		// is a pure in-memory change needing no snapshot-format change.
 		for (leafIndex, record) in tree.nonBlankLeaves() {
 			signatureKeys[leafIndex] =
 				try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded).signatureKey
