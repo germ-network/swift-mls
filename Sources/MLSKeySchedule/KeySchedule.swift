@@ -77,6 +77,15 @@ extension MLS {
 			pskSecret: Data,
 			groupContext: Data
 		) throws -> Epoch {
+			// A zero-length joiner secret cannot key the schedule. Reject it
+			// up front rather than running the whole fan-out only to trip on
+			// the empty value when it is packaged into the `Epoch`
+			// (`SecretBytes` rejects empty input). `MLS.RFC9420.Group.join`
+			// rejects this earlier still, with its own `emptyJoinerSecret`;
+			// this guard is the one a direct caller of the component API meets.
+			guard joinerSecret.withUnsafeBytes({ !$0.isEmpty }) else {
+				throw MLS.CryptoError.invalidKey
+			}
 			let epochSeed = try provider.kdfExtractSecret(
 				salt: joinerSecret, ikm: pskSecret)
 			let welcomeSecret = try deriveSecretSecret(
