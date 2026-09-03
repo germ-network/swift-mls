@@ -95,7 +95,8 @@ struct ApplicationMessageTests {
 			return
 		}
 		try d.groupB.process(
-			Self.provider, privateCommit: pcsCommit, proposals: [:], psk: { _ in nil })
+			Self.provider, privateCommit: pcsCommit, proposals: .init(),
+			psk: { _ in nil })
 
 		let opened = try d.groupB.unprotect(Self.provider, message: old)
 		guard case .application(let data) = opened.content else {
@@ -132,7 +133,7 @@ struct ApplicationMessageTests {
 				return
 			}
 			try d.groupB.process(
-				Self.provider, privateCommit: pcsCommit, proposals: [:],
+				Self.provider, privateCommit: pcsCommit, proposals: .init(),
 				psk: { _ in nil })
 		}
 		#expect(

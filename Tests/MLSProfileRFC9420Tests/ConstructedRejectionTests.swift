@@ -65,7 +65,7 @@ struct ConstructedRejectionTests {
 		var groupB = pair.groupB
 		#expect(throws: error) {
 			try groupB.process(
-				provider, commit: message, proposals: [:], psk: { _ in nil })
+				provider, commit: message, proposals: .init(), psk: { _ in nil })
 		}
 	}
 
@@ -234,7 +234,7 @@ struct ConstructedRejectionTests {
 			membershipKey: groupA.epoch.membershipKey)
 		#expect(throws: MLS.RFC9420.GroupError.requiredCapabilitiesNotMet) {
 			try groupB.process(
-				provider, commit: message, proposals: [:], psk: { _ in nil })
+				provider, commit: message, proposals: .init(), psk: { _ in nil })
 		}
 	}
 

@@ -116,7 +116,7 @@ extension MLS.RFC9420.Group {
 	public func committing(
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
-		proposalStore: MLS.RFC9420.ProposalStore = [:],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		signingKey: MLS.SignatureSecretKey,
 		randomness: CommitRandomness,
 		includePath: Bool = true,
@@ -327,6 +327,10 @@ extension MLS.RFC9420.Group {
 		updated.interimTranscriptHash = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
+		// `pendingUpdates` is valid only for the epoch it names --
+		// committing an epoch of our own retires the whole set exactly
+		// as processing someone else's does.
+		updated.pendingUpdates = nil
 		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
 		try updated.installMessageSecrets(

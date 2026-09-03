@@ -101,7 +101,7 @@ struct SelfInteropTests {
 	static func processPrivate(
 		_ group: inout MLS.RFC9420.Group, _ provider: any MLS.CipherSuiteProvider,
 		_ commit: MLS.RFC9420.Message,
-		proposals: MLS.RFC9420.ProposalStore = [:],
+		proposals: MLS.RFC9420.ProposalStore = .init(),
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil },
 		_ location: SourceLocation = #_sourceLocation
 	) throws {
@@ -340,17 +340,17 @@ struct SelfInteropTests {
 			provider, content: .proposal(.add(carol.keyPackage)),
 			authenticatedData: Data(), signingKey: bob.signingKey,
 			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
-			paddingLength: 0)
+			paddingLength: 0
+		).message
 
 		// Alice receives and unprotects it -> a ProposalStore entry.
 		let opened = try groupA.unprotect(provider, message: framed)
-		guard case .proposal(let proposal, let ref) = opened.content else {
+		guard case .proposal(let framedProposal) = opened.content else {
 			Issue.record("expected a proposal")
 			return
 		}
-		let store: MLS.RFC9420.ProposalStore = [
-			ref: .init(proposal: proposal, sender: .member(opened.sender))
-		]
+		var store = MLS.RFC9420.ProposalStore()
+		let ref = try store.insert(framedProposal, provider)
 
 		// Alice commits it by reference; both existing members converge,
 		// and Carol joins from the Welcome.
@@ -386,51 +386,133 @@ struct SelfInteropTests {
 			provider, welcome: try #require(add.welcome),
 			credentials: bob.joinCredentials, psk: { _ in nil })
 
-		// Bob builds and frames an Update proposal.
-		let (newLeafSecret, newLeafPublic) = try provider.hpkeGenerateKeyPair()
-		var updateLeaf = bob.keyPackage.leafNode
-		updateLeaf.encryptionKey = newLeafPublic
-		updateLeaf.source = .update
-		updateLeaf.signature = try MLS.signWithLabel(
-			provider, privateKey: bob.signingKey, label: "LeafNodeTBS",
-			content: try updateLeaf.toBeSigned(
-				placement: .inGroup(
-					groupID: groupB.context.groupID,
-					leafIndex: groupB.myLeafIndex)))
-		let proposalContent = MLS.RFC9420.FramedContent(
-			groupID: groupB.context.groupID, epoch: groupB.context.epoch,
-			sender: .member(groupB.myLeafIndex), authenticatedData: Data(),
-			content: .proposal(.update(updateLeaf)))
-		let framedProposal = try MLS.RFC9420.protectPublic(
-			provider, content: proposalContent, groupContext: groupB.context,
-			confirmationTag: nil, signingKey: bob.signingKey,
-			membershipKey: groupB.epoch.membershipKey)
-		let ref = try MLS.RFC9420.proposalRef(
-			provider,
-			.init(
-				wireFormat: .publicMessage, content: framedProposal.content,
-				auth: framedProposal.auth))
-		let store: MLS.RFC9420.ProposalStore = [
-			ref: .init(
-				proposal: .update(updateLeaf),
-				sender: .member(groupB.myLeafIndex))
-		]
+		// Bob proposes an Update to himself. `proposeUpdate` stashes the
+		// new leaf secret in `groupB.pendingUpdates` -- no hand patch is
+		// needed before `process` below, unlike before this API existed.
+		let (proposalMessage, ref) = try groupB.proposeUpdate(
+			provider, signingKey: bob.signingKey)
+		guard case .privateMessage(let framedProposal) = proposalMessage else {
+			Issue.record("expected a privateMessage-framed proposal")
+			return
+		}
+
+		// Alice receives and unprotects it -> a ProposalStore entry. The
+		// inserted ref matching what `proposeUpdate` already returned
+		// confirms the same signature sealed the message and computed the
+		// ref -- `protectContent`'s split sign-then-seal, not two.
+		let opened = try groupA.unprotect(provider, message: framedProposal)
+		guard case .proposal(let framedContent) = opened.content else {
+			Issue.record("expected a proposal")
+			return
+		}
+		var store = MLS.RFC9420.ProposalStore()
+		let insertedRef = try store.insert(framedContent, provider)
+		#expect(insertedRef == ref)
 
 		// Alice commits it by reference.
 		let commit = try groupA.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = commit.group
-		// The updater-side handoff, by hand and *before* processing: the
-		// commit replaces Bob's leaf with the update's new key, and decap
-		// may need to decrypt the committer's path secret under exactly
-		// that key -- a stale held leaf key fails AEAD-open. A real
-		// updater holds the new secret from the moment it proposes.
-		groupB.secretKeys[2 * groupB.myLeafIndex.value] = newLeafSecret
 		try Self.processPrivate(&groupB, provider, commit.commit, proposals: store)
 		Self.assertConverged(groupA, groupB)
 
 		// Both sides keep working: Bob commits the next epoch.
+		let next = try groupB.committing(
+			provider, proposals: [], signingKey: bob.signingKey,
+			randomness: .generate(provider))
+		groupB = next.group
+		try Self.processPrivate(&groupA, provider, next.commit)
+		Self.assertConverged(groupA, groupB)
+	}
+
+	/// The handoff's second gate: a pending update from
+	/// THIS epoch must not be seeded when the landing commit never applies
+	/// it. Bob proposes an Update in epoch N; Alice commits something else
+	/// entirely in N, never referencing Bob's proposal -- her commit's
+	/// UpdatePath still encrypts a path secret directly to Bob's *current*
+	/// leaf key (a two-member group's copath is exactly the other leaf), so
+	/// wrongly seeding the pending (unapplied, and therefore wrong) secret
+	/// over it would corrupt decap of this entirely legitimate commit.
+	@Test("a proposeUpdate not applied by a concurrent commit does not corrupt decap")
+	func updateByReferenceConcurrentCommit() throws {
+		let provider = Self.provider
+		let alice = try Self.member("alice")
+		let bob = try Self.member("bob")
+
+		var groupA = try Self.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Bob proposes, but never gets to reference it: Alice commits an
+		// unrelated, pathful, proposal-less PCS in the same epoch.
+		_ = try groupB.proposeUpdate(provider, signingKey: bob.signingKey)
+		let other = try groupA.committing(
+			provider, proposals: [], signingKey: alice.signingKey,
+			randomness: .generate(provider))
+		groupA = other.group
+
+		try Self.processPrivate(&groupB, provider, other.commit)
+		Self.assertConverged(groupA, groupB)
+	}
+
+	/// The committer -- not the proposer -- is the authority on which Update
+	/// lands. Bob proposes two self-Updates (A then B) in one epoch; Alice
+	/// commits the *earlier* one, A. Bob must decap under A's secret, which a
+	/// single last-write-wins slot would have discarded the moment B was
+	/// proposed. Retaining every proposed secret and seeding the one the tree
+	/// actually installed is what makes this converge.
+	@Test("the committer may land an earlier of several proposed Updates")
+	func updateByReferenceCommitterPicksEarlier() throws {
+		let provider = Self.provider
+		let alice = try Self.member("alice")
+		let bob = try Self.member("bob")
+
+		var groupA = try Self.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Bob proposes A, then B, in the same epoch. B must not evict A.
+		let (msgA, refA) = try groupB.proposeUpdate(
+			provider, signingKey: bob.signingKey)
+		_ = try groupB.proposeUpdate(provider, signingKey: bob.signingKey)
+		#expect(groupB.pendingUpdates?.updates.count == 2)
+		guard case .privateMessage(let framedA) = msgA else {
+			Issue.record("expected a privateMessage-framed proposal")
+			return
+		}
+
+		// Alice references only the earlier proposal, A.
+		let opened = try groupA.unprotect(provider, message: framedA)
+		guard case .proposal(let framedContent) = opened.content else {
+			Issue.record("expected a proposal")
+			return
+		}
+		var store = MLS.RFC9420.ProposalStore()
+		let insertedRef = try store.insert(framedContent, provider)
+		#expect(insertedRef == refA)
+
+		let commit = try groupA.committing(
+			provider, proposals: [.reference(refA)], proposalStore: store,
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = commit.group
+		try Self.processPrivate(&groupB, provider, commit.commit, proposals: store)
+		Self.assertConverged(groupA, groupB)
+
+		// Eviction: advancing the epoch cleared the whole retained set.
+		#expect(groupB.pendingUpdates == nil)
+
+		// State stays consistent: Bob commits the next epoch.
 		let next = try groupB.committing(
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))

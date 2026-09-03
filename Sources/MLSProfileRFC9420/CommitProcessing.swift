@@ -10,22 +10,19 @@ extension MLS.RFC9420 {
 	/// A proposal a member has seen by reference this epoch, with the
 	/// sender who framed it — an `Update`'s effect depends on who sent it,
 	/// so the sender travels with the proposal, not beside it.
+	///
+	/// The synthesized memberwise init is not `public` (Swift never
+	/// promotes it to the type's own access level automatically), and
+	/// that is deliberate here, not incidental: the only way to produce a
+	/// `StoredProposal` from outside this module is `ProposalStore.insert`,
+	/// which derives proposal, sender, and the ref that keys it all from
+	/// one framed `AuthenticatedContent` — see that type's own doc comment.
 	public struct StoredProposal: Sendable {
 		public var proposal: Proposal
 		public var sender: MLS.Sender
-
-		public init(proposal: Proposal, sender: MLS.Sender) {
-			self.proposal = proposal
-			self.sender = sender
-		}
 	}
 
-	/// By-reference proposals, keyed by `ProposalRef`. A plain dictionary
-	/// rather than a wrapper type: it would add no invariant a
-	/// `Dictionary` doesn't already have, and which proposals to retain is
-	/// application policy — RFC 9420 §12.4 explicitly declines to make
-	/// receivers enforce that every proposal they saw is referenced, so
-	/// baking a retention policy into a library type would overreach.
+	/// By-reference proposals, keyed by `ProposalRef`.
 	///
 	/// **The store is a trust boundary, and this is what holds without
 	/// it.** `processing` never recomputes a `ProposalRef` against its
@@ -38,9 +35,55 @@ extension MLS.RFC9420 {
 	/// `GroupContext` and dies at the confirmation tag; and every
 	/// §12.1/§12.2 rule runs on what the store supplies. What does not
 	/// fail closed is the epoch-level rejection a caller skips by storing
-	/// a stale proposal as fresh — retention is the caller's job, and
-	/// this comment is the contract saying so.
-	public typealias ProposalStore = [MLS.HashReference: StoredProposal]
+	/// a stale proposal as fresh — retention is the caller's job.
+	///
+	/// A `struct` wrapping the dictionary rather than a plain
+	/// `[HashReference: StoredProposal]` typealias: `insert` is the only
+	/// way in, and it derives the ref, the proposal, and the sender from
+	/// the SAME framed `AuthenticatedContent` — so a ref that doesn't
+	/// match the proposal stored under it, or a sender that doesn't match
+	/// how the proposal was actually framed, is unrepresentable. The old
+	/// typealias let a caller assemble those three independently, which
+	/// is exactly what made a mismatched substitution constructible.
+	public struct ProposalStore: Sendable {
+		private var entries: [MLS.HashReference: StoredProposal] = [:]
+
+		// swift-format-ignore: UseSynthesizedInitializer -- the synthesized
+		// memberwise init is `internal` (its access level follows `entries`,
+		// which must stay `private`), which breaks every cross-file default
+		// argument of `proposalStore: ProposalStore = ProposalStore()`. This
+		// explicit `public init()` is the only way to keep `entries` private
+		// while still letting `insert` be the sole way to populate a store.
+		public init() {}
+
+		/// Frames, refs, and stores in one step. `content.content.content`
+		/// must be `.proposal` — a commit or application message has no
+		/// business in a proposal store, and `notAProposal` says so rather
+		/// than silently discarding it.
+		@discardableResult
+		public mutating func insert(
+			_ content: AuthenticatedContent, _ provider: any MLS.CipherSuiteProvider
+		) throws -> MLS.HashReference {
+			guard case .proposal(let proposal) = content.content.content else {
+				throw MLS.RFC9420.GroupError.notAProposal
+			}
+			let ref = try proposalRef(provider, content)
+			entries[ref] = StoredProposal(
+				proposal: proposal, sender: content.content.sender)
+			return ref
+		}
+
+		public subscript(_ ref: MLS.HashReference) -> StoredProposal? {
+			entries[ref]
+		}
+
+		public var keys: Dictionary<MLS.HashReference, StoredProposal>.Keys {
+			entries.keys
+		}
+
+		public var isEmpty: Bool { entries.isEmpty }
+		public var count: Int { entries.count }
+	}
 
 	/// `ProposalRef = RefHash("MLS 1.0 Proposal Reference",
 	/// Encode(AuthenticatedContent))` — over the *framed and authenticated*
@@ -358,6 +401,43 @@ extension MLS.RFC9420.Group {
 				blankedNodes: blankedNodes, senderIndex: senderIndex,
 				leafCount: provisionalTree.leafCount)
 
+			// The updater-side handoff: `secretKeys` has no entry for a
+			// self-proposed Update's new leaf key until it is seeded here
+			// -- `proposeUpdate` only ever stashed it in `pendingUpdates`,
+			// never in `secretKeys`, because until a commit lands there is
+			// nothing to decap against.
+			//
+			// The committer -- not the proposer -- is the authority on
+			// which Update lands. Across an epoch this member may propose
+			// several self-Updates (each a fresh leaf key); §12.2 permits a
+			// single commit to apply at most one per leaf (validation
+			// rejects the rest as `duplicateProposalForLeaf`), but separate
+			// commits may each reference a different one. So we retain
+			// *every* proposed secret and seed the one whose public key the
+			// already-validated provisional tree actually installed at our
+			// leaf -- ground truth for what this commit's UpdatePath
+			// encrypts against, and independent of the store's sender field.
+			//
+			// Two gates: the epoch must match (a stale-epoch secret must
+			// never leak into a new epoch), and the installed leaf key must
+			// be one we hold a secret for. If it is not -- a concurrent
+			// commit that applied none of our Updates -- we seed nothing and
+			// decap under our old leaf key, which `prunedSecretKeys` above
+			// deliberately retained.
+			//
+			// Must run strictly after the `prunedSecretKeys` reassignment
+			// above and before decap below: seeding earlier is discarded
+			// the moment that reassignment runs.
+			if let pendingUpdates, pendingUpdates.epoch == context.epoch,
+				let installedKey = provisionalTree.leaf(at: myLeafIndex)?
+					.encryptionKey,
+				let match = pendingUpdates.updates.first(where: {
+					$0.publicKey == installedKey
+				})
+			{
+				newSecretKeys[pendingUpdates.node] = match.secret
+			}
+
 			// 9f
 			let result = try provisionalTree.decapCommitPath(
 				heldSecretKeys: newSecretKeys, sender: senderIndex,
@@ -433,6 +513,11 @@ extension MLS.RFC9420.Group {
 		updated.interimTranscriptHash = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
+		// `pendingUpdates` is valid only for the epoch it names -- every
+		// epoch advance retires the whole set, seeded or not (forward
+		// secrecy: proposed-but-uncommitted leaf secrets must not outlive
+		// their epoch).
+		updated.pendingUpdates = nil
 		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
 		// Against the *new* epoch, after the insert above -- pruning
 		// against the old epoch with a small depth could evict the entry

@@ -292,11 +292,11 @@ extension MLS.RFC9420.Group {
 extension MLS.RFC9420.Group {
 	public enum UnprotectedContent: Sendable {
 		case application(Data)
-		/// The proposal plus its `ProposalRef` — exactly what a
-		/// `ProposalStore` entry needs, computed here because the ref
-		/// binds the framed `AuthenticatedContent`, which unprotecting is
-		/// the last moment anyone holds.
-		case proposal(MLS.RFC9420.Proposal, ref: MLS.HashReference)
+		/// The framed proposal, ready for `ProposalStore.insert` — the
+		/// ref binds the framed `AuthenticatedContent`, which unprotecting
+		/// is the last moment anyone holds it, so `insert` is what derives
+		/// it now rather than this call computing it up front.
+		case proposal(MLS.RFC9420.AuthenticatedContent)
 		/// A commit needs the full processing pipeline; hand back the
 		/// authenticated frame for `processing` to take over.
 		case commit(MLS.RFC9420.AuthenticatedContent)
@@ -325,7 +325,8 @@ extension MLS.RFC9420.Group {
 		try protectContent(
 			provider, content: .application(applicationData),
 			authenticatedData: authenticatedData, signingKey: signingKey,
-			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength))
+			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength)
+		).message
 	}
 
 	/// Convenience: fresh reuse-guard bytes from the provider.
@@ -343,6 +344,14 @@ extension MLS.RFC9420.Group {
 			paddingLength: paddingLength)
 	}
 
+	/// Returns the signature alongside the sealed message — not needed by
+	/// `protect`'s own callers, but `proposeUpdate` computes a `ProposalRef`
+	/// over exactly this framing, and the ref must be built from the SAME
+	/// signature that sealed the message, not a second one: three of the
+	/// five supported suites randomize ECDSA, so signing the same content
+	/// twice produces two different signatures, and a ref built from the
+	/// wrong one would never match what a receiver's own `unprotect` +
+	/// `ProposalStore.insert` computes.
 	mutating func protectContent(
 		_ provider: any MLS.CipherSuiteProvider,
 		content: MLS.RFC9420.Content,
@@ -350,7 +359,7 @@ extension MLS.RFC9420.Group {
 		signingKey: MLS.SignatureSecretKey,
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
-	) throws -> MLS.RFC9420.PrivateMessage {
+	) throws -> (message: MLS.RFC9420.PrivateMessage, signature: MLS.Signature) {
 		let epochNumber = context.epoch
 		guard var secrets = messageSecrets[epochNumber] else {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(
@@ -377,11 +386,16 @@ extension MLS.RFC9420.Group {
 			groupID: context.groupID, epoch: epochNumber,
 			sender: .member(myLeafIndex), authenticatedData: authenticatedData,
 			content: content)
-		let message = try MLS.RFC9420.protectPrivate(
+		// Split, rather than the one-shot `protectPrivate`, purely to keep
+		// the signature: behaviorally identical to `protectPrivate`, which
+		// does exactly these two calls internally.
+		let (_, signature) = try MLS.RFC9420.signPrivate(
+			provider, content: framed, groupContext: secrets.groupContext,
+			signingKey: signingKey)
+		let message = try MLS.RFC9420.sealPrivate(
 			provider, keySource: OneShotKey(key: key, nonce: nonce),
-			content: framed, groupContext: secrets.groupContext,
-			generation: generation, confirmationTag: nil,
-			signingKey: signingKey, senderDataSecret: secrets.senderDataSecret,
+			content: framed, signature: signature, generation: generation,
+			confirmationTag: nil, senderDataSecret: secrets.senderDataSecret,
 			reuseGuard: reuseGuard, paddingLength: paddingLength)
 
 		secrets = messageSecrets[epochNumber]!
@@ -391,7 +405,7 @@ extension MLS.RFC9420.Group {
 			secrets.ownNextGeneration.application = generation + 1
 		}
 		messageSecrets[epochNumber] = secrets
-		return message
+		return (message, signature)
 	}
 
 	/// The commit-authoring counterpart to `protectContent`: seals a
@@ -488,9 +502,8 @@ extension MLS.RFC9420.Group {
 		switch authenticated.content.content {
 		case .application(let data):
 			content = .application(data)
-		case .proposal(let proposal):
-			content = .proposal(
-				proposal, ref: try MLS.RFC9420.proposalRef(provider, authenticated))
+		case .proposal:
+			content = .proposal(authenticated)
 		case .commit:
 			content = .commit(authenticated)
 		}

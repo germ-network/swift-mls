@@ -66,7 +66,7 @@ struct CommitRejectionTests {
 	static func storeFor(
 		_ epoch: PassiveClientVector.Epoch, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.ProposalStore {
-		var store: MLS.RFC9420.ProposalStore = [:]
+		var store = MLS.RFC9420.ProposalStore()
 		for proposalBytes in epoch.proposals {
 			var reader = MLS.Reader(proposalBytes.bytes)
 			guard
@@ -74,14 +74,13 @@ struct CommitRejectionTests {
 					from: &reader)
 			else { throw Failure.shape }
 			try reader.finish()
-			guard case .proposal(let proposal) = message.content.content else {
+			guard case .proposal = message.content.content else {
 				throw Failure.shape
 			}
 			let content = MLS.RFC9420.AuthenticatedContent(
 				wireFormat: .publicMessage, content: message.content,
 				auth: message.auth)
-			store[try MLS.RFC9420.proposalRef(provider, content)] = .init(
-				proposal: proposal, sender: message.content.sender)
+			try store.insert(content, provider)
 		}
 		return store
 	}
@@ -324,7 +323,7 @@ struct CommitRejectionTests {
 
 		#expect(throws: MLS.RFC9420.GroupError.unknownProposalReference) {
 			_ = try f.group.processing(
-				f.provider, commit: f.commit, proposals: [:], psk: { _ in nil })
+				f.provider, commit: f.commit, proposals: .init(), psk: { _ in nil })
 		}
 	}
 
@@ -356,43 +355,61 @@ struct CommitRejectionTests {
 	/// inferred. Indices in roughly 2^20…2^23 instead allocated hundreds of
 	/// megabytes and carried on. Hence the `.timeLimit`: the pre-fix failure
 	/// mode at the smaller indices is a very slow test, not a fast one.
+	/// Migrated off the vector fixture: `ProposalStore.insert` now derives
+	/// a proposal's ref from its own framed content, so a fake sender can
+	/// no longer be planted at a *real* vector commit's existing ref (that
+	/// ref-vs-value mismatch is exactly what the structural store rules
+	/// out). What the rule itself still lets through — `insert` records
+	/// whatever `Sender` the framing claims without checking it names an
+	/// actual member, and neither does the commit's own framing signature
+	/// — is reachable the same way `ProposalValidationTests` reaches every
+	/// other §12.1/§12.2 rule post-refactor: a synthetic committer
+	/// (`ConstructedRejectionTests.pair`) frames a real commit referencing
+	/// a proposal whose claimed sender is fabricated.
 	@Test(
 		"an Update whose sender occupies no leaf is rejected, not applied by growing the tree",
 		.timeLimit(.minutes(1)))
 	func updateFromNonMember() throws {
-		let f = try Self.fixture(.byReferenceWithPath)
-		// Derived from the fixture rather than hardcoded: which in-range
-		// leaves are blank varies by record, but the first index at or past
-		// `leafCount` is a non-member in every tree. The second is the index
-		// that trapped.
-		for leafIndex in [f.group.tree.leafCount.value, UInt32(1) << 23] {
-			try Self.expectUpdateRejected(f, from: leafIndex)
+		let pair = try ConstructedRejectionTests.pair()
+		// The second index is the one that historically trapped (see the
+		// class doc comment); the first just needs to be out of range.
+		for leafIndex in [pair.groupA.tree.leafCount.value, UInt32(1) << 23] {
+			try Self.expectUpdateRejected(pair, from: leafIndex)
 		}
 	}
 
-	private static func expectUpdateRejected(_ f: Fixture, from leafIndex: UInt32) throws {
-		guard case .commit(let commit) = f.commit.content.content else {
-			throw Failure.shape
-		}
-		let referenced = try #require(
-			commit.proposals.compactMap { entry -> MLS.HashReference? in
-				guard case .reference(let ref) = entry else { return nil }
-				return ref
-			}.first)
-
+	private static func expectUpdateRejected(
+		_ pair: ConstructedRejectionTests.Pair, from leafIndex: UInt32
+	) throws {
 		// A well-formed Update body — the committer's own current leaf —
-		// under a sender that occupies no leaf. Only the sender is
-		// fabricated.
-		let ownLeaf = try #require(f.group.tree.leaf(at: f.group.myLeafIndex))
+		// framed under a sender that occupies no leaf. Only the sender is
+		// fabricated; `insert` neither checks nor cares, which is the
+		// point: that check is `validateProposalList`'s job, and this is
+		// what tests it.
+		let ownLeaf = try #require(pair.groupA.tree.leaf(at: pair.groupA.myLeafIndex))
 		let sender = MLS.LeafIndex(value: leafIndex)
-		var store = f.store
-		store[referenced] = .init(
-			proposal: .update(try MLS.RFC9420.LeafNode(mlsEncoded: ownLeaf.encoded)),
-			sender: .member(sender))
+		let framedProposal = MLS.RFC9420.AuthenticatedContent(
+			wireFormat: .publicMessage,
+			content: .init(
+				groupID: pair.groupA.context.groupID,
+				epoch: pair.groupA.context.epoch, sender: .member(sender),
+				authenticatedData: Data(),
+				content: .proposal(
+					.update(
+						try MLS.RFC9420.LeafNode(
+							mlsEncoded: ownLeaf.encoded)))
+			),
+			auth: .init(signature: MLS.Signature(Data()), confirmationTag: nil))
+		var store = MLS.RFC9420.ProposalStore()
+		let ref = try store.insert(framedProposal, ConstructedRejectionTests.provider)
+		let commit = try ConstructedRejectionTests.craftedCommit(
+			pair, proposals: [.reference(ref)], path: nil)
 
 		#expect(throws: MLS.RFC9420.GroupError.updateFromNonMember(leaf: sender)) {
-			_ = try f.group.processing(
-				f.provider, commit: f.commit, proposals: store, psk: { _ in nil })
+			_ = try pair.groupB.processing(
+				ConstructedRejectionTests.provider, commit: commit,
+				proposals: store,
+				psk: { _ in nil })
 		}
 	}
 

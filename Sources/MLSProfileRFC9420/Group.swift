@@ -46,6 +46,29 @@ extension MLS.RFC9420 {
 		/// `retention.messageSecretsDepth`. See `MessageProtection.swift`.
 		var messageSecrets: [UInt64: MessageSecrets] = [:]
 
+		/// Self-proposed Updates awaiting a commit, seeded by `proposeUpdate`
+		/// and consumed by `processing` when a landing commit applies one —
+		/// `secretKeys` only ever tracks keys a *commit* this member saw
+		/// installed, never a key a *proposal* generated, so without this the
+		/// new leaf secret a self-Update creates has nowhere to live between
+		/// being proposed and being committed.
+		///
+		/// A *set* of secrets, not a single slot, because the committer — not
+		/// the proposer — is the authority on which Update lands: a member may
+		/// propose several in an epoch, and different commits may reference
+		/// different ones. `processing` seeds the one whose public key the
+		/// tree actually installed; `updates.last` is the most recent, the
+		/// natural handle for authoring. Valid only for the epoch it names;
+		/// the whole set is cleared on every epoch advance, in both
+		/// `processing` and `committing`. A future snapshot migration is
+		/// expected to persist this under `pending_updates`; that wiring is
+		/// out of scope here.
+		var pendingUpdates:
+			(
+				epoch: UInt64, node: UInt32,
+				updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
+			)? = nil
+
 		mutating func pruneResumptionPsks(currentEpoch: UInt64) {
 			// Saturating: at epochs below the depth, everything survives.
 			// (An unchecked subtraction here traps -- the fixture epochs

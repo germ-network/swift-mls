@@ -72,6 +72,9 @@ extension MLS.RFC9420 {
 		/// A `PublicMessage` that isn't a commit was handed to commit
 		/// processing.
 		case notACommit
+		/// `ProposalStore.insert` was handed an `AuthenticatedContent`
+		/// whose framed content isn't a proposal.
+		case notAProposal
 		/// External commits and external senders are deferred
 		/// project-wide, so a non-member sender is rejected rather than
 		/// silently mishandled.
