@@ -94,10 +94,12 @@ extension MLS.RFC9420.Group {
 		/// ahead retainable). Zeroizing: the whole forward chain derives from
 		/// it, so its exposure is the worst case.
 		var headSecret: SecretBytes?
-		/// The skipped-but-retainable AEAD (key, nonce) pairs stay `Data` —
-		/// they terminate at the AEAD, a nonce is not secret, and the ratchet
-		/// secret they came from is already consumed and gone.
-		var skipped: [UInt32: (key: Data, nonce: Data)] = [:]
+		/// Skipped-but-not-yet-consumed message keys: retained at rest (up to
+		/// `maxSkippedKeysPerSender` per chain, across retained epochs) until a
+		/// late message consumes one or the epoch is pruned — so the key half is
+		/// held zeroizing like every other retained secret, copied out to `Data`
+		/// only at the AEAD call. The nonce stays `Data`: it is not secret.
+		var skipped: [UInt32: (key: SecretBytes, nonce: Data)] = [:]
 	}
 
 	/// Everything unprotecting a *retained* epoch's `PrivateMessage` needs
@@ -241,7 +243,7 @@ extension MLS.RFC9420.Group {
 					generation: generation)
 			}
 			return (
-				cached.key, cached.nonce,
+				cached.key.withUnsafeBytes { Data($0) }, cached.nonce,
 				PendingConsumption(
 					epoch: epoch, chain: chainKey, advanced: nil,
 					consumedGeneration: generation)
@@ -270,7 +272,7 @@ extension MLS.RFC9420.Group {
 			if g == generation {
 				stepped = (step.key, step.nonce)
 			} else {
-				advanced.skipped[g] = (step.key, step.nonce)
+				advanced.skipped[g] = (try SecretBytes(bytes: step.key), step.nonce)
 			}
 			secret = step.nextSecret
 		}

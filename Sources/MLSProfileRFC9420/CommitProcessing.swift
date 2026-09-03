@@ -876,10 +876,10 @@ extension MLS.RFC9420.Group {
 	) throws -> SecretBytes? {
 		guard case .resumption(let resumption, _) = id else {
 			guard let bytes = try external(id) else { return nil }
-			guard let held = try? SecretBytes(bytes: bytes) else {
+			guard !bytes.isEmpty else {
 				throw MLS.RFC9420.GroupError.emptyPreSharedKey
 			}
-			return held
+			return try SecretBytes(bytes: bytes)
 		}
 		guard resumption.usage == .application else {
 			throw MLS.RFC9420.GroupError.unsupportedResumptionUsage

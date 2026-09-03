@@ -221,9 +221,10 @@ extension MLS.RFC9420.Group {
 			}
 			// Take custody of the app-supplied PSK bytes on the way in.
 			// An empty one is malformed, not merely unresolved.
-			guard let held = try? SecretBytes(bytes: secret) else {
+			guard !secret.isEmpty else {
 				throw MLS.RFC9420.GroupError.emptyPreSharedKey
 			}
+			let held = try SecretBytes(bytes: secret)
 			resolvedPsks.append((try id.mlsEncoded(), held))
 		}
 		let pskSecret = try MLS.KeySchedule.pskSecret(provider, psks: resolvedPsks)
