@@ -51,9 +51,11 @@ extension MLS.RFC9420.Group {
 	public struct EpochSecrets: Sendable {
 		public let initSecret: SecretBytes
 		public let exporterSecret: SecretBytes
-		/// `Data`, not `SecretBytes`: RFC 9420 §8.6's public out-of-band
+		/// `Data`, not `SecretBytes`: RFC 9420 §8.7's public out-of-band
 		/// authenticator, read and compared by applications — see
-		/// `MLS.KeySchedule.Epoch`.
+		/// `MLS.KeySchedule.Epoch`. Non-confidential (§8.7: it is designed for
+		/// out-of-band comparison to detect impersonation), so the snapshot
+		/// persists it as a plain byte string, not a `@SecretField`.
 		public let epochAuthenticator: Data
 		public let membershipKey: SecretBytes
 
@@ -71,6 +73,21 @@ extension MLS.RFC9420.Group {
 			self.exporterSecret = epoch.exporterSecret
 			self.epochAuthenticator = epoch.epochAuthenticator
 			self.membershipKey = epoch.membershipKey
+		}
+
+		/// Restores the four retained fields verbatim from a decoded snapshot
+		/// (spec/snapshot.md §4.2). Separate from the `init(retaining:)`
+		/// derivation paths — which fold a full key-schedule fan-out and
+		/// therefore suppress the memberwise init — because restore has the
+		/// already-retained values, not a fan-out to select from.
+		init(
+			restoringInitSecret initSecret: SecretBytes, exporterSecret: SecretBytes,
+			epochAuthenticator: Data, membershipKey: SecretBytes
+		) {
+			self.initSecret = initSecret
+			self.exporterSecret = exporterSecret
+			self.epochAuthenticator = epochAuthenticator
+			self.membershipKey = membershipKey
 		}
 	}
 

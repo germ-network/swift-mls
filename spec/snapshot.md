@@ -162,10 +162,17 @@ RFC 9420 exposes to applications.
 EpochSecrets = {
     0: init_secret           ; bstr  SECRET  (Nh)
     1: exporter_secret       ; bstr  SECRET  (Nh)
-    2: epoch_authenticator   ; bstr  SECRET  (Nh)
+    2: epoch_authenticator   ; bstr  (Nh)   — public, not SECRET
     3: membership_key        ; bstr  SECRET  (Nh)
 }
 ```
+
+`epoch_authenticator` is **not** secret-marked. RFC 9420 §8.7 designs it as an
+out-of-band comparison value — members read it and confirm it against each
+other (face-to-face, say) to detect impersonation — so it is non-confidential
+by construction and is persisted as a plain byte string. A conforming
+implementation need not hold it in zeroizing storage; the other three fields
+are key material and remain secret-marked.
 
 ### 4.3 MessageSecretStore
 
@@ -198,9 +205,14 @@ Chain = {
 
 SkippedKey = {
     0: key                   ; bstr  SECRET  (Nk)
-    1: nonce                 ; bstr  SECRET  (Nn)
+    1: nonce                 ; bstr  (Nn)   — not secret
 }
 ```
+
+`nonce` is **not** secret-marked: an AEAD nonce's security requirement is
+uniqueness per key, not secrecy. Only `key` is key material. §9.2's
+delete-on-consume still applies to the whole `SkippedKey` — it is removed when
+its generation is consumed — independent of the per-field marking.
 
 Cross-consistency requirements, all decode errors when violated:
 
