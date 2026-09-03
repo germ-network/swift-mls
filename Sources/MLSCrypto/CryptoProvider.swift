@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import SecretBytes
 
 extension MLS {
 	public enum CryptoError: Error, Sendable {
@@ -40,10 +41,33 @@ extension MLS {
 		func randomBytes(_ count: Int) -> Data
 		func hash(_ data: Data) throws -> Data
 
-		/// RFC 5869 `Extract(salt, ikm) -> PRK`.
-		func kdfExtract(salt: some ContiguousBytes, ikm: Data) throws -> Data
+		/// RFC 5869 `Extract(salt, ikm) -> PRK`. `ikm` is `some ContiguousBytes`
+		/// so a zeroizing secret (a resumption PSK in the §8.4 fold) can be the
+		/// input key material without a `Data` copy first.
+		func kdfExtract(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+			-> Data
 		/// RFC 5869 `Expand(prk, info, L) -> OKM`.
 		func kdfExpand(prk: some ContiguousBytes, info: Data, length: Int) throws -> Data
+
+		/// The secret-returning half of the KDF seam: identical to
+		/// `kdfExtract`/`kdfExpand` but the output stays in zeroizing storage
+		/// instead of being copied into a `Data` a caller must remember to hold
+		/// carefully. This is the path every derivation destined for a retained
+		/// key-schedule field uses, so the secret born inside
+		/// HKDF never touches an unscrubbed buffer between derivation and
+		/// storage. The `Data`-returning forms above stay for the outputs that
+		/// genuinely become `Data` — wire tags via `mac`, AEAD keys consumed
+		/// in-flight, the DeriveKeyPair candidate a rejection-sampling loop must
+		/// mask byte-wise.
+		///
+		/// Default implementations wrap the `Data` forms (one transient copy),
+		/// so a third-party conformer need not implement these; the shipped
+		/// `SwiftCryptoProvider` overrides both to construct the `SecretBytes`
+		/// straight from HKDF's own `SymmetricKey`, with no `Data` in between.
+		func kdfExtractSecret(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+			-> SecretBytes
+		func kdfExpandSecret(prk: some ContiguousBytes, info: Data, length: Int) throws
+			-> SecretBytes
 
 		func sign(privateKey: SignatureSecretKey, content: Data) throws -> Data
 		func verify(publicKey: SignaturePublicKey, content: Data, signature: Data) throws
@@ -80,7 +104,11 @@ extension MLS {
 		/// randomly generated, but the key schedule's `external_secret →
 		/// external_pub` step (RFC 9420 §8) is exactly this operation —
 		/// `kem_derive` in mls-rs's own naming — so it belongs in the seam.
-		func hpkeDeriveKeyPair(ikm: Data) throws -> (HpkeSecretKey, HpkePublicKey)
+		/// `ikm` is `some ContiguousBytes` so the (now zeroizing) external
+		/// secret feeds it without a `Data` copy.
+		func hpkeDeriveKeyPair(ikm: some ContiguousBytes) throws -> (
+			HpkeSecretKey, HpkePublicKey
+		)
 	}
 
 	/// Looks up the `CipherSuiteProvider` for a suite id. An app composes
@@ -104,6 +132,24 @@ extension MLS.CipherSuiteProvider {
 	/// KDF's Extract — nothing here would need to move.
 	public func mac(key: some ContiguousBytes, data: Data) throws -> Data {
 		try kdfExtract(salt: key, ikm: data)
+	}
+
+	/// Default secret-returning KDF forms: wrap the `Data`-returning
+	/// requirements. This keeps a conformer minimal — it need only implement
+	/// the two `Data` forms — at the cost of one transient `Data` copy per
+	/// call. `SwiftCryptoProvider` overrides both with a hop-free path, so the
+	/// shipped provider never mints that transient; the default exists only so
+	/// a second conformer compiles without reimplementing the seam.
+	public func kdfExtractSecret(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+		-> SecretBytes
+	{
+		try SecretBytes(bytes: kdfExtract(salt: salt, ikm: ikm))
+	}
+
+	public func kdfExpandSecret(prk: some ContiguousBytes, info: Data, length: Int) throws
+		-> SecretBytes
+	{
+		try SecretBytes(bytes: kdfExpand(prk: prk, info: info, length: length))
 	}
 }
 

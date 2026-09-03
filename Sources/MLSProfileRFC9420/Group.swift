@@ -5,6 +5,7 @@ import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.RFC9420 {
 	/// A member's view of one RFC 9420 group: the tree, the current
@@ -38,8 +39,10 @@ extension MLS.RFC9420 {
 
 		/// `resumption_psk` for recent epochs, keyed by epoch — bounded by
 		/// `retention.resumptionPskDepth`, enforced after every processed
-		/// commit and on policy change.
-		var resumptionPsks: [UInt64: Data]
+		/// commit and on policy change. Held in zeroizing storage: this is
+		/// the single retained representation of each epoch's resumption PSK,
+		/// and the longest-lived of them.
+		var resumptionPsks: [UInt64: SecretBytes]
 
 		/// Per-epoch application-message state (secret tree, ratchets,
 		/// epoch snapshots) — the §9.2 consuming store, bounded by
@@ -206,7 +209,7 @@ extension MLS.RFC9420.Group {
 		// without ReInit/branching support, which this project defers
 		// project-wide. Rejected outright rather than silently accepted
 		// with those RFC-mandated checks unenforced.
-		var resolvedPsks: [(encodedID: Data, psk: Data)] = []
+		var resolvedPsks: [(encodedID: Data, psk: SecretBytes)] = []
 		for id in groupSecrets.psks {
 			if case .resumption(let resumption, _) = id,
 				resumption.usage != .application
@@ -216,11 +219,21 @@ extension MLS.RFC9420.Group {
 			guard let secret = try psk(id) else {
 				throw MLS.RFC9420.GroupError.unresolvedPreSharedKey
 			}
-			resolvedPsks.append((try id.mlsEncoded(), secret))
+			// Take custody of the app-supplied PSK bytes on the way in.
+			// An empty one is malformed, not merely unresolved.
+			guard let held = try? SecretBytes(bytes: secret) else {
+				throw MLS.RFC9420.GroupError.emptyPreSharedKey
+			}
+			resolvedPsks.append((try id.mlsEncoded(), held))
 		}
 		let pskSecret = try MLS.KeySchedule.pskSecret(provider, psks: resolvedPsks)
 
-		// bullet 4
+		// bullet 4. A zero-length joiner_secret cannot key the schedule --
+		// reject a hostile/malformed Welcome here rather than deriving
+		// garbage that only fails later at the confirmation tag.
+		guard !groupSecrets.joinerSecret.isEmpty else {
+			throw MLS.RFC9420.GroupError.emptyJoinerSecret
+		}
 		let (groupInfo, epoch) = try welcome.decryptGroupInfo(
 			provider, joinerSecret: groupSecrets.joinerSecret, pskSecret: pskSecret)
 

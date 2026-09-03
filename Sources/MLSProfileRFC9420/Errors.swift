@@ -55,6 +55,16 @@ extension MLS.RFC9420 {
 		/// S13: a `GroupSecrets`/commit PSK proposal named an id the
 		/// caller's `psk` closure couldn't resolve.
 		case unresolvedPreSharedKey
+		/// A resolved PSK (external or resumption) was zero-length. Distinct
+		/// from `unresolvedPreSharedKey` (the resolver returned nothing): an
+		/// empty-but-present PSK is malformed input, so it is rejected at the
+		/// custody boundary rather than folded into the key schedule.
+		case emptyPreSharedKey
+		/// A Welcome's decrypted `joiner_secret` was zero-length — it cannot
+		/// key the schedule, so a hostile or malformed Welcome is rejected
+		/// here rather than deriving garbage that only fails later at the
+		/// confirmation tag.
+		case emptyJoinerSecret
 		/// RFC 9420 §12.4.3.1's `reinit`/`branch` resumption-PSK rules
 		/// (uniqueness among the Welcome's PSKs, `GroupInfo.epoch == 1`)
 		/// are out of scope — ReInit and branching are deferred

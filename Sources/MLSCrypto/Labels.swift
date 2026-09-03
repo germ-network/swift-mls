@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import SecretBytes
 
 /// `struct { uint16 length; opaque label<V>; opaque context<V>; } KDFLabel;`
 /// with `label = "MLS 1.0 " + Label`. Field order matters: it is signed and
@@ -70,6 +71,30 @@ extension MLS {
 		label: String
 	) throws -> Data {
 		try expandWithLabel(
+			provider, secret: secret, label: label, context: Data(),
+			length: provider.hashSize)
+	}
+
+	/// `ExpandWithLabel` returning a zeroizing `SecretBytes` — the same
+	/// derivation as `expandWithLabel`, on the secret-returning KDF form, so
+	/// a value bound for a retained key-schedule field is built with no
+	/// unscrubbed `Data` between HKDF and storage.
+	public static func expandWithLabelSecret(
+		_ provider: any CipherSuiteProvider,
+		secret: some ContiguousBytes, label: String, context: Data, length: Int
+	) throws -> SecretBytes {
+		let info = try KDFLabel(length: UInt16(length), label: label, context: context)
+			.mlsEncoded()
+		return try provider.kdfExpandSecret(prk: secret, info: info, length: length)
+	}
+
+	/// `DeriveSecret` returning a zeroizing `SecretBytes` — see
+	/// `expandWithLabelSecret`.
+	public static func deriveSecretSecret(
+		_ provider: any CipherSuiteProvider, secret: some ContiguousBytes,
+		label: String
+	) throws -> SecretBytes {
+		try expandWithLabelSecret(
 			provider, secret: secret, label: label, context: Data(),
 			length: provider.hashSize)
 	}

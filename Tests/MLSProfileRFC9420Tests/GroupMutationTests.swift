@@ -59,7 +59,7 @@ struct GroupMutationTests {
 		let externalTree: [MLS.RFC9420.Node?] = try treeReader.decodeVector()
 		try treeReader.finish()
 
-		let credentials = MLS.RFC9420.Group.JoinerCredentials(
+		let credentials = try MLS.RFC9420.Group.JoinerCredentials(
 			keyPackage: keyPackage,
 			initKey: MLS.HpkeSecretKey(record.initPriv.bytes),
 			encryptionKey: MLS.HpkeSecretKey(record.encryptionPriv.bytes))

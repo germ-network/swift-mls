@@ -5,6 +5,7 @@ import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.RFC9420.Group {
 	/// The random inputs one commit consumes. A parameter struct rather
@@ -167,7 +168,7 @@ extension MLS.RFC9420.Group {
 			guard case .preSharedKey(let id) = stored.proposal else { return nil }
 			return id
 		}
-		let resolvedPsks = try pskIDs.map { id -> (encodedID: Data, psk: Data) in
+		let resolvedPsks = try pskIDs.map { id -> (encodedID: Data, psk: SecretBytes) in
 			guard let secret = try resolvePsk(id, psk) else {
 				throw MLS.RFC9420.GroupError.unresolvedPreSharedKey
 			}
@@ -445,8 +446,13 @@ extension MLS.RFC9420.Group {
 				}
 			}
 
+			// Custody exit at the wire boundary: `joiner_secret` is carried
+			// in the Welcome's `GroupSecrets`, so it is copied out of
+			// zeroizing storage into the plaintext that is then HPKE-sealed
+			// (the encoded, encrypted `GroupSecrets` is what leaves).
 			let groupSecrets = MLS.RFC9420.GroupSecrets(
-				joinerSecret: newEpoch.joinerSecret, pathSecret: pathSecret,
+				joinerSecret: newEpoch.joinerSecret.withUnsafeBytes { Data($0) },
+				pathSecret: pathSecret,
 				psks: pskIDs)
 			let (enc, ciphertext) = try MLS.encryptWithLabel(
 				provider, publicKey: keyPackage.initKey, label: "Welcome",

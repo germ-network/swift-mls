@@ -216,8 +216,12 @@
 			var r = MlsClient_CreateKeyPackageResponse()
 			r.transactionID = id
 			r.keyPackage = try encoded(.keyPackage(creds.keyPackage))
-			r.initPriv = creds.initKey.data
-			r.encryptionPriv = creds.encryptionKey.data
+			// Custody exit into protobuf `Data` fields: the mlswg interop
+			// harness exports raw private keys for its cross-implementation
+			// runner. This is a test binary, never a library product, so the
+			// exposure is bounded to the harness.
+			r.initPriv = creds.initKey.data.withUnsafeBytes { Data($0) }
+			r.encryptionPriv = creds.encryptionKey.data.withUnsafeBytes { Data($0) }
 			r.signaturePriv = creds.signingKey.data
 			return r
 		}

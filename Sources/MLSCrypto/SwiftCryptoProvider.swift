@@ -1,6 +1,7 @@
 import Crypto
 import Foundation
 import MLSCodec
+import SecretBytes
 
 /// The default `MLS.CryptoProvider`, backing the five suites swift-crypto can
 /// build: 1, 2, 3, 5, 7. Suites 4 and 6 need Ed448/X448, which swift-crypto
@@ -43,62 +44,101 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
-	/// `salt` is `some ContiguousBytes` so a zeroizing secret type can be
-	/// passed without copying its bytes into a `Data` first. Unwrapped once
-	/// here rather than at every call site: `UnsafeRawBufferPointer`
-	/// satisfies both `ContiguousBytes` and the `DataProtocol` HKDF wants,
-	/// so this borrows rather than copies.
-	func kdfExtract(salt: some ContiguousBytes, ikm: Data) throws -> Data {
+	/// The suite's HKDF-Extract, normalized to a `SymmetricKey` (zeroizing)
+	/// so both the `Data` and `SecretBytes` forms build from one code path.
+	/// The extract output is a MAC, itself `ContiguousBytes`; wrapping it in
+	/// `SymmetricKey` copies its bytes into zeroizing storage with no `Data`
+	/// in between, so the secret form that follows never touches an
+	/// unprotected buffer.
+	private func hkdfExtractKey(salt: UnsafeRawBufferPointer, ikm: UnsafeRawBufferPointer)
+		throws
+		-> SymmetricKey
+	{
+		switch cipherSuite {
+		case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
+			SymmetricKey(
+				data: HKDF<SHA256>.extract(
+					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
+		case .p384Aes256:
+			SymmetricKey(
+				data: HKDF<SHA384>.extract(
+					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
+		case .p521Aes256:
+			SymmetricKey(
+				data: HKDF<SHA512>.extract(
+					inputKeyMaterial: SymmetricKey(data: ikm), salt: salt))
+		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+		}
+	}
+
+	/// The suite's HKDF-Expand, as HKDF's own `SymmetricKey` (zeroizing) —
+	/// the shared path behind `kdfExpand` and `kdfExpandSecret`.
+	private func hkdfExpandKey(prk: UnsafeRawBufferPointer, info: Data, length: Int) throws
+		-> SymmetricKey
+	{
+		switch cipherSuite {
+		case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
+			HKDF<SHA256>.expand(
+				pseudoRandomKey: SymmetricKey(data: prk), info: info,
+				outputByteCount: length)
+		case .p384Aes256:
+			HKDF<SHA384>.expand(
+				pseudoRandomKey: SymmetricKey(data: prk), info: info,
+				outputByteCount: length)
+		case .p521Aes256:
+			HKDF<SHA512>.expand(
+				pseudoRandomKey: SymmetricKey(data: prk), info: info,
+				outputByteCount: length)
+		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+		}
+	}
+
+	/// `salt`/`ikm` are `some ContiguousBytes` so a zeroizing secret type can
+	/// be passed without copying its bytes into a `Data` first — the
+	/// `UnsafeRawBufferPointer` a `withUnsafeBytes` yields satisfies both
+	/// `ContiguousBytes` and the `DataProtocol`/`ContiguousBytes` HKDF wants,
+	/// so this borrows rather than copies on the way in. The `Data` result is
+	/// for the outputs that genuinely become `Data` (a `mac` tag, a PSK-fold
+	/// accumulator); the retained-secret path uses `kdfExtractSecret`.
+	func kdfExtract(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws -> Data {
 		try salt.withUnsafeBytes { salt in
-			switch cipherSuite {
-			case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
-				Data(
-					HKDF<SHA256>.extract(
-						inputKeyMaterial: SymmetricKey(data: ikm),
-						salt: salt))
-			case .p384Aes256:
-				Data(
-					HKDF<SHA384>.extract(
-						inputKeyMaterial: SymmetricKey(data: ikm),
-						salt: salt))
-			case .p521Aes256:
-				Data(
-					HKDF<SHA512>.extract(
-						inputKeyMaterial: SymmetricKey(data: ikm),
-						salt: salt))
-			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+			try ikm.withUnsafeBytes { ikm in
+				try hkdfExtractKey(salt: salt, ikm: ikm).withUnsafeBytes {
+					Data($0)
+				}
 			}
 		}
 	}
 
-	/// `prk` is `some ContiguousBytes` so a zeroizing secret type can be
-	/// passed without first copying its bytes into a `Data` — see
-	/// `kdfExtract`.
-	///
-	/// The `Data` on the way *out* is a separate question, deliberately not
-	/// answered here: HKDF hands back a `SymmetricKey` (already zeroizing)
-	/// and this copies it into an unprotected buffer. Closing that means
-	/// changing what every derivation in the key schedule returns, which is
-	/// its own change with its own review.
 	func kdfExpand(prk: some ContiguousBytes, info: Data, length: Int) throws -> Data {
-		let key: SymmetricKey = try prk.withUnsafeBytes { prk in
-			switch cipherSuite {
-			case .curve25519Aes128, .p256Aes128, .curve25519ChaCha:
-				HKDF<SHA256>.expand(
-					pseudoRandomKey: SymmetricKey(data: prk), info: info,
-					outputByteCount: length)
-			case .p384Aes256:
-				HKDF<SHA384>.expand(
-					pseudoRandomKey: SymmetricKey(data: prk), info: info,
-					outputByteCount: length)
-			case .p521Aes256:
-				HKDF<SHA512>.expand(
-					pseudoRandomKey: SymmetricKey(data: prk), info: info,
-					outputByteCount: length)
-			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+		try prk.withUnsafeBytes { prk in
+			try hkdfExpandKey(prk: prk, info: info, length: length).withUnsafeBytes {
+				Data($0)
 			}
 		}
-		return key.withUnsafeBytes { Data($0) }
+	}
+
+	/// The secret-returning KDF seam: the derived bytes go
+	/// straight from HKDF's own `SymmetricKey` into a `SecretBytes` with no
+	/// `Data` in between, so a value destined for a retained key-schedule
+	/// field never round-trips through an unscrubbed buffer. This overrides
+	/// the `Data`-wrapping default in `CryptoProvider.swift`.
+	func kdfExtractSecret(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+		-> SecretBytes
+	{
+		try salt.withUnsafeBytes { salt in
+			try ikm.withUnsafeBytes { ikm in
+				try SecretBytes(bytes: hkdfExtractKey(salt: salt, ikm: ikm))
+			}
+		}
+	}
+
+	func kdfExpandSecret(prk: some ContiguousBytes, info: Data, length: Int) throws
+		-> SecretBytes
+	{
+		try prk.withUnsafeBytes { prk in
+			try SecretBytes(bytes: hkdfExpandKey(prk: prk, info: info, length: length))
+		}
 	}
 
 	func sign(privateKey: MLS.SignatureSecretKey, content: Data) throws -> Data {
@@ -252,16 +292,28 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:
 			let sk = Curve25519.KeyAgreement.PrivateKey()
-			return (.init(sk.rawRepresentation), .init(sk.publicKey.rawRepresentation))
+			return (
+				try .init(sk.rawRepresentation),
+				.init(sk.publicKey.rawRepresentation)
+			)
 		case .p256Aes128:
 			let sk = P256.KeyAgreement.PrivateKey()
-			return (.init(sk.rawRepresentation), .init(sk.publicKey.x963Representation))
+			return (
+				try .init(sk.rawRepresentation),
+				.init(sk.publicKey.x963Representation)
+			)
 		case .p384Aes256:
 			let sk = P384.KeyAgreement.PrivateKey()
-			return (.init(sk.rawRepresentation), .init(sk.publicKey.x963Representation))
+			return (
+				try .init(sk.rawRepresentation),
+				.init(sk.publicKey.x963Representation)
+			)
 		case .p521Aes256:
 			let sk = P521.KeyAgreement.PrivateKey()
-			return (.init(sk.rawRepresentation), .init(sk.publicKey.x963Representation))
+			return (
+				try .init(sk.rawRepresentation),
+				.init(sk.publicKey.x963Representation)
+			)
 		default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
 		}
 	}
@@ -469,26 +521,39 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
-	func hpkeDeriveKeyPair(ikm: Data) throws -> (MLS.HpkeSecretKey, MLS.HpkePublicKey) {
+	func hpkeDeriveKeyPair(ikm: some ContiguousBytes) throws -> (
+		MLS.HpkeSecretKey, MLS.HpkePublicKey
+	) {
+		// RFC 9180 §4's LabeledExtract concatenates `ikm` into a byte string
+		// that is then hashed, so the seed's bytes must be materialized here
+		// regardless of custody — an inherent `Data` for the hash input, not a
+		// stray copy. The seed (an `external_secret`) is used once per epoch.
+		let ikm = ikm.withUnsafeBytes { Data($0) }
 		let dkpPrk = try kemLabeledExtract(salt: Data(), label: "dkp_prk", ikm: ikm)
 
 		guard let bitmask = hpkeRejectionSamplingBitmask else {
 			// X25519: no candidate loop: any clamped 32 bytes is valid.
-			let sk = try kemLabeledExpand(
-				prk: dkpPrk, label: "sk", info: Data(), length: hpkeSecretKeySize)
-			return (.init(sk), try hpkePublicKey(for: .init(sk)))
+			let sk = try MLS.HpkeSecretKey(
+				kemLabeledExpand(
+					prk: dkpPrk, label: "sk", info: Data(),
+					length: hpkeSecretKeySize))
+			return (sk, try hpkePublicKey(for: sk))
 		}
 
 		// NIST curves: RFC 9180 gives 255 attempts to land inside the
 		// curve's order; each candidate's leading byte is masked down to
-		// the curve's real bit width before validating it as a scalar.
+		// the curve's real bit width before validating it as a scalar. The
+		// masking mutates the derived bytes in place, so this path keeps
+		// the `Data`-returning `kemLabeledExpand`; the result is wrapped
+		// into zeroizing storage once the masking is done.
 		for counter in UInt8(0)...254 {
 			var candidate = try kemLabeledExpand(
 				prk: dkpPrk, label: "candidate", info: Data([counter]),
 				length: hpkeSecretKeySize)
 			candidate[0] &= bitmask
-			if let publicKey = try? hpkePublicKey(for: .init(candidate)) {
-				return (.init(candidate), publicKey)
+			let candidateKey = try MLS.HpkeSecretKey(candidate)
+			if let publicKey = try? hpkePublicKey(for: candidateKey) {
+				return (candidateKey, publicKey)
 			}
 		}
 		throw MLS.CryptoError.invalidKey
@@ -503,7 +568,17 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	/// exactly 66 and throws otherwise. Left-padding restores the value
 	/// without changing it — zero-extending a big-endian integer is a
 	/// no-op on its magnitude.
-	private func p521Padded(_ raw: Data) -> Data {
-		raw.count >= 66 ? raw : Data(repeating: 0, count: 66 - raw.count) + raw
+	///
+	/// This is a deliberate plaintext exit for a P-521 private key: the
+	/// padded value is a `Data`, and there is no portable way to prepend
+	/// bytes into zeroizing storage at this project's floor. It is the one
+	/// place `HpkeSecretKey.data` (now `SecretBytes`) is copied out — swift
+	/// -crypto's fixed-width requirement forces it, and the result is
+	/// consumed immediately by the `PrivateKey` init it feeds. `some
+	/// ContiguousBytes` so both an `HpkeSecretKey`'s `SecretBytes` and a
+	/// `SignatureSecretKey`'s `Data` pass through the one helper.
+	private func p521Padded(_ raw: some ContiguousBytes) -> Data {
+		let raw = raw.withUnsafeBytes { Data($0) }
+		return raw.count >= 66 ? raw : Data(repeating: 0, count: 66 - raw.count) + raw
 	}
 }

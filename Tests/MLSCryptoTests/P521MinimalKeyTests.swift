@@ -1,5 +1,6 @@
 import Foundation
 import MLSCodec
+import SecretBytes
 import Testing
 
 @testable import MLSCrypto
@@ -24,7 +25,7 @@ struct P521MinimalKeyTests {
 		var stripped: (secretKey: MLS.HpkeSecretKey, publicKey: MLS.HpkePublicKey)?
 		for _ in 0..<64 {
 			let (secretKey, publicKey) = try provider.hpkeGenerateKeyPair()
-			if secretKey.data.first == 0 {
+			if secretKey.data.withUnsafeBytes({ $0.first == 0 }) {
 				stripped = (secretKey, publicKey)
 				break
 			}
@@ -32,8 +33,9 @@ struct P521MinimalKeyTests {
 		// Astronomically unlikely to exhaust 64 draws at ~50% odds per key.
 		let (fullSecretKey, publicKey) = try #require(stripped)
 
-		let minimalSecretKey = MLS.HpkeSecretKey(fullSecretKey.data.dropFirst())
-		#expect(minimalSecretKey.data.count == 65)
+		let minimalSecretKey = try MLS.HpkeSecretKey(
+			fullSecretKey.data.withUnsafeBytes { Data($0.dropFirst()) })
+		#expect(minimalSecretKey.data.byteCount == 65)
 
 		let plaintext = Data("hpkeOpen must accept a minimally-encoded P-521 key".utf8)
 		let (enc, ciphertext) = try provider.hpkeSeal(

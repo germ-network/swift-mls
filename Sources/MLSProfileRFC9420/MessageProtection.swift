@@ -20,10 +20,16 @@ extension MLS.RFC9420.Group {
 		var nodeSecrets: [UInt32: Data]
 		let leafCount: MLS.LeafCount
 
-		init(encryptionSecret: Data, leafCount: MLS.LeafCount) {
+		/// `encryptionSecret` is `some ContiguousBytes` so the epoch's
+		/// (zeroizing) `encryption_secret` seeds the tree with no copy at the
+		/// call site. The per-epoch message-secret store below is still
+		/// `Data` — its §9.2 consuming lifecycle is not yet zeroizing — so the
+		/// one copy out of zeroizing storage happens here, at that boundary.
+		init(encryptionSecret: some ContiguousBytes, leafCount: MLS.LeafCount) {
 			self.leafCount = leafCount
 			self.nodeSecrets = [
-				MLS.TreeMath.root(leafCount: leafCount): encryptionSecret
+				MLS.TreeMath.root(leafCount: leafCount):
+					encryptionSecret.withUnsafeBytes { Data($0) }
 			]
 		}
 
@@ -151,7 +157,7 @@ extension MLS.RFC9420.Group {
 	/// path (`create`, `join`, `processing`, `committing`).
 	mutating func installMessageSecrets(
 		context: MLS.RFC9420.GroupContext,
-		senderDataSecret: Data, encryptionSecret: Data,
+		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
@@ -170,7 +176,9 @@ extension MLS.RFC9420.Group {
 		}
 		messageSecrets[context.epoch] = MessageSecrets(
 			groupContext: context,
-			senderDataSecret: senderDataSecret,
+			// Message-store boundary: the per-epoch message-secret store is
+			// still `Data`. One documented copy out of zeroizing storage, here.
+			senderDataSecret: senderDataSecret.withUnsafeBytes { Data($0) },
 			signatureKeys: signatureKeys,
 			tree: ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))

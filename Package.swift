@@ -23,7 +23,12 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
         // Zeroizing storage for held secrets. Floor is iOS 16 / macOS 13,
-        // below this package's own, so it imposes nothing on adopters.
+        // below this package's own, so it imposes nothing on adopters; its
+        // one dependency is swift-crypto, already in this tree. Pinned to the
+        // minor: it is pre-1.0 and breaks at minor bumps by its own changelog.
+        .package(
+            url: "https://github.com/germ-network/swift-secret-bytes.git",
+            .upToNextMinor(from: "0.2.0")),
         // Interop-harness only — never a dependency of any library product
         // (grpc-swift 2 requires macOS 15+; the executable target below is
         // the sole consumer). Pinned major versions keep the checked-in
@@ -42,12 +47,16 @@ let package = Package(
             dependencies: [
                 "MLSCodec",
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
         .target(name: "MLSTreeMath", dependencies: ["MLSCodec"]),
         .target(
             name: "MLSKeySchedule",
-            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
+            dependencies: [
+                "MLSCodec", "MLSCrypto", "MLSTreeMath",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
         ),
         .target(
             name: "MLSFraming",
@@ -84,6 +93,7 @@ let package = Package(
             dependencies: [
                 "MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming", "MLSTreeKEM",
                 "MLSKeySchedule",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
         .target(
@@ -95,7 +105,10 @@ let package = Package(
         ),
         .testTarget(
             name: "MLSCryptoTests",
-            dependencies: ["MLSCrypto", "MLSVectorSupport"]
+            dependencies: [
+                "MLSCrypto", "MLSVectorSupport",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
         ),
         .testTarget(
             name: "MLSTreeMathTests",
@@ -109,7 +122,10 @@ let package = Package(
             // coverage across two test targets. The dedicated
             // sender-data-key vector's own test lives in MLSFramingTests.
             name: "MLSKeySchedTests",
-            dependencies: ["MLSKeySchedule", "MLSCrypto", "MLSFraming", "MLSVectorSupport"]
+            dependencies: [
+                "MLSKeySchedule", "MLSCrypto", "MLSFraming", "MLSVectorSupport",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
         ),
         .testTarget(
             // Deliberately does not link MLSProfileRFC9420. Framing's
@@ -142,6 +158,7 @@ let package = Package(
             dependencies: [
                 "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
                 "MLSVectorSupport",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
         .executableTarget(
@@ -149,6 +166,7 @@ let package = Package(
             dependencies: [
                 "MLSProfileRFC9420", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
                 "MLSFraming", "MLSCodec", "MLSTreeMath",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
                 .product(
                     name: "GRPCCore", package: "grpc-swift-2",
                     condition: .when(platforms: [.macOS, .linux])),

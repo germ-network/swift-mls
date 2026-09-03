@@ -12,9 +12,11 @@ extension MLS.Framing {
 		return MLS.MembershipTag(try provider.mac(key: membershipKey, data: tbm))
 	}
 
-	/// `MAC(confirmation_key, confirmed_transcript_hash)`.
+	/// `MAC(confirmation_key, confirmed_transcript_hash)`. `confirmationKey`
+	/// is `some ContiguousBytes` so the (now zeroizing) epoch confirmation
+	/// key feeds it without a `Data` copy.
 	public static func confirmationTag(
-		_ provider: any MLS.CipherSuiteProvider, confirmationKey: Data,
+		_ provider: any MLS.CipherSuiteProvider, confirmationKey: some ContiguousBytes,
 		confirmedTranscriptHash: Data
 	) throws -> MLS.ConfirmationTag {
 		MLS.ConfirmationTag(

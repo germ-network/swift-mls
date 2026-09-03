@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import SecretBytes
 
 /// RFC 9420 §8's key schedule — the anchor every profile lands on.
 /// `advance` takes exactly four inputs (a secret from the previous epoch, a
@@ -11,26 +12,34 @@ import MLSCrypto
 /// already encoded by whoever calls this.
 extension MLS {
 	public enum KeySchedule: Sendable {
+		/// Every secret-carrying field is held in zeroizing storage
+		/// (`SecretBytes`) — the fan-out is where the longest
+		/// -lived key material is born. The two exceptions are deliberate:
+		/// `externalPublicKey` is a public key, and `epochAuthenticator` is
+		/// RFC 9420 §8.6's public out-of-band authenticator, which
+		/// applications read and compare directly — a redacted secret type
+		/// would impede that legitimate use, and it carries no
+		/// confidentiality to protect.
 		public struct Epoch: Sendable {
 			/// Carried to the group's joiners in the Welcome; not derived
 			/// from `epochSecret` — it is the parent secret `epochSecret`
 			/// itself is expanded from, so this and `epochSecret`'s entire
 			/// fan-out are siblings, not parent/child.
-			public let joinerSecret: Data
+			public let joinerSecret: SecretBytes
 			/// Encrypts the `GroupInfo`/`Welcome` at group creation.
-			public let welcomeSecret: Data
+			public let welcomeSecret: SecretBytes
 			/// This epoch's contribution to the *next* epoch's key
 			/// schedule — feeds back into `advance` as `initSecret`.
-			public let initSecret: Data
-			public let senderDataSecret: Data
-			public let encryptionSecret: Data
-			public let exporterSecret: Data
+			public let initSecret: SecretBytes
+			public let senderDataSecret: SecretBytes
+			public let encryptionSecret: SecretBytes
+			public let exporterSecret: SecretBytes
 			public let epochAuthenticator: Data
-			public let externalSecret: Data
+			public let externalSecret: SecretBytes
 			public let externalPublicKey: HpkePublicKey
-			public let confirmationKey: Data
-			public let membershipKey: Data
-			public let resumptionPsk: Data
+			public let confirmationKey: SecretBytes
+			public let membershipKey: SecretBytes
+			public let resumptionPsk: SecretBytes
 		}
 
 		/// The whole key schedule, one call. `initSecret` is the previous
@@ -47,9 +56,9 @@ extension MLS {
 			pskSecret: Data,
 			groupContext: Data
 		) throws -> Epoch {
-			let joinerSeed = try provider.kdfExtract(
+			let joinerSeed = try provider.kdfExtractSecret(
 				salt: initSecret, ikm: commitSecret)
-			let joinerSecret = try expandWithLabel(
+			let joinerSecret = try expandWithLabelSecret(
 				provider, secret: joinerSeed, label: "joiner",
 				context: groupContext, length: provider.hashSize)
 
@@ -64,20 +73,21 @@ extension MLS {
 		/// the Welcome carries.
 		public static func fromJoinerSecret(
 			_ provider: any CipherSuiteProvider,
-			joinerSecret: Data,
+			joinerSecret: some ContiguousBytes,
 			pskSecret: Data,
 			groupContext: Data
 		) throws -> Epoch {
-			let epochSeed = try provider.kdfExtract(salt: joinerSecret, ikm: pskSecret)
-			let welcomeSecret = try deriveSecret(
+			let epochSeed = try provider.kdfExtractSecret(
+				salt: joinerSecret, ikm: pskSecret)
+			let welcomeSecret = try deriveSecretSecret(
 				provider, secret: epochSeed, label: "welcome")
-			let epochSecret = try expandWithLabel(
+			let epochSecret = try expandWithLabelSecret(
 				provider, secret: epochSeed, label: "epoch", context: groupContext,
 				length: provider.hashSize)
 			let fanOut = try fromEpochSecret(provider, epochSecret: epochSecret)
 
-			return Epoch(
-				joinerSecret: joinerSecret,
+			return try Epoch(
+				joinerSecret: SecretBytes(bytes: joinerSecret),
 				welcomeSecret: welcomeSecret,
 				initSecret: fanOut.initSecret,
 				senderDataSecret: fanOut.senderDataSecret,
@@ -102,25 +112,25 @@ extension MLS {
 		/// `advance` with a random init secret, though that would be
 		/// observationally indistinguishable from outside.
 		public struct EpochFanOut: Sendable {
-			public let initSecret: Data
-			public let senderDataSecret: Data
-			public let encryptionSecret: Data
-			public let exporterSecret: Data
+			public let initSecret: SecretBytes
+			public let senderDataSecret: SecretBytes
+			public let encryptionSecret: SecretBytes
+			public let exporterSecret: SecretBytes
 			public let epochAuthenticator: Data
-			public let externalSecret: Data
+			public let externalSecret: SecretBytes
 			public let externalPublicKey: HpkePublicKey
-			public let confirmationKey: Data
-			public let membershipKey: Data
-			public let resumptionPsk: Data
+			public let confirmationKey: SecretBytes
+			public let membershipKey: SecretBytes
+			public let resumptionPsk: SecretBytes
 		}
 
 		/// The fan-out from a raw `epoch_secret` — the half below
 		/// `fromJoinerSecret`, which wraps this.
 		public static func fromEpochSecret(
-			_ provider: any CipherSuiteProvider, epochSecret: Data
+			_ provider: any CipherSuiteProvider, epochSecret: some ContiguousBytes
 		) throws -> EpochFanOut {
-			func derive(_ label: String) throws -> Data {
-				try deriveSecret(provider, secret: epochSecret, label: label)
+			func derive(_ label: String) throws -> SecretBytes {
+				try deriveSecretSecret(provider, secret: epochSecret, label: label)
 			}
 
 			let externalSecret = try derive("external")
@@ -132,7 +142,9 @@ extension MLS {
 				senderDataSecret: derive("sender data"),
 				encryptionSecret: derive("encryption"),
 				exporterSecret: derive("exporter"),
-				epochAuthenticator: derive("authentication"),
+				// Public §8.6 authenticator, not confidential — see `Epoch`.
+				epochAuthenticator: deriveSecret(
+					provider, secret: epochSecret, label: "authentication"),
 				externalSecret: externalSecret,
 				externalPublicKey: externalPublicKey,
 				confirmationKey: derive("confirm"),
@@ -147,8 +159,14 @@ extension MLS {
 		///   welcome_key   = ExpandWithLabel(welcome_secret, "key",   "", AEAD.Nk)
 		/// The context is empty in both -- not the group context, which
 		/// doesn't exist yet from a joiner's perspective at this point.
+		/// The derived AEAD key/nonce are returned as `Data`: they are
+		/// consumed in-flight by the very next `aeadSeal`/`aeadOpen`, the
+		/// short-lived message-key surface not yet moved to zeroizing
+		/// storage, not a retained
+		/// key-schedule field. `welcomeSecret` is `some ContiguousBytes` so
+		/// the (now zeroizing) `Epoch.welcomeSecret` feeds it with no copy.
 		public static func welcomeKeyNonce(
-			_ provider: any CipherSuiteProvider, welcomeSecret: Data
+			_ provider: any CipherSuiteProvider, welcomeSecret: some ContiguousBytes
 		) throws -> (key: Data, nonce: Data) {
 			let key = try expandWithLabel(
 				provider, secret: welcomeSecret, label: "key", context: Data(),
@@ -194,7 +212,7 @@ extension MLS {
 		/// never needs to know which one it was given.
 		public static func pskSecret(
 			_ provider: any CipherSuiteProvider,
-			psks: [(encodedID: Data, psk: Data)]
+			psks: [(encodedID: Data, psk: SecretBytes)]
 		) throws -> Data {
 			let zero = Data(repeating: 0, count: provider.hashSize)
 			guard let count = UInt16(exactly: psks.count) else {

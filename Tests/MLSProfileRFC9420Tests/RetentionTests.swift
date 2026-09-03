@@ -133,7 +133,7 @@ struct RetentionTests {
 			found, "no vector fixture offers an inert injection node")
 
 		var group = f.group
-		group.secretKeys[node] = MLS.HpkeSecretKey(Data("stale sentinel".utf8))
+		group.secretKeys[node] = try MLS.HpkeSecretKey(Data("stale sentinel".utf8))
 		let updated = try group.processing(
 			f.provider, commit: f.commit, proposals: f.store, psk: { _ in nil })
 		#expect(updated.secretKeys[node] == nil)
