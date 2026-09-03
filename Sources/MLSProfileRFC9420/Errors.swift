@@ -98,6 +98,18 @@ extension MLS.RFC9420 {
 		/// "is this leaf currently a member" is context only commit
 		/// processing has.
 		case removeOfNonMember(leaf: MLS.LeafIndex)
+		/// An Update proposal whose sender occupies no leaf. RFC 9420
+		/// §12.1.2 defines the operation as replacing *the sender's*
+		/// LeafNode, which does not exist in that case.
+		///
+		/// Load-bearing beyond the undefined semantics: `setLeaf` grows
+		/// the backing array to reach any index it is given, and
+		/// `LeafIndex` is bounded only by its own 2^24 ceiling, never
+		/// against the tree it indexes. Without this guard an
+		/// out-of-range sender in a caller-supplied `ProposalStore`
+		/// allocates its way toward 2^25 array entries and then aborts
+		/// the process on `RatchetTree.leafCount`'s `try!`.
+		case updateFromNonMember(leaf: MLS.LeafIndex)
 		/// S20: `UpdatePath.leaf_node.leaf_node_source` must be `commit`.
 		case updatePathLeafNotCommitSource
 		/// S20: an `UpdatePath` public key already appears in the new

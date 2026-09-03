@@ -25,7 +25,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "MLSCodec"),
-        .testTarget(name: "MLSCodecTests", dependencies: ["MLSCodec"]),
+        .testTarget(name: "MLSCodecTests", dependencies: ["MLSCodec", "MLSVectorSupport"]),
 
         .target(
             name: "MLSCrypto",

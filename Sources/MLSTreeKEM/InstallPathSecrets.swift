@@ -31,11 +31,11 @@ extension MLS.TreeKEM.RatchetTree {
 		forLeaf leafIndex: MLS.LeafIndex, from signer: MLS.LeafIndex, pathSecret: Data,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> [(node: UInt32, secretKey: MLS.HpkeSecretKey)] {
-		let signerPath = try MLS.TreeMath.directPath(
+		let signerPath = MLS.TreeMath.directPath(
 			from: 2 * signer.value, leafCount: leafCount)
 		let signerFiltered = try filteredDirectPath(from: signer)
 		let selfPath = Set(
-			try MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
+			MLS.TreeMath.directPath(from: 2 * leafIndex.value, leafCount: leafCount)
 				.map(\.path))
 
 		guard let lcaIndex = signerPath.firstIndex(where: { selfPath.contains($0.path) })

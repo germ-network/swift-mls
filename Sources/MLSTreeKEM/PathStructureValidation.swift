@@ -24,7 +24,7 @@ extension MLS.TreeKEM.RatchetTree {
 		sender: MLS.LeafIndex, nodeCiphertextCounts: [Int], excluding: Set<MLS.LeafIndex>
 	) throws {
 		let filtered = try filteredDirectPath(from: sender)
-		let path = try MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
+		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let expectedCount = filtered.filter { !$0 }.count
 
 		guard nodeCiphertextCounts.count == expectedCount else {

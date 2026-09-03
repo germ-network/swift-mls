@@ -78,7 +78,7 @@ struct AddExclusionTests {
 			.init(encryptionKey: joinerPublicKey, parentHash: nil, encoded: Data([2])),
 			hint: .init(value: 2))
 		try #require(joiner == .init(value: 2))
-		for step in try MLS.TreeMath.directPath(
+		for step in MLS.TreeMath.directPath(
 			from: 2 * joiner.value, leafCount: tree.leafCount)
 		{
 			try tree.addUnmergedLeaf(joiner, to: step.path)

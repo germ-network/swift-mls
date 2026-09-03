@@ -20,16 +20,27 @@ extension MLS.TreeKEM {
 		/// always agree with `nodes.count` and mutation never invalidates
 		/// that relationship on its own.
 		public var leafCount: MLS.LeafCount {
-			// Never throws in practice: every grower (`insertLeaf`,
-			// `setParent`/`setLeaf` on an index past the current array --
-			// `applyUpdatePath` does this routinely on a trimmed tree) only
-			// ever reaches an index tree-math already computed against the
-			// current (valid) `leafCount`, so the array can't grow past
-			// what `paddedLeafCount` accepts. A pathological node index
-			// handed to `setParent` directly, bypassing tree-math, could
-			// still trap this -- not reachable from decode or from
-			// anything in this module, only from misusing `setParent`'s
-			// own (module-internal) contract.
+			// **This can trap, and the caller's contract is what stops
+			// it.** An earlier version of this comment claimed otherwise --
+			// that every grower only reaches tree-math-derived indices, so
+			// the array could never exceed what `paddedLeafCount` accepts.
+			// That was false. `setLeaf`/`setParent` are public and
+			// unconditional by design, and `LeafIndex` is bounded only by
+			// its own 2^24 ceiling, never against the tree it indexes. A
+			// `setLeaf` at leaf 2^23 pads `nodes` toward 2^25 entries and
+			// the next `leafCount` read traps here -- reproduced directly,
+			// not argued.
+			//
+			// The invariant is therefore a *precondition on callers*: an
+			// index handed to `setLeaf`/`setParent` must already have been
+			// bounded against this tree. `MLS.RFC9420.CommitProcessing`
+			// carries that obligation for both wire-supplied indices it
+			// applies (`updateFromNonMember`, `removeOfNonMember`).
+			//
+			// Making it structural instead -- bounding growth inside
+			// `setNode` and turning the setters throwing -- is GER-2363.
+			// It changes signatures across this module, so it is not
+			// bolted on here.
 			try! MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)
 		}
 
@@ -123,8 +134,8 @@ extension MLS.TreeKEM {
 		/// leaf slot. This is what Update blanks: the leaf itself gets the
 		/// *new* `LeafNode` installed instead of going blank, since Update
 		/// changes a member's content without removing them.
-		public mutating func blankDirectPath(of index: MLS.LeafIndex) throws {
-			for step in try MLS.TreeMath.directPath(
+		public mutating func blankDirectPath(of index: MLS.LeafIndex) {
+			for step in MLS.TreeMath.directPath(
 				from: 2 * index.value, leafCount: leafCount)
 			{
 				setNode(at: step.path, to: nil)
@@ -134,9 +145,9 @@ extension MLS.TreeKEM {
 		/// Blanks a leaf and every node on its direct path — what Remove
 		/// does: the member is gone, so both the leaf and the ancestor
 		/// chain (which nobody can re-derive without them) go blank.
-		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) throws {
+		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) {
 			setLeaf(index, to: nil)
-			try blankDirectPath(of: index)
+			blankDirectPath(of: index)
 		}
 
 		/// The leftmost blank leaf at or after `hint` (wrapping is not

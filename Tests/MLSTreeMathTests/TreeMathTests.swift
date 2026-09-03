@@ -82,6 +82,54 @@ struct TreeMathTests {
 		#expect(try MLS.LeafCount(validating: leafCount).value == leafCount)
 	}
 
+	/// The ceiling half of `init(validating:)`, which the power-of-two cases
+	/// above never reach. Directly pinned because this is exactly the
+	/// boundary where an unbounded tree detonates: `RatchetTree.leafCount`
+	/// computes its value with `try!`, so a count that reaches 2^24 aborts
+	/// the process rather than throwing (see GER-2363).
+	@Test("LeafCount accepts the largest legal tree and rejects the next power of two")
+	func leafCountCeilingBoundary() throws {
+		let largest = MLS.LeafIndex.ceiling / 2
+		#expect(try MLS.LeafCount(validating: largest).value == largest)
+		#expect(throws: MLS.TreeMathError.invalidLeafCount(MLS.LeafIndex.ceiling)) {
+			_ = try MLS.LeafCount(validating: MLS.LeafIndex.ceiling)
+		}
+	}
+
+	/// Swift's `<<` is a smart shift: over-shifting yields 0 rather than
+	/// trapping. `init(validating:)` rejects 0 like any other
+	/// non-power-of-two value, so an unsaturated overflow would still
+	/// throw — but as `invalidLeafCount(0)`, blaming a value the caller
+	/// never passed instead of the huge one it did. Saturating to `.max`
+	/// keeps the rejection honest: `.max` also exceeds
+	/// `LeafIndex.ceiling`, so it throws for the caller's actual input.
+	/// Pinned directly because no caller can currently reach it:
+	/// `init(nodeArrayCount:)`'s largest possible argument is exactly 2³¹.
+	@Test(
+		"nextPowerOfTwo saturates instead of wrapping to zero",
+		arguments: [
+			(UInt32(0x8000_0001), UInt32.max), (UInt32.max, UInt32.max),
+			// The exact boundary, and the largest value any caller can
+			// actually produce: still exact, not saturated.
+			(UInt32(1) << 31, UInt32(1) << 31),
+			(UInt32.max / 2 + 1, UInt32(1) << 31),
+		])
+	func nextPowerOfTwoSaturates(_ pair: (input: UInt32, expected: UInt32)) {
+		#expect(MLS.LeafCount.nextPowerOfTwo(pair.input) == pair.expected)
+	}
+
+	/// The consequence that actually matters: whatever `nextPowerOfTwo`
+	/// returns at the top of its range, a huge node-array length throws
+	/// rather than silently resolving to some other `LeafCount`.
+	@Test("an overflowing node-array length throws, not silently resolves")
+	func hugeNodeArrayNeverBecomesEmpty() {
+		for count in [Int(UInt32.max), Int(UInt32.max) - 1, 1 << 31] {
+			#expect(throws: MLS.TreeMathError.self) {
+				_ = try MLS.LeafCount(nodeArrayCount: count)
+			}
+		}
+	}
+
 	@Test(
 		"paddedLeafCount recovers n from a valid 2n-1 node array length, for every tree-math.json size"
 	)
