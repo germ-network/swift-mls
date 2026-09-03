@@ -195,15 +195,28 @@ extension MLS.RFC9420.Group {
 		if let existing = secrets.chains[chainKey] {
 			chain = existing
 		} else {
+			// §9.1: one leaf_secret forks into BOTH the handshake and
+			// application ratchets (`SecretTree.swift`'s own doc comment:
+			// "two independent ratchets ... hang off each leaf"). Bootstrap
+			// both chains together on whichever is touched first --
+			// `consumeLeafSecret` derives and deletes the tree's leaf_secret
+			// in one shot, so calling it a second time for this leaf, from
+			// the other ratchet's own first touch, would find nothing left
+			// to derive from.
 			let leafSecret = try secrets.tree.consumeLeafSecret(for: leaf, provider)
-			let ratchetSecret =
-				isHandshake
-				? try MLS.KeySchedule.handshakeRatchetSecret(
-					provider, leafSecret: leafSecret)
-				: try MLS.KeySchedule.applicationRatchetSecret(
-					provider, leafSecret: leafSecret)
-			chain = RatchetChain(headGeneration: 0, headSecret: ratchetSecret)
-			secrets.chains[chainKey] = chain
+			let handshakeChain = RatchetChain(
+				headGeneration: 0,
+				headSecret: try MLS.KeySchedule.handshakeRatchetSecret(
+					provider, leafSecret: leafSecret))
+			let applicationChain = RatchetChain(
+				headGeneration: 0,
+				headSecret: try MLS.KeySchedule.applicationRatchetSecret(
+					provider, leafSecret: leafSecret))
+			secrets.chains[MessageSecrets.ChainKey(leaf: leaf, isHandshake: true)] =
+				handshakeChain
+			secrets.chains[MessageSecrets.ChainKey(leaf: leaf, isHandshake: false)] =
+				applicationChain
+			chain = isHandshake ? handshakeChain : applicationChain
 			messageSecrets[epoch] = secrets
 		}
 
