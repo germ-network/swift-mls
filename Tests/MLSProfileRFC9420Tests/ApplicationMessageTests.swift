@@ -90,8 +90,12 @@ struct ApplicationMessageTests {
 			Self.provider, proposals: [], signingKey: d.alice.signingKey,
 			randomness: .generate(Self.provider))
 		d.groupA = pcs.group
+		guard case .privateMessage(let pcsCommit) = pcs.commit else {
+			Issue.record("expected a privateMessage-framed commit")
+			return
+		}
 		try d.groupB.process(
-			Self.provider, commit: pcs.commit, proposals: [:], psk: { _ in nil })
+			Self.provider, privateCommit: pcsCommit, proposals: [:], psk: { _ in nil })
 
 		let opened = try d.groupB.unprotect(Self.provider, message: old)
 		guard case .application(let data) = opened.content else {
@@ -123,8 +127,12 @@ struct ApplicationMessageTests {
 				Self.provider, proposals: [], signingKey: d.alice.signingKey,
 				randomness: .generate(Self.provider))
 			d.groupA = pcs.group
+			guard case .privateMessage(let pcsCommit) = pcs.commit else {
+				Issue.record("expected a privateMessage-framed commit")
+				return
+			}
 			try d.groupB.process(
-				Self.provider, commit: pcs.commit, proposals: [:],
+				Self.provider, privateCommit: pcsCommit, proposals: [:],
 				psk: { _ in nil })
 		}
 		#expect(

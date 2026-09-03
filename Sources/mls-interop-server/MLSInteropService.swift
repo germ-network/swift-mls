@@ -426,6 +426,8 @@
 				// the GroupInfo extension. So the extension is included when
 				// external_tree is *false*.
 				includeRatchetTreeExtension: !request.externalTree,
+				// The mlswg interop runner drives public handshakes.
+				framing: .publicMessage,
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
 					return externalPsks[pskID]
@@ -434,7 +436,7 @@
 			entries[request.stateID] = .group(state)
 
 			var r = MlsClient_CommitResponse()
-			r.commit = try encoded(.publicMessage(output.commit))
+			r.commit = try encoded(output.commit)
 			if let welcome = output.welcome {
 				r.welcome = try encoded(.welcome(welcome))
 			}

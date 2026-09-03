@@ -457,6 +457,30 @@ extension MLS.RFC9420.Group {
 		self = try processing(provider, commit: message, proposals: proposals, psk: psk)
 	}
 
+	/// The private-framed counterpart: `unprotect` authenticates the
+	/// `PrivateMessage` (AEAD open plus framing signature) and hands back
+	/// the `AuthenticatedContent` `processing` takes over from — mirroring
+	/// how `process(commit:)` authenticates a `PublicMessage` first. Unlike
+	/// `process(commit:)`, a throw here may still have advanced `self`'s
+	/// own message-secret ratchet: `unprotect` is itself mutating (§9.2
+	/// consumption on successful decrypt), and that consumption is
+	/// unrelated to whether the *commit* — authenticated by that point —
+	/// goes on to pass `processing`.
+	public mutating func process(
+		_ provider: any MLS.CipherSuiteProvider,
+		privateCommit message: MLS.RFC9420.PrivateMessage,
+		proposals: MLS.RFC9420.ProposalStore,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+	) throws {
+		let unprotected = try unprotect(provider, message: message)
+		guard case .commit(let authenticated) = unprotected.content else {
+			throw MLS.RFC9420.GroupError.notACommit
+		}
+		self = try processing(
+			provider, authenticatedContent: authenticated, proposals: proposals,
+			psk: psk)
+	}
+
 	/// What `applyProposals` hands back: the provisional tree plus the two
 	/// index sets that feed key pruning (`blankedNodes`) and copath
 	/// exclusion (`addedLeaves`).

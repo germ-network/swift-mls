@@ -36,10 +36,19 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
+	/// How `committing` frames the commit it produces. Private by default
+	/// (RFC 9420 §6's steer toward `PrivateMessage`); the external interop
+	/// harness opts into `.publicMessage` because the mlswg runner drives
+	/// public handshakes.
+	public enum HandshakeFraming: Sendable {
+		case privateMessage
+		case publicMessage
+	}
+
 	public struct CommitOutput: Sendable {
 		/// The committer's own post-commit state.
 		public let group: MLS.RFC9420.Group
-		public let commit: MLS.RFC9420.PublicMessage
+		public let commit: MLS.RFC9420.Message
 		/// Present iff the commit added members. **At commit time or
 		/// never**: the retained epoch state deliberately keeps neither
 		/// the confirmation tag nor the welcome secret (§9.2 retention),
@@ -112,6 +121,9 @@ extension MLS.RFC9420.Group {
 		randomness: CommitRandomness,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> CommitOutput {
 		// Resolve, exactly as the receive side does.
@@ -256,9 +268,14 @@ extension MLS.RFC9420.Group {
 			groupID: context.groupID, epoch: context.epoch,
 			sender: .member(myLeafIndex), authenticatedData: Data(),
 			content: .commit(commit))
-		let (signedContent, signature) = try MLS.RFC9420.signPublic(
-			provider, content: framed, groupContext: context,
-			signingKey: signingKey)
+		let (signedContent, signature) =
+			try framing == .publicMessage
+			? MLS.RFC9420.signPublic(
+				provider, content: framed, groupContext: context,
+				signingKey: signingKey)
+			: MLS.RFC9420.signPrivate(
+				provider, content: framed, groupContext: context,
+				signingKey: signingKey)
 		var signatureWriter = MLS.Writer()
 		try signatureWriter.encode(signature)
 		let confirmedTranscriptHash = try MLS.Framing.confirmedTranscriptHash(
@@ -280,13 +297,6 @@ extension MLS.RFC9420.Group {
 		let confirmationTag = try MLS.Framing.confirmationTag(
 			provider, confirmationKey: newEpoch.confirmationKey,
 			confirmedTranscriptHash: confirmedTranscriptHash)
-
-		// Seal with OLD-epoch keys (§12.4.1: membership_tag uses the old
-		// membership_key).
-		let message = try MLS.RFC9420.sealPublic(
-			provider, content: framed, signedContent: signedContent,
-			signature: signature, confirmationTag: confirmationTag,
-			membershipKey: epoch.membershipKey)
 
 		// The committer's own post-commit private state.
 		// `senderIndex` only when a path re-keyed the direct path -- the
@@ -329,6 +339,27 @@ extension MLS.RFC9420.Group {
 			confirmationTag: confirmationTag, newEpoch: newEpoch,
 			pskIDs: pskIDs, signingKey: signingKey,
 			includeRatchetTreeExtension: includeRatchetTreeExtension)
+
+		// Sealed last, once `updated`'s message secrets (installed above)
+		// exist to seal a private commit against -- and, for a public one,
+		// with the OLD epoch's membership key (§12.4.1).
+		let message: MLS.RFC9420.Message
+		switch framing {
+		case .publicMessage:
+			message = .publicMessage(
+				try MLS.RFC9420.sealPublic(
+					provider, content: framed, signedContent: signedContent,
+					signature: signature, confirmationTag: confirmationTag,
+					membershipKey: epoch.membershipKey))
+		case .privateMessage:
+			message = .privateMessage(
+				try updated.sealHandshakeCommit(
+					provider, epoch: context.epoch, framed: framed,
+					signature: signature, confirmationTag: confirmationTag,
+					reuseGuard: reuseGuard
+						?? MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+					paddingLength: paddingLength))
+		}
 
 		return CommitOutput(group: updated, commit: message, welcome: welcome)
 	}
