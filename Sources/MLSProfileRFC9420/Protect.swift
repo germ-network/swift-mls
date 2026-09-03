@@ -147,17 +147,16 @@ extension MLS.RFC9420 {
 		return expected == membershipTag
 	}
 
-	public static func protectPrivate(
-		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
-		content: FramedContent, groupContext: GroupContext, generation: UInt32,
-		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
-		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
-		paddingLength: Int
-	) throws -> PrivateMessage {
-		guard case .member(let leafIndex) = content.sender else {
-			throw MLS.FramingError.privateMessageRequiresMemberSender
-		}
-
+	/// The signing half for private framing — the counterpart to
+	/// `signPublic`, split out so a commit can sign, chain its transcript,
+	/// derive its confirmation tag, and only then seal. A private commit's
+	/// transcript is computed over `wireFormat: .privateMessage`, so it must
+	/// sign here, not via `signPublic`. Application content is allowed —
+	/// unlike `signPublic`, private framing is where it belongs.
+	public static func signPrivate(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
 		let signedContent = MLS.Framing.SignedContent(
 			protocolVersion: .mls10, wireFormat: .privateMessage,
 			encodedContent: try content.mlsEncoded(),
@@ -167,6 +166,23 @@ extension MLS.RFC9420 {
 			try MLS.signWithLabel(
 				provider, privateKey: signingKey, label: "FramedContentTBS",
 				content: try signedContent.toBeSigned()))
+		return (signedContent, signature)
+	}
+
+	/// The encryption half for private framing — see `signPrivate`. Takes an
+	/// already-computed `signature` (and, for a commit, `confirmationTag`) so
+	/// the caller owns the sign → transcript → tag → seal order, exactly as
+	/// `sealPublic` does for the public path.
+	public static func sealPrivate(
+		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
+		content: FramedContent, signature: MLS.Signature, generation: UInt32,
+		confirmationTag: MLS.ConfirmationTag?,
+		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
+	) throws -> PrivateMessage {
+		guard case .member(let leafIndex) = content.sender else {
+			throw MLS.FramingError.privateMessageRequiresMemberSender
+		}
 		let auth = MLS.FramedContentAuthData(
 			signature: signature, confirmationTag: confirmationTag)
 		let plaintext = try PrivateMessageContent(content: content.content, auth: auth)
@@ -204,6 +220,26 @@ extension MLS.RFC9420 {
 			authenticatedData: content.authenticatedData,
 			encryptedSenderData: encryptedSenderData,
 			ciphertext: ciphertext)
+	}
+
+	/// Sign and seal a `PrivateMessage` in one call — `signPrivate` then
+	/// `sealPrivate`. The commit path uses the two halves directly (it has to
+	/// interpose transcript-chaining between them); everything else uses this.
+	public static func protectPrivate(
+		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
+		content: FramedContent, groupContext: GroupContext, generation: UInt32,
+		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
+		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
+	) throws -> PrivateMessage {
+		let (_, signature) = try signPrivate(
+			provider, content: content, groupContext: groupContext,
+			signingKey: signingKey)
+		return try sealPrivate(
+			provider, keySource: keySource, content: content, signature: signature,
+			generation: generation, confirmationTag: confirmationTag,
+			senderDataSecret: senderDataSecret, reuseGuard: reuseGuard,
+			paddingLength: paddingLength)
 	}
 
 	/// The sender-data half of unprotecting, on its own. RFC 9420 §9.2's
