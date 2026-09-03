@@ -152,7 +152,9 @@ extension MLS.RFC9420 {
 	/// derive its confirmation tag, and only then seal. A private commit's
 	/// transcript is computed over `wireFormat: .privateMessage`, so it must
 	/// sign here, not via `signPublic`. Application content is allowed —
-	/// unlike `signPublic`, private framing is where it belongs.
+	/// unlike `signPublic`, private framing is where it belongs. The same
+	/// split also lets `proposeUpdate` compute a `ProposalRef` over the
+	/// exact signature that seals the proposal, not a second one.
 	public static func signPrivate(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
@@ -223,8 +225,9 @@ extension MLS.RFC9420 {
 	}
 
 	/// Sign and seal a `PrivateMessage` in one call — `signPrivate` then
-	/// `sealPrivate`. The commit path uses the two halves directly (it has to
-	/// interpose transcript-chaining between them); everything else uses this.
+	/// `sealPrivate`. The commit path (and `proposeUpdate`) use the two
+	/// halves directly (each has to interpose its own logic between sign
+	/// and seal); everything else uses this.
 	public static func protectPrivate(
 		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
 		content: FramedContent, groupContext: GroupContext, generation: UInt32,

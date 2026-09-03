@@ -401,6 +401,43 @@ extension MLS.RFC9420.Group {
 				blankedNodes: blankedNodes, senderIndex: senderIndex,
 				leafCount: provisionalTree.leafCount)
 
+			// The updater-side handoff: `secretKeys` has no entry for a
+			// self-proposed Update's new leaf key until it is seeded here
+			// -- `proposeUpdate` only ever stashed it in `pendingUpdates`,
+			// never in `secretKeys`, because until a commit lands there is
+			// nothing to decap against.
+			//
+			// The committer -- not the proposer -- is the authority on
+			// which Update lands. Across an epoch this member may propose
+			// several self-Updates (each a fresh leaf key); §12.2 permits a
+			// single commit to apply at most one per leaf (validation
+			// rejects the rest as `duplicateProposalForLeaf`), but separate
+			// commits may each reference a different one. So we retain
+			// *every* proposed secret and seed the one whose public key the
+			// already-validated provisional tree actually installed at our
+			// leaf -- ground truth for what this commit's UpdatePath
+			// encrypts against, and independent of the store's sender field.
+			//
+			// Two gates: the epoch must match (a stale-epoch secret must
+			// never leak into a new epoch), and the installed leaf key must
+			// be one we hold a secret for. If it is not -- a concurrent
+			// commit that applied none of our Updates -- we seed nothing and
+			// decap under our old leaf key, which `prunedSecretKeys` above
+			// deliberately retained.
+			//
+			// Must run strictly after the `prunedSecretKeys` reassignment
+			// above and before decap below: seeding earlier is discarded
+			// the moment that reassignment runs.
+			if let pendingUpdates, pendingUpdates.epoch == context.epoch,
+				let installedKey = provisionalTree.leaf(at: myLeafIndex)?
+					.encryptionKey,
+				let match = pendingUpdates.updates.first(where: {
+					$0.publicKey == installedKey
+				})
+			{
+				newSecretKeys[pendingUpdates.node] = match.secret
+			}
+
 			// 9f
 			let result = try provisionalTree.decapCommitPath(
 				heldSecretKeys: newSecretKeys, sender: senderIndex,
@@ -476,6 +513,11 @@ extension MLS.RFC9420.Group {
 		updated.interimTranscriptHash = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
+		// `pendingUpdates` is valid only for the epoch it names -- every
+		// epoch advance retires the whole set, seeded or not (forward
+		// secrecy: proposed-but-uncommitted leaf secrets must not outlive
+		// their epoch).
+		updated.pendingUpdates = nil
 		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
 		// Against the *new* epoch, after the insert above -- pruning
 		// against the old epoch with a small depth could evict the entry

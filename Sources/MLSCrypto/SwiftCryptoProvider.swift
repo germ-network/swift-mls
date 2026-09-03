@@ -439,11 +439,11 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		return try kdfExpand(prk: prk, info: labeledInfo, length: length)
 	}
 
-	/// The public key for a raw private-key byte string. Used only by
-	/// `hpkeDeriveKeyPair`: it both computes the final public key and,
-	/// for the NIST curves, doubles as the rejection-sampling candidate's
-	/// validity check — an out-of-range scalar throws here rather than
-	/// silently producing a point that isn't actually on the curve.
+	/// The public key for a raw private-key byte string, backing
+	/// `hpkeDeriveKeyPair` — where it also doubles, for the NIST curves, as
+	/// the rejection-sampling candidate's validity check: an out-of-range
+	/// scalar throws here rather than silently producing a point that isn't
+	/// actually on the curve.
 	private func hpkePublicKey(for secretKey: MLS.HpkeSecretKey) throws -> MLS.HpkePublicKey {
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:
