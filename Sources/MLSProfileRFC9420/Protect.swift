@@ -10,9 +10,11 @@ extension MLS.RFC9420 {
 	/// `MLSKeySchedule`'s concrete secret-tree type directly: given a leaf,
 	/// a generation, and which ratchet (handshake vs. application), produce
 	/// or consume that generation's (key, nonce). A caller backs this with
-	/// whatever secret-tree state it's actually managing — this profile
-	/// target intentionally doesn't depend on `MLSKeySchedule` itself (see
-	/// `Package.swift`'s comment on `MLSProfileRFC9420`'s dependencies).
+	/// whatever secret-tree state it's actually managing. (An earlier
+	/// revision justified the seam by claiming this target doesn't depend
+	/// on `MLSKeySchedule`; it does, and always has — the seam survives on
+	/// its own merits as the stateless-vector-test boundary, not on a
+	/// dependency constraint that never existed.)
 	///
 	/// This function alone can't enforce the ratchet-hygiene properties
 	/// forward secrecy depends on — a conforming implementation must:
@@ -41,7 +43,7 @@ extension MLS.RFC9420 {
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		groupContext: GroupContext,
 		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
-		membershipKey: Data
+		membershipKey: some ContiguousBytes
 	) throws -> PublicMessage {
 		let (signedContent, signature) = try signPublic(
 			provider, content: content, groupContext: groupContext,
@@ -84,7 +86,7 @@ extension MLS.RFC9420 {
 	public static func sealPublic(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		signedContent: MLS.Framing.SignedContent, signature: MLS.Signature,
-		confirmationTag: MLS.ConfirmationTag?, membershipKey: Data
+		confirmationTag: MLS.ConfirmationTag?, membershipKey: some ContiguousBytes
 	) throws -> PublicMessage {
 		let auth = MLS.FramedContentAuthData(
 			signature: signature, confirmationTag: confirmationTag)
@@ -106,7 +108,7 @@ extension MLS.RFC9420 {
 	public static func verifyPublic(
 		_ provider: any MLS.CipherSuiteProvider, message: PublicMessage,
 		groupContext: GroupContext,
-		verificationKey: MLS.SignaturePublicKey, membershipKey: Data
+		verificationKey: MLS.SignaturePublicKey, membershipKey: some ContiguousBytes
 	) throws -> Bool {
 		// §6's MUST-NOT is a receive-side rule as much as a send-side one:
 		// `PublicMessage`'s own decoder must still accept an
@@ -149,7 +151,8 @@ extension MLS.RFC9420 {
 		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
 		content: FramedContent, groupContext: GroupContext, generation: UInt32,
 		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
-		senderDataSecret: Data, reuseGuard: MLS.Framing.ReuseGuard, paddingLength: Int
+		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
 	) throws -> PrivateMessage {
 		guard case .member(let leafIndex) = content.sender else {
 			throw MLS.FramingError.privateMessageRequiresMemberSender
@@ -203,25 +206,40 @@ extension MLS.RFC9420 {
 			ciphertext: ciphertext)
 	}
 
-	public static func unprotectPrivate(
-		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
-		message: PrivateMessage,
-		groupContext: GroupContext,
-		verificationKey: (MLS.LeafIndex) throws -> MLS.SignaturePublicKey,
-		senderDataSecret: Data
-	) throws -> AuthenticatedContent {
+	/// The sender-data half of unprotecting, on its own. RFC 9420 §9.2's
+	/// "(successfully) decrypt" makes the split load-bearing, not
+	/// cosmetic: a stateful store must not consume a generation until the
+	/// content AEAD has actually opened, because sender data is sealed
+	/// under a secret *every member holds* — so a malicious member can
+	/// forge plausible sender data naming any (victim, generation) over
+	/// garbage ciphertext, and a store that consumed on key-derivation
+	/// would let them permanently destroy the victim's real message at
+	/// that generation. Open the sender data, decide (route, refuse own
+	/// leaf, bound the jump), derive, open the content, and only then
+	/// consume.
+	public static func openSenderData(
+		_ provider: any MLS.CipherSuiteProvider, message: PrivateMessage,
+		senderDataSecret: some ContiguousBytes
+	) throws -> MLS.Framing.SenderData {
 		let senderDataAAD = MLS.Framing.SenderDataAAD(
 			groupID: message.groupID, epoch: message.epoch,
 			contentType: message.contentType)
 		let (senderDataKey, senderDataNonce) = try MLS.Framing.senderDataKeyNonce(
 			provider, secret: senderDataSecret, ciphertextSample: message.ciphertext)
-		let senderData = try MLS.Framing.openSenderData(
+		return try MLS.Framing.openSenderData(
 			provider, key: senderDataKey, nonce: senderDataNonce,
 			ciphertext: message.encryptedSenderData, aad: senderDataAAD)
+	}
 
-		let (key, nonce) = try keySource.key(
-			for: senderData.leafIndex, generation: senderData.generation,
-			contentType: message.contentType)
+	/// The content half — AEAD open, decode, signature verification —
+	/// given the already-opened sender data and the derived (key, nonce).
+	/// See `openSenderData` for why the caller sits between the halves.
+	public static func openPrivateContent(
+		_ provider: any MLS.CipherSuiteProvider, message: PrivateMessage,
+		senderData: MLS.Framing.SenderData, key: Data, nonce: Data,
+		groupContext: GroupContext,
+		verificationKey: (MLS.LeafIndex) throws -> MLS.SignaturePublicKey
+	) throws -> AuthenticatedContent {
 		let guardedNonce = senderData.reuseGuard.applied(to: nonce)
 
 		let aad = MLS.Framing.PrivateContentAAD(
@@ -259,5 +277,28 @@ extension MLS.RFC9420 {
 
 		return AuthenticatedContent(
 			wireFormat: .privateMessage, content: content, auth: messageContent.auth)
+	}
+
+	/// The one-shot composition of the two halves, for stateless callers
+	/// (the message-protection vector gate). Consumes via `keySource`
+	/// *before* the content AEAD — acceptable only because a stateless
+	/// key source has nothing to consume; a stateful store must use the
+	/// split.
+	public static func unprotectPrivate(
+		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
+		message: PrivateMessage,
+		groupContext: GroupContext,
+		verificationKey: (MLS.LeafIndex) throws -> MLS.SignaturePublicKey,
+		senderDataSecret: some ContiguousBytes
+	) throws -> AuthenticatedContent {
+		let senderData = try openSenderData(
+			provider, message: message, senderDataSecret: senderDataSecret)
+		let (key, nonce) = try keySource.key(
+			for: senderData.leafIndex, generation: senderData.generation,
+			contentType: message.contentType)
+		return try openPrivateContent(
+			provider, message: message, senderData: senderData, key: key,
+			nonce: nonce, groupContext: groupContext,
+			verificationKey: verificationKey)
 	}
 }

@@ -21,7 +21,17 @@ let package = Package(
         .library(name: "MLSProfileRFC9420", targets: ["MLSProfileRFC9420"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0")
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
+        // Zeroizing storage for held secrets. Floor is iOS 16 / macOS 13,
+        // below this package's own, so it imposes nothing on adopters.
+        // Interop-harness only — never a dependency of any library product
+        // (grpc-swift 2 requires macOS 15+; the executable target below is
+        // the sole consumer). Pinned major versions keep the checked-in
+        // generated stubs valid.
+        .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.0.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.0.0"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.28.0"),
     ],
     targets: [
         .target(name: "MLSCodec"),
@@ -133,6 +143,27 @@ let package = Package(
                 "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
                 "MLSVectorSupport",
             ]
+        ),
+        .executableTarget(
+            name: "mls-interop-server",
+            dependencies: [
+                "MLSProfileRFC9420", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
+                "MLSFraming", "MLSCodec", "MLSTreeMath",
+                .product(
+                    name: "GRPCCore", package: "grpc-swift-2",
+                    condition: .when(platforms: [.macOS, .linux])),
+                .product(
+                    name: "GRPCProtobuf", package: "grpc-swift-protobuf",
+                    condition: .when(platforms: [.macOS, .linux])),
+                .product(
+                    name: "GRPCNIOTransportHTTP2Posix",
+                    package: "grpc-swift-nio-transport",
+                    condition: .when(platforms: [.macOS, .linux])),
+                .product(
+                    name: "SwiftProtobuf", package: "swift-protobuf",
+                    condition: .when(platforms: [.macOS, .linux])),
+            ],
+            exclude: ["Generated/README.md", "Generated/.swift-format-ignore"]
         ),
     ],
     swiftLanguageModes: [.v6]

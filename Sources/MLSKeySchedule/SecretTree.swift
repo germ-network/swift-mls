@@ -41,14 +41,37 @@ extension MLS.KeySchedule {
 		return secret
 	}
 
+	/// One node split — `ExpandWithLabel(secret, "tree", "left"/"right",
+	/// Nh)` — exposed on its own because §9.2's deletion schedule makes
+	/// `leafSecret`'s walk-from-the-root unusable for a *stateful* store:
+	/// the first successful decrypt in an epoch consumes every node secret
+	/// on its path, `encryption_secret` included, so later leaves must be
+	/// reached from retained *sibling* secrets, never from the root again.
+	/// The profile's consuming store walks with this primitive, caching
+	/// each copath sibling and deleting each path node as it descends;
+	/// `leafSecret` stays as the vector-pinned stateless oracle the store
+	/// is differentially tested against.
+	public static func splitTreeNode(
+		_ provider: any MLS.CipherSuiteProvider, secret: some ContiguousBytes
+	) throws -> (left: Data, right: Data) {
+		(
+			try MLS.expandWithLabel(
+				provider, secret: secret, label: "tree",
+				context: Data("left".utf8), length: provider.hashSize),
+			try MLS.expandWithLabel(
+				provider, secret: secret, label: "tree",
+				context: Data("right".utf8), length: provider.hashSize)
+		)
+	}
+
 	public static func handshakeRatchetSecret(
-		_ provider: any MLS.CipherSuiteProvider, leafSecret: Data
+		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
 	) throws -> Data {
 		try MLS.deriveSecret(provider, secret: leafSecret, label: "handshake")
 	}
 
 	public static func applicationRatchetSecret(
-		_ provider: any MLS.CipherSuiteProvider, leafSecret: Data
+		_ provider: any MLS.CipherSuiteProvider, leafSecret: some ContiguousBytes
 	) throws -> Data {
 		try MLS.deriveSecret(provider, secret: leafSecret, label: "application")
 	}
@@ -70,7 +93,7 @@ extension MLS.KeySchedule {
 	/// key or nonce first.
 	public static func ratchetStep(
 		_ provider: any MLS.CipherSuiteProvider,
-		secret: Data,
+		secret: some ContiguousBytes,
 		generation: UInt32
 	) throws -> RatchetStep {
 		try RatchetStep(

@@ -56,7 +56,7 @@ extension MLS {
 	/// Encode(KDFLabel), Length)`.
 	public static func expandWithLabel(
 		_ provider: any CipherSuiteProvider,
-		secret: Data, label: String, context: Data, length: Int
+		secret: some ContiguousBytes, label: String, context: Data, length: Int
 	) throws -> Data {
 		let info = try KDFLabel(length: UInt16(length), label: label, context: context)
 			.mlsEncoded()
@@ -66,7 +66,8 @@ extension MLS {
 	/// `DeriveSecret(Secret, Label) = ExpandWithLabel(Secret, Label, "",
 	/// KDF.Nh)`.
 	public static func deriveSecret(
-		_ provider: any CipherSuiteProvider, secret: Data, label: String
+		_ provider: any CipherSuiteProvider, secret: some ContiguousBytes,
+		label: String
 	) throws -> Data {
 		try expandWithLabel(
 			provider, secret: secret, label: label, context: Data(),
@@ -77,7 +78,8 @@ extension MLS {
 	/// with the generation encoded as 4-byte big-endian context.
 	public static func deriveTreeSecret(
 		_ provider: any CipherSuiteProvider,
-		secret: Data, label: String, generation: UInt32, length: Int
+		secret: some ContiguousBytes, label: String, generation: UInt32,
+		length: Int
 	) throws -> Data {
 		var generationBE = generation.bigEndian
 		let context = withUnsafeBytes(of: &generationBE) { Data($0) }

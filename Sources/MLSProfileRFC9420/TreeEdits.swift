@@ -21,10 +21,18 @@ extension MLS.TreeKEM.RatchetTree {
 	///
 	/// Proposal validation (does the sender have permission, is the tree
 	/// state consistent with the proposal) is *not* this function's job —
-	/// this phase's scope, that's phase 6 (commit construction/
+	/// that's `validateProposalList` (commit construction/
 	/// application). This applies a proposal already taken as valid,
 	/// exactly what `tree-operations.json` exercises.
-	public mutating func apply(_ proposal: MLS.RFC9420.Proposal, sender: MLS.LeafIndex) throws {
+	/// Returns the leaf index an Add landed on (nil for every other
+	/// proposal) — positional truth from `insertLeaf` itself, so callers
+	/// never re-derive it by content matching, which is only sound while
+	/// leaves are unique and the uniqueness sweep runs later.
+	@discardableResult
+	public mutating func apply(_ proposal: MLS.RFC9420.Proposal, sender: MLS.LeafIndex)
+		throws -> MLS.LeafIndex?
+	{
+		var addedIndex: MLS.LeafIndex?
 		switch proposal {
 		case .add(let keyPackage):
 			let newIndex = try insertLeaf(try keyPackage.leafNode.record)
@@ -33,6 +41,7 @@ extension MLS.TreeKEM.RatchetTree {
 			{
 				try addUnmergedLeaf(newIndex, to: step.path)
 			}
+			addedIndex = newIndex
 		case .update(let leafNode):
 			// The leaf gets the *new* LeafNode, not a blank -- only the
 			// ancestor chain (whose keys nobody can vouch for against the
@@ -40,10 +49,11 @@ extension MLS.TreeKEM.RatchetTree {
 			try setLeaf(sender, to: leafNode.record)
 			blankDirectPath(of: sender)
 		case .remove(let removed):
-			blankLeafAndDirectPath(removed)
+			try blankLeafAndDirectPath(removed)
 		case .preSharedKey, .reInit, .externalInit, .groupContextExtensions:
 			throw MLS.RFC9420.TreeEditError.notATreeEditingProposal
 		}
 		trim()
+		return addedIndex
 	}
 }

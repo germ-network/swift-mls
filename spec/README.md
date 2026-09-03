@@ -14,6 +14,7 @@ specification alone, without reading the Swift.
 | document | covers |
 |---|---|
 | [`conformance.md`](conformance.md) | What `MLS.RFC9420` actually verifies, per official test vector, and what it does not |
+| [`snapshot.md`](snapshot.md) | The `MLS.RFC9420` Snapshot (persisted group state) format and the Transition persistence contract — **draft** |
 
 RFC 9420 itself is the specification for the `MLS.RFC9420` profile; *profile*
 documents appear here only for profiles that are not an existing RFC or draft.
@@ -39,11 +40,13 @@ Current levels:
 
 | profile | level | why |
 |---|---|---|
-| `MLS.RFC9420` | **not yet conformant** | Meets the first clause — every official vector in scope is consumed and asserted against. Does not meet the second: no independent-implementation interop yet. See [`conformance.md`](conformance.md) |
+| `MLS.RFC9420` | **conformant** — core group lifecycle | Both clauses met: every official vector in scope is consumed and asserted against, and the mlswg gRPC harness runs this profile against mls-rs under the mlswg Go test-runner, agreeing in both directions on every feature both stacks implement. The qualifier is load-bearing — ReInit, branching, external join/commit, external senders, and self-proposed Updates are deferred and refused explicitly. Persistence is outside the claim entirely: [`snapshot.md`](snapshot.md) is draft and its vectors do not yet exist. See [`conformance.md`](conformance.md) |
 
-The bar is only worth stating if it is applied to us too. `MLS.RFC9420` is a
-shipping library product that does not currently earn its own directory's top
-label, and says so.
+The bar is only worth stating if it is applied to us too, which cuts both ways:
+this profile withheld the label until interop actually ran, and now carries it
+with the scope qualifier rather than unqualified. "Conformant" here means
+*conformant at what it claims to do* — a deployment needing any deferred
+feature is outside the claim, and `conformance.md` enumerates which.
 
 ## Not yet specified
 
@@ -51,7 +54,6 @@ No profile of our own has landed yet, so there is no profile text to write.
 The open questions that exist today are about *coverage*, not specification,
 and live in [`conformance.md`](conformance.md):
 
-- Independent-implementation interop — the second half of **conformant**.
 - Zeroization: unimplemented, and no test vector can detect it.
 - Rejection-path coverage bounded by the absence of a committer's signing key
   in any official vector.

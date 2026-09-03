@@ -33,7 +33,9 @@ struct SelfInteropTests {
 		}
 	}
 
-	static func member(_ name: String) throws -> Member {
+	static func member(
+		_ name: String, capabilityExtensions: [MLS.RFC9420.ExtensionType] = []
+	) throws -> Member {
 		let provider = Self.provider
 		let (signingKey, signatureKey) = try GroupMutationTests.signingKeyPair(provider)
 		let (leafSecret, leafPublic) = try provider.hpkeGenerateKeyPair()
@@ -43,7 +45,8 @@ struct SelfInteropTests {
 			credential: .basic(identity: Data(name.utf8)),
 			capabilities: .init(
 				versions: [.mls10], cipherSuites: [.curve25519Aes128],
-				extensions: [], proposals: [], credentials: [.init(.basic)]),
+				extensions: capabilityExtensions, proposals: [],
+				credentials: [.init(.basic)]),
 			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(
@@ -179,6 +182,174 @@ struct SelfInteropTests {
 				provider, commit: remove.commit, proposals: [:], psk: { _ in nil })
 		}
 		Self.assertConverged(groupA, groupB)
+	}
+
+	/// The stage-5 review's three-member repro, as a regression test: a
+	/// pathless commit must not prune the committer's own direct-path
+	/// keys. Pre-fix, Alice dropped every parent key (nothing re-keyed
+	/// them), and Carol's next full commit — encrypting to the parent
+	/// node Alice no longer held — locked Alice out of her own group
+	/// permanently (`notAMember` at decap). The earlier backbone missed it
+	/// because every post-pathless path commit was sent *by* the member
+	/// who had gone pathless.
+	@Test("a pathless commit does not lock its sender out of the next path commit")
+	func pathlessCommitterSurvives() throws {
+		let provider = Self.provider
+		let alice = try Self.member("alice")
+		let bob = try Self.member("bob")
+		let carol = try Self.member("carol")
+
+		var groupA = try Self.createGroup(alice)
+		let addBoth = try groupA.committing(
+			provider,
+			proposals: [
+				.proposal(.add(bob.keyPackage)), .proposal(.add(carol.keyPackage)),
+			],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = addBoth.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(addBoth.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+		var groupC = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(addBoth.welcome),
+			credentials: carol.joinCredentials, psk: { _ in nil })
+
+		// Alice goes pathless (an external PSK is the cheapest carrier).
+		let pskID = Data("p".utf8)
+		let secret = provider.randomBytes(provider.hashSize)
+		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
+			secret
+		}
+		let pathless = try groupA.committing(
+			provider,
+			proposals: [
+				.proposal(
+					.preSharedKey(
+						.external(
+							pskID: pskID,
+							nonce: provider.randomBytes(
+								provider.hashSize))))
+			],
+			signingKey: alice.signingKey, randomness: .generate(provider),
+			includePath: false, psk: resolve)
+		groupA = pathless.group
+		try groupB.process(provider, commit: pathless.commit, proposals: [:], psk: resolve)
+		try groupC.process(provider, commit: pathless.commit, proposals: [:], psk: resolve)
+
+		// Carol answers with a full-path commit; Alice must still be able
+		// to decap it.
+		let full = try groupC.committing(
+			provider, proposals: [], signingKey: carol.signingKey,
+			randomness: .generate(provider))
+		groupC = full.group
+		try groupA.process(provider, commit: full.commit, proposals: [:], psk: { _ in nil })
+		try groupB.process(provider, commit: full.commit, proposals: [:], psk: { _ in nil })
+		Self.assertConverged(groupA, groupC)
+		Self.assertConverged(groupA, groupB)
+	}
+
+	/// §12.1.7's two halves: a GroupContextExtensions whose
+	/// required_capabilities an existing member cannot meet is invalid —
+	/// unless that member is being removed in the same commit
+	/// ("excluding those removed"). Pre-fix, both sides accepted the
+	/// first shape and the group was permanently bricked: its own
+	/// join-side validation rejected every Welcome from that epoch on.
+	@Test("a GCE that existing members cannot satisfy is rejected; removing them lifts it")
+	func groupContextExtensionsBindExistingMembers() throws {
+		let provider = Self.provider
+		let required = MLS.RFC9420.ExtensionType(rawValue: 99)
+		let alice = try Self.member("alice", capabilityExtensions: [required])
+		let bob = try Self.member("bob")  // does NOT support 99
+
+		var groupA = try Self.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		var writer = MLS.Writer()
+		try writer.encode(MLS.RFC9420.RequiredCapabilities(extensionTypes: [required]))
+		let gce = MLS.RFC9420.Proposal.groupContextExtensions([
+			.init(type: .init(.requiredCapabilities), data: Data(writer.bytes))
+		])
+
+		// Bob is a member and cannot satisfy it: construction refuses.
+		#expect(throws: MLS.RFC9420.GroupError.requiredCapabilitiesNotMet) {
+			_ = try groupA.committing(
+				provider, proposals: [.proposal(gce)],
+				signingKey: alice.signingKey, randomness: .generate(provider))
+		}
+
+		// Removing Bob in the same commit lifts the objection, end to end.
+		let removeAndRequire = try groupA.committing(
+			provider,
+			proposals: [.proposal(gce), .proposal(.remove(groupB.myLeafIndex))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = removeAndRequire.group
+		#expect(groupA.context.extensions.count == 1)
+		#expect(throws: MLS.RFC9420.GroupError.removedFromGroup) {
+			try groupB.process(
+				provider, commit: removeAndRequire.commit, proposals: [:],
+				psk: { _ in nil })
+		}
+	}
+
+	/// A proposal framed as a PrivateMessage, unprotected into a
+	/// `ProposalStore` entry, then committed by reference — the
+	/// receive-side private-handshake path the phase-7a AuthenticatedContent
+	/// refactor exists for. `Group.unprotect` computes the `ProposalRef`
+	/// itself (it binds the framed `AuthenticatedContent`, and unprotecting
+	/// is the last moment anyone holds it), so the committer needs nothing
+	/// but the returned ref.
+	@Test("a private-framed Add proposal round-trips through unprotect and commits")
+	func privateFramedProposalRoundTrips() throws {
+		let provider = Self.provider
+		let alice = try Self.member("alice")
+		let bob = try Self.member("bob")
+		let carol = try Self.member("carol")
+
+		var groupA = try Self.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Bob frames an Add proposal (of Carol) as a PrivateMessage.
+		let framed = try groupB.protectContent(
+			provider, content: .proposal(.add(carol.keyPackage)),
+			authenticatedData: Data(), signingKey: bob.signingKey,
+			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+			paddingLength: 0)
+
+		// Alice receives and unprotects it -> a ProposalStore entry.
+		let opened = try groupA.unprotect(provider, message: framed)
+		guard case .proposal(let proposal, let ref) = opened.content else {
+			Issue.record("expected a proposal")
+			return
+		}
+		let store: MLS.RFC9420.ProposalStore = [
+			ref: .init(proposal: proposal, sender: .member(opened.sender))
+		]
+
+		// Alice commits it by reference; both existing members converge,
+		// and Carol joins from the Welcome.
+		let commit = try groupA.committing(
+			provider, proposals: [.reference(ref)], proposalStore: store,
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = commit.group
+		try groupB.process(
+			provider, commit: commit.commit, proposals: store, psk: { _ in nil })
+		let groupC = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(commit.welcome),
+			credentials: carol.joinCredentials, psk: { _ in nil })
+		Self.assertConverged(groupA, groupB)
+		Self.assertConverged(groupA, groupC)
 	}
 
 	/// An Update proposed by a non-committer, referenced by the committer —

@@ -26,6 +26,20 @@ extension MLS.RFC9420 {
 	/// application policy — RFC 9420 §12.4 explicitly declines to make
 	/// receivers enforce that every proposal they saw is referenced, so
 	/// baking a retention policy into a library type would overreach.
+	///
+	/// **The store is a trust boundary, and this is what holds without
+	/// it.** `processing` never recomputes a `ProposalRef` against its
+	/// stored proposal, and never re-verifies a stored `sender` against
+	/// the framing the proposal originally arrived in — the caller built
+	/// the store from messages it already verified. What defends against
+	/// a corrupted store: an Update's leaf signature is checked against
+	/// the claimed sender's `(group_id, leaf_index)`, so a forged Update
+	/// attribution fails; substituted *content* diverges the provisional
+	/// `GroupContext` and dies at the confirmation tag; and every
+	/// §12.1/§12.2 rule runs on what the store supplies. What does not
+	/// fail closed is the epoch-level rejection a caller skips by storing
+	/// a stale proposal as fresh — retention is the caller's job, and
+	/// this comment is the contract saying so.
 	public typealias ProposalStore = [MLS.HashReference: StoredProposal]
 
 	/// `ProposalRef = RefHash("MLS 1.0 Proposal Reference",
@@ -60,7 +74,59 @@ extension MLS.RFC9420.Group {
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
-		// 1-3: cheap framing checks, before any tree work.
+		// A PublicMessage-framed commit authenticates via the membership
+		// MAC plus the framing signature; both run here, then the core
+		// takes over on an already-authenticated frame. This is §12.4.2
+		// step 2's first branch.
+		guard message.content.epoch == context.epoch else {
+			throw MLS.RFC9420.GroupError.wrongEpoch(
+				expected: context.epoch, actual: message.content.epoch)
+		}
+		guard message.content.groupID == context.groupID else {
+			throw MLS.RFC9420.GroupError.wrongGroup
+		}
+		// Cheapest framing rejection, before any crypto -- also keeps this
+		// error ahead of `verifyPublic`, which refuses application content
+		// in a PublicMessage with a different error.
+		guard case .commit = message.content.content else {
+			throw MLS.RFC9420.GroupError.notACommit
+		}
+		guard case .member(let senderIndex) = message.content.sender else {
+			throw MLS.RFC9420.GroupError.unsupportedSender
+		}
+		guard let senderLeafRecord = tree.leaf(at: senderIndex) else {
+			throw MLS.RFC9420.GroupError.blankSenderLeaf
+		}
+		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderLeafRecord.encoded)
+		guard
+			try MLS.RFC9420.verifyPublic(
+				provider, message: message, groupContext: context,
+				verificationKey: senderLeaf.signatureKey,
+				membershipKey: epoch.membershipKey)
+		else {
+			throw MLS.CryptoError.signatureVerificationFailed
+		}
+		return try processing(
+			provider,
+			authenticatedContent: MLS.RFC9420.AuthenticatedContent(
+				wireFormat: .publicMessage, content: message.content,
+				auth: message.auth),
+			proposals: proposals, psk: psk)
+	}
+
+	/// The commit-processing core, on an *already authenticated* frame —
+	/// §12.4.2 from step 3 on. A `PublicMessage`-framed commit reaches
+	/// here after its membership MAC and framing signature are checked; a
+	/// `PrivateMessage`-framed one (`unprotect`) reaches here after its
+	/// AEAD and signature are checked. Either way the frame is trusted on
+	/// entry, and the epoch/group/member/blank-leaf checks below still run
+	/// because the private path does not repeat them.
+	public func processing(
+		_ provider: any MLS.CipherSuiteProvider,
+		authenticatedContent message: MLS.RFC9420.AuthenticatedContent,
+		proposals: MLS.RFC9420.ProposalStore,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+	) throws -> MLS.RFC9420.Group {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
 				expected: context.epoch, actual: message.content.epoch)
@@ -71,9 +137,6 @@ extension MLS.RFC9420.Group {
 		guard case .commit(let commit) = message.content.content else {
 			throw MLS.RFC9420.GroupError.notACommit
 		}
-
-		// 4: external commits are deferred project-wide, so a non-member
-		// sender is rejected outright rather than silently mishandled.
 		guard case .member(let senderIndex) = message.content.sender else {
 			throw MLS.RFC9420.GroupError.unsupportedSender
 		}
@@ -81,19 +144,6 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.blankSenderLeaf
 		}
 		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderLeafRecord.encoded)
-
-		// 5: one call covers both the membership MAC and the
-		// FramedContentTBS signature. The signature is checked against the
-		// sender's *pre-commit* leaf key -- the UpdatePath's new leaf key
-		// has not been merged yet and must not be used here.
-		guard
-			try MLS.RFC9420.verifyPublic(
-				provider, message: message, groupContext: context,
-				verificationKey: senderLeaf.signatureKey,
-				membershipKey: epoch.membershipKey)
-		else {
-			throw MLS.CryptoError.signatureVerificationFailed
-		}
 
 		// 6: resolve the proposal list in list order. An unresolvable
 		// reference is an error, never a skip -- applying a commit with a
@@ -198,11 +248,10 @@ extension MLS.RFC9420.Group {
 		// GroupContextExtensions is computed first and separately, because
 		// §12.3 says "The new extensions MUST be used when evaluating
 		// other proposals in this list" -- its output is *input* to
-		// everything after it, not merely earlier in sequence. Nothing in
-		// this phase evaluates required_capabilities (that is §12.2
-		// proposal validation, phase 6), so nothing breaks today; the
-		// ordering is established now so phase 6 adds those checks against
-		// the *new* extensions rather than the old.
+		// everything after it, not merely earlier in sequence.
+		// `validateProposalList` above already judged every proposal
+		// against these provisional extensions; this hoisted copy is what
+		// made that possible.
 		//
 		// GCE is routed here rather than through `RatchetTree.apply`
 		// deliberately: it changes `GroupContext.extensions`, which a
@@ -239,14 +288,13 @@ extension MLS.RFC9420.Group {
 			// §7.3 splits into an authenticity half (the leaf's own
 			// signature, over a TBS that binds `(group_id, leaf_index)`
 			// for a commit-sourced leaf) and a policy half (lifetime,
-			// capabilities, required_capabilities). This phase implements
-			// the authenticity half everywhere and defers the policy half
-			// to phase 6 -- the same split `join` already applies to every
-			// leaf in the tree. Verifying it here matters more than
-			// anywhere else: this leaf is the committer's *new* identity
-			// binding, and installing it unverified means every later
-			// message from that member verifies against a key nothing ever
-			// proved they hold.
+			// capabilities, required_capabilities). Both halves run here
+			// -- this leaf is the committer's *new* identity binding, and
+			// installing it unverified means every later message from
+			// that member verifies against a key nothing ever proved they
+			// hold. (An earlier revision ran only the authenticity half
+			// and deferred policy "to phase 6"; the stage-5 review found
+			// the deferral had silently outlived its phase.)
 			guard case .commit = path.leafNode.source else {
 				throw MLS.RFC9420.GroupError.updatePathLeafNotCommitSource
 			}
@@ -254,8 +302,28 @@ extension MLS.RFC9420.Group {
 				provider,
 				placement: .inGroup(
 					groupID: context.groupID, leafIndex: senderIndex))
+			var pathMemberCapabilities: [MLS.RFC9420.Capabilities] = []
+			var pathMemberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
+			for (index, record) in provisionalTree.nonBlankLeaves()
+			where index != senderIndex {
+				let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+				pathMemberCapabilities.append(leaf.capabilities)
+				pathMemberCredentialTypes.insert(leaf.credential.credentialType)
+			}
+			try path.leafNode.validatePolicy(
+				.commitUpdatePath,
+				groupRequirements:
+					try provisionalExtensions
+					.requiredCapabilities(),
+				memberCredentialTypes: pathMemberCredentialTypes,
+				memberCapabilities: pathMemberCapabilities)
+			// §12.4.2's own bullet, distinct from the whole-tree freshness
+			// sweep below so each is separately testable -- a crafted leaf
+			// reusing the committer's key necessarily also trips the
+			// sweep, which is what made the earlier shared error case
+			// mutation-invisible.
 			guard path.leafNode.encryptionKey != senderLeaf.encryptionKey else {
-				throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
+				throw MLS.RFC9420.GroupError.updatePathReusesCommitterKey
 			}
 
 			// 9c: "Verify that none of the public keys in the UpdatePath
@@ -312,9 +380,13 @@ extension MLS.RFC9420.Group {
 				leafCount: provisionalTree.leafCount)
 		}
 
-		// 11
+		// 11. The wire format is part of §8.2's confirmed-transcript-hash
+		// input, and a private-framed commit carries `.privateMessage` --
+		// so this must be the frame's actual format, not a constant, or a
+		// private commit's transcript (and thus its confirmation tag)
+		// diverges from its sender's.
 		let signedContent = MLS.Framing.SignedContent(
-			protocolVersion: .mls10, wireFormat: .publicMessage,
+			protocolVersion: .mls10, wireFormat: message.wireFormat,
 			encodedContent: try message.content.mlsEncoded(),
 			encodedGroupContext: nil)
 		guard let signature = message.auth.signature else {
@@ -366,6 +438,10 @@ extension MLS.RFC9420.Group {
 		// against the old epoch with a small depth could evict the entry
 		// this very commit added.
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
+		try updated.installMessageSecrets(
+			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
+			encryptionSecret: newEpoch.encryptionSecret, tree: provisionalTree,
+			provider)
 		return updated
 	}
 
@@ -381,25 +457,22 @@ extension MLS.RFC9420.Group {
 		self = try processing(provider, commit: message, proposals: proposals, psk: psk)
 	}
 
-	/// Resumption ids resolve from this group's own retained history;
-	/// everything else goes to the caller. A `reinit`/`branch` usage is
-	/// rejected outright for the same reason `join` rejects it: those
-	/// carry §12.4.3.1 rules that are meaningless without ReInit/branching
-	/// support, which this project defers project-wide.
-	/// The §12.3 application pass — update, then remove, then add, in
-	/// §12.3's order, plus §12.2's closing post-application uniqueness
-	/// sweep. Extracted so `processing` (receive) and `committing`
-	/// (construct) run the *same* code: the two sides must land on
-	/// byte-identical trees and on the same `blankedNodes`/`addedLeaves`
-	/// sets (which feed key pruning and copath exclusion), and a
-	/// re-implementation that diverged even slightly in ordering or in
-	/// the added-leaf matching would silently fork the group.
+	/// What `applyProposals` hands back: the provisional tree plus the two
+	/// index sets that feed key pruning (`blankedNodes`) and copath
+	/// exclusion (`addedLeaves`).
 	struct AppliedProposals {
 		var tree: MLS.TreeKEM.RatchetTree
 		var blankedNodes: Set<UInt32>
 		var addedLeaves: Set<MLS.LeafIndex>
 	}
 
+	/// The §12.3 application pass — update, then remove, then add, in
+	/// §12.3's order, plus §12.2's closing post-application uniqueness
+	/// sweep. Extracted so `processing` (receive) and `committing`
+	/// (construct) run the *same* code: the two sides must land on
+	/// byte-identical trees and on the same `blankedNodes`/`addedLeaves`
+	/// sets, and a re-implementation that diverged even slightly would
+	/// silently fork the group.
 	func applyProposals(
 		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex
 	) throws -> AppliedProposals {
@@ -417,14 +490,12 @@ extension MLS.RFC9420.Group {
 			// Update as "Replace the sender's LeafNode with the one
 			// contained in the Update proposal" -- if the sender occupies no
 			// leaf there is nothing to replace and the operation is
-			// undefined. But `LeafIndex` is bounded only by its own 2^24
-			// ceiling, never against *this* tree, and `setLeaf` grows the
-			// backing array to reach whatever index it is handed. So an
-			// unchecked sender is not merely a no-op on a blank leaf: it
-			// pads the array toward 2^25 entries one `nil` at a time, and
-			// the `leafCount` read on the very next line then trips
-			// `RatchetTree`'s `try!`. An out-of-range sender in a
-			// caller-supplied `ProposalStore` aborts the process.
+			// undefined. Historically this guard was also the only thing
+			// between an out-of-range store-supplied sender and a process
+			// abort (`setLeaf` grew the array unboundedly); the tree's
+			// setters now throw on out-of-range indices, so this is
+			// defense-in-depth with the spec-shaped error rather than the
+			// sole line of defense.
 			guard provisionalTree.leaf(at: updateSender) != nil else {
 				throw MLS.RFC9420.GroupError.updateFromNonMember(leaf: updateSender)
 			}
@@ -456,13 +527,14 @@ extension MLS.RFC9420.Group {
 		}
 
 		for stored in resolved {
-			guard case .add(let keyPackage) = stored.proposal else { continue }
-			try provisionalTree.apply(stored.proposal, sender: committer)
-			if let added = provisionalTree.nonBlankLeaves().first(where: {
-				(try? $0.record.encoded == keyPackage.leafNode.mlsEncoded())
-					?? false
-			}) {
-				addedLeaves.insert(added.index)
+			guard case .add = stored.proposal else { continue }
+			// Positional, from `insertLeaf` itself -- content matching
+			// only agreed with §7.6's positional rule while leaves were
+			// unique, and the uniqueness sweep runs after this loop.
+			if let added = try provisionalTree.apply(
+				stored.proposal, sender: committer)
+			{
+				addedLeaves.insert(added)
 			}
 		}
 
@@ -476,11 +548,20 @@ extension MLS.RFC9420.Group {
 		// a signature key. Join-side validation never sees this: it runs
 		// once, at join.
 		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		var postCommitEncryptionKeys: Set<MLS.HpkePublicKey> = []
 		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
 			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
 			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
 			else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
+			}
+			// §7.3 names both fields; the earlier sweep checked only the
+			// signature half, so two Adds sharing an encryption key --
+			// each valid alone, distinct signature keys -- slid through.
+			guard postCommitEncryptionKeys.insert(leafNode.encryptionKey).inserted
+			else {
+				throw MLS.TreeKEM.TreeError.duplicateEncryptionKey(
+					node: 2 * leafIndex.value)
 			}
 		}
 
@@ -505,13 +586,16 @@ extension MLS.RFC9420.Group {
 		let groupRequirements = try provisionalExtensions.requiredCapabilities()
 
 		// One decode pass over the members, shared by every leaf check.
-		var memberCapabilities: [MLS.RFC9420.Capabilities] = []
+		// Indexed, because §12.1.7's membership sweep below needs to
+		// exclude removed members and substitute updated leaves.
+		var memberCapabilitiesByLeaf: [MLS.LeafIndex: MLS.RFC9420.Capabilities] = [:]
 		var memberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
-		for (_, record) in tree.nonBlankLeaves() {
+		for (leafIndex, record) in tree.nonBlankLeaves() {
 			let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
-			memberCapabilities.append(leaf.capabilities)
+			memberCapabilitiesByLeaf[leafIndex] = leaf.capabilities
 			memberCredentialTypes.insert(leaf.credential.credentialType)
 		}
+		let memberCapabilities = Array(memberCapabilitiesByLeaf.values)
 
 		var updatedOrRemoved: Set<MLS.LeafIndex> = []
 		var seenPskIDs: Set<Data> = []
@@ -628,8 +712,49 @@ extension MLS.RFC9420.Group {
 				break
 			}
 		}
+
+		// §12.1.7: "A GroupContextExtensions proposal is invalid if it
+		// includes a required_capabilities extension and some members of
+		// the group do not support some of the required capabilities
+		// (including those added in the same Commit, and excluding those
+		// removed)." The added half is covered above -- every Add's leaf
+		// was validated against `groupRequirements`. This is the missing
+		// half, over the EXISTING members: without it, one accepted
+		// commit puts the group into a state its own join-side
+		// `validateLeaves` rejects -- no Welcome from that epoch onward
+		// is joinable and no Add can ever be committed again. Updated
+		// members are judged by their replacement leaf (validated above),
+		// removed members are excluded per the parenthetical.
+		if seenGroupContextExtensions, let required = groupRequirements {
+			for (leafIndex, capabilities) in memberCapabilitiesByLeaf {
+				if updatedOrRemoved.contains(leafIndex) { continue }
+				for type in required.extensionTypes
+				where
+					!MLS.RFC9420.defaultExtensionTypes.contains(type)
+					&& !capabilities.extensions.contains(type)
+				{
+					throw MLS.RFC9420.GroupError.requiredCapabilitiesNotMet
+				}
+				for type in required.proposalTypes
+				where
+					!MLS.RFC9420.defaultProposalTypes.contains(type)
+					&& !capabilities.proposals.contains(type)
+				{
+					throw MLS.RFC9420.GroupError.requiredCapabilitiesNotMet
+				}
+				for type in required.credentialTypes
+				where !capabilities.credentials.contains(type) {
+					throw MLS.RFC9420.GroupError.requiredCapabilitiesNotMet
+				}
+			}
+		}
 	}
 
+	/// Resumption ids resolve from this group's own retained history;
+	/// everything else goes to the caller. A `reinit`/`branch` usage is
+	/// rejected outright for the same reason `join` rejects it: those
+	/// carry §12.4.3.1 rules that are meaningless without ReInit/branching
+	/// support, which this project defers project-wide.
 	func resolvePsk(
 		_ id: MLS.RFC9420.PreSharedKeyIdentifier,
 		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?

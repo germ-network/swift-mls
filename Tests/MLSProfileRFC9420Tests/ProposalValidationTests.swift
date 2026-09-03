@@ -311,6 +311,67 @@ struct ProposalValidationTests {
 		Self.expectProcessing(f, store: store, throws: .requiredCapabilitiesNotMet)
 	}
 
+	/// §7.3's other uniqueness half, post-application: two Adds with
+	/// distinct signature keys but one shared leaf encryption key — each
+	/// valid alone, and pre-fix accepted by both sides.
+	@Test("two Adds sharing an encryption key are rejected after application")
+	func postCommitEncryptionKeyUniqueness() throws {
+		let f = try Self.fixture(minRefs: 2, requirePath: true)
+		let first = try SelfInteropTests.member("enc-a")
+		let second = try SelfInteropTests.member("enc-b")
+		// Give the second KeyPackage the first's leaf encryption key,
+		// re-signing leaf and KeyPackage so everything else is valid.
+		var kp = second.keyPackage
+		kp.leafNode.encryptionKey = first.keyPackage.leafNode.encryptionKey
+		kp.leafNode.signature = try MLS.signWithLabel(
+			Self.provider, privateKey: second.signingKey, label: "LeafNodeTBS",
+			content: try kp.leafNode.toBeSigned(placement: .keyPackage))
+		kp.signature = try MLS.signWithLabel(
+			Self.provider, privateKey: second.signingKey, label: "KeyPackageTBS",
+			content: try kp.toBeSigned())
+
+		var store = f.store
+		let refs = try Self.refs(of: f)
+		store[refs[0]] = .init(
+			proposal: .add(first.keyPackage), sender: f.commit.content.sender)
+		store[refs[1]] = .init(proposal: .add(kp), sender: f.commit.content.sender)
+		// The specific case, not `TreeError.self`: with the sweep removed
+		// the substituted Adds provoke a *different* TreeError downstream
+		// (a path-structure count mismatch), and a type-level expectation
+		// passed right through it -- caught when this test's own mutation
+		// run came back green against the deleted check.
+		#expect {
+			_ = try f.group.processing(
+				f.provider, commit: f.commit, proposals: store, psk: { _ in nil })
+		} throws: { error in
+			guard case MLS.TreeKEM.TreeError.duplicateEncryptionKey = error else {
+				return false
+			}
+			return true
+		}
+	}
+
+	/// §10.1's match-the-GroupContext bullet on the commit path — these
+	/// two errors were only ever exercised at join before.
+	@Test("an Add whose KeyPackage disagrees with the GroupContext is rejected")
+	func addSuiteAndVersionMismatch() throws {
+		let f = try Self.fixture(minRefs: 1)
+		let member = try SelfInteropTests.member("mismatch")
+		var wrongSuite = member.keyPackage
+		wrongSuite.cipherSuite = .init(id: 2)
+		var store = f.store
+		let refs = try Self.refs(of: f)
+		store[refs[0]] = .init(
+			proposal: .add(wrongSuite), sender: f.commit.content.sender)
+		Self.expectProcessing(f, store: store, throws: .cipherSuiteMismatch)
+
+		var wrongVersion = member.keyPackage
+		wrongVersion.version = .init(id: 2)
+		store[refs[0]] = .init(
+			proposal: .add(wrongVersion), sender: f.commit.content.sender)
+		Self.expectProcessing(f, store: store, throws: .protocolVersionMismatch)
+	}
+
 	// MARK: direct §7.3 policy units
 
 	static func policyLeaf(

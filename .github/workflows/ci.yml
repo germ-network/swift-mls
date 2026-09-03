@@ -23,8 +23,15 @@ jobs:
       # --strict: warnings fail the job too, not only errors — .swift-format
       # here matches AtprotoTypes/jxl-encoder-swift's config exactly, but
       # unlike those two repos this is actually enforced in CI, not merely
-      # present.
-      - run: swift format lint --recursive --configuration .swift-format --strict Sources Tests
+      # present. Sources/mls-interop-server/Generated is protoc output, not
+      # hand-maintained — excluded the same way its Package.swift target
+      # exclude keeps it out of the build's own style checks. A directory
+      # list with --recursive does NOT work here: passing the Generated
+      # directory's *parent* still walks back down into it. Pass an
+      # explicit flat file list instead (paths, not --recursive dirs).
+      - run: |
+          swift format lint --configuration .swift-format --strict \
+            $(find Sources Tests -name Generated -prune -o -name '*.swift' -print)
 
   macos:
     runs-on: macos-15
@@ -48,16 +55,33 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      # SwiftPM names the auto-generated scheme differently by product count:
-      # "swift-mls-Package" (the umbrella, builds every product) once there are
-      # several library products, but a single same-named "swift-mls" when
-      # there is exactly one. phase-0 has one (MLSCodec); later phases have
-      # several. This one CI file serves every phase branch, so pick whichever
-      # scheme the current branch actually generated.
+      # SwiftPM auto-generates one scheme per product, plus an umbrella
+      # "swift-mls-Package" once there is more than one product (a single
+      # same-named "swift-mls" scheme when there is exactly one — phase-0
+      # had only MLSCodec). This file serves every phase branch, so it
+      # discovers schemes at run time rather than hardcoding them.
+      #
+      # Since phase 7 the package also has an executable product
+      # (mls-interop-server, the gRPC interop harness) that cannot build
+      # for iOS: grpc-swift 2 requires iOS 18, above this library's iOS 17
+      # floor, and it is a server tool with no iOS reason to exist. Its
+      # sources are `#if os(macOS) || os(Linux)`-gated to nothing on
+      # other platforms, so building the umbrella scheme tries to link it
+      # anyway and fails on a missing `_main`. Build each *library*
+      # product's own scheme instead of the umbrella, skipping executables.
       - run: |
           if xcodebuild -list 2>/dev/null | grep -q swift-mls-Package; then
-            scheme=swift-mls-Package
+            libraries=$(swift package dump-package | python3 -c "
+          import json, sys
+          pkg = json.load(sys.stdin)
+          executables = {t['name'] for t in pkg['targets'] if t['type'] == 'executable'}
+          for p in pkg['products']:
+              if p['name'] not in executables:
+                  print(p['name'])
+          ")
+            for scheme in $libraries; do
+              xcodebuild build -scheme "$scheme" -destination 'generic/platform=iOS'
+            done
           else
-            scheme=swift-mls
+            xcodebuild build -scheme swift-mls -destination 'generic/platform=iOS'
           fi
-          xcodebuild build -scheme "$scheme" -destination 'generic/platform=iOS'

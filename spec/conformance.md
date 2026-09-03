@@ -1,19 +1,31 @@
 # RFC 9420 conformance: what is verified, and what is not
 
-`MLSProfileRFC9420` is a SwiftPM library product. It is **not yet
-`conformant`** by this directory's own definition, and this document says
-exactly where the gap is rather than leaving it implied.
+`MLSProfileRFC9420` is a SwiftPM library product. It now meets both clauses
+of this directory's `conformant` bar — **over the core group lifecycle**,
+which is the qualifier that keeps the claim honest, and this document says
+exactly what that scope includes and excludes rather than leaving it implied.
 
 `README.md` sets the bar at two clauses:
 
 > **conformant** — implements a published RFC; verified against the official
 > test vectors **and against at least one independent implementation**
 
-The first clause is met: every official mlswg vector file the profile's scope
-covers is vendored and asserted against, with no unconsumed file left in the
-tree. The second is not. It requires the gRPC interop harness, which is phase
-7's work. Until then the honest label is **implements RFC 9420; vector-verified,
-not interop-verified**.
+The first clause: every official mlswg vector file the profile's scope covers
+is vendored and asserted against, with no unconsumed file left in the tree.
+
+The second clause: the mlswg gRPC harness runs swift-mls against **mls-rs**
+under the mlswg Go test-runner, and every scenario exercising a feature both
+stacks implement agrees — in both directions, with the runner choosing the
+call sequence. Section 5 has the matrix.
+
+**The qualifier matters and is not boilerplate.** Conformance here covers
+group creation, key packages, welcome/join in both tree-delivery modes,
+add/remove/PSK/GroupContextExtensions proposals, path and pathless commits,
+and the application-message ratchet including out-of-order delivery within
+and across epochs. It does **not** cover ReInit, branching, external
+join/commit, external senders, or a member proposing an Update for itself —
+all deferred project-wide and rejected explicitly rather than silently
+mishandled. A deployment needing any of those is not covered by this claim.
 
 Two things are worth separating, because passing vectors invites conflating
 them. Vectors demonstrate that this code and the implementations that generated
@@ -100,15 +112,16 @@ that a caller gets an error, not a plausible-looking result.
 | ReInit | `GroupError.unsupportedReInit` — rejected rather than applied, because ReInit uniquely does not perturb the key schedule, so applying it would *succeed* and hand back a live-looking `Group` the caller must not send from |
 | Branching, resumption PSKs with `reinit`/`branch` usage | `GroupError.unsupportedResumptionUsage` |
 | X.509 credentials | Credentials stay opaque on the wire; interpretation is the application's |
-| Commit *construction*, proposal *validation* | Phase 6. This profile is a **passive** client today: it joins and applies, it does not commit |
+| External commits and external senders | Deferred project-wide; a regular commit refuses to construct or apply either |
 
-§7.3 leaf validation is split, and only half is implemented. The
-**authenticity** half — every leaf's own signature — runs on every non-blank
-leaf at join and on every `UpdatePath` leaf at commit. The **policy** half —
-lifetime bounds, capability/extension consistency, `required_capabilities`
-satisfaction, and §5.3.1 credential validation — is phase 6's, because it needs
-the group's current extensions and a clock, which are not this layer's to
-adjudicate.
+§7.3 leaf validation runs in full — the authenticity half (every leaf's own
+signature) and the policy half (capability/extension consistency, mutual
+credential support, `required_capabilities`) at join, on every proposal leaf,
+and on every `UpdatePath` leaf. The two deliberate carve-outs: lifetime
+bounds are caller opt-ins (the receive-side check is RECOMMENDED-not-
+mandatory and hundreds of official-vector leaves are already expired; the
+maximum-total-lifetime is an application MUST), and §5.3.1 credential
+validation stays the application's — credentials are opaque here by design.
 
 ---
 
@@ -118,35 +131,30 @@ The official suite contains no malformed input. Every rejection path in this
 codebase is therefore pinned by tests written here, and an adversarial review
 during phase 5b demonstrated the cost of assuming otherwise: **both**
 `checkUpdatePathKeysAreFresh` and the path-required check were deleted, and all
-382 commit epochs still passed (91 records x 2 epochs from
-`passive-client-handling-commit.json`, 200 from `passive-client-random.json` —
-an earlier revision of this document said 330, itself a counting error).
+330 commit epochs still passed — 65 records x 2 epochs from
+`passive-client-handling-commit.json` after the suite filter (the file
+carries 91 records, but suites 4 and 6 are X448 and never run; a "corrected"
+revision of this document briefly said 382 by counting records the tests
+never execute), plus 200 from `passive-client-random.json`.
 
 Two consequences worth stating plainly.
 
-**Rejection coverage is partial, and only partly bounded by a signing oracle.**
-Counted from source (not reasoned — an earlier draft of this section
-undercounted twice by assuming commit *mutation* was the only route to a
-check): the commit-processing path, including phase 6a's §12.1/§12.2
-validation pass, can throw **35** distinct `GroupError` cases plus signature
-failures (`cipherSuiteMismatch` and `protocolVersionMismatch`, previously
-join-only, are now also commit-path — Add validation reuses them for §10.1's
-match-the-GroupContext bullet).
-
-**All thirty-five are now covered** — phase 6b's `create` supplied the
-committer signing key that the six oracle-bound rejections had waited on
-since 5b. The breakdown: five by commit mutation; three by withholding
-caller state; ten by supplying crafted `ProposalStore` state; five §7.3
-policy cases as direct units; two on the join path (`cipherSuiteMismatch`,
-`protocolVersionMismatch`); and — new in 6b — eight by *constructed*
-commits, validly signed and membership-tagged by a real member and
-malformed in exactly one way (`pathRequired`, `unsupportedReInit`,
-`removeOfNonMember`, `updatePathLeafNotCommitSource`,
-`updatePathReusesEncryptionKey`, `removedFromGroup` via the self-interop
-backbone, and the two former holes: `confirmationTagMismatch` — a wrong
-tag with an honestly recomputed membership tag, which is the
-malicious-member adversary, since a network attacker's tag rewrite dies at
-the membership MAC instead — and `unsupportedResumptionUsage`).
+**Rejection coverage is complete, and now counted per phase.** The
+commit-processing and commit-construction paths together throw **38**
+distinct `GroupError` cases (35 at the end of 6a; the phase-6 review split
+`updatePathReusesCommitterKey` from the whole-tree freshness sweep so each
+is separately mutation-testable, and added `welcomeCoverageIncomplete` for
+§12.4.3.1's every-member MUST — plus §7.3's encryption-key uniqueness,
+which throws the tree component's own `duplicateEncryptionKey`). Every one
+is exercised: by commit mutation, by supplying or withholding crafted
+`ProposalStore` state, as direct §7.3 policy units, on the join path, or —
+since 6b supplied the committer signing key — by constructed commits
+validly signed and malformed in exactly one way. The former standing holes
+(`confirmationTagMismatch`, `unsupportedResumptionUsage`) are closed, and
+the phase-6 review's additions (the §12.1.7 membership sweep, UpdatePath
+leaf policy, post-application encryption-key uniqueness, the pathless
+committer-key fix) each landed with a regression test that its own
+mutation run fails.
 
 The self-interop gate is the other thing 6b adds to this document's
 evidence: constructed commits and Welcomes are processed by the
@@ -164,7 +172,9 @@ one real defect this audit found lived. `processing` reads a by-reference
 proposal's *sender* out of the caller-supplied store, with no signature of its
 own to check. An Update naming a leaf beyond the tree used to grow the ratchet
 tree's backing array toward 2²⁵ entries and then abort the process on a `try!` —
-the guard and its test now exist, and the structural fix is tracked separately.
+the guard and its test came first, and the structural fix followed: the tree's
+setters now throw on any index beyond the padded tree, so the spec-shaped
+rejection sits in front of a bounds guard rather than being the only defense.
 
 **Retention is now bounded; erasure still is not.** §9.2's deletion schedule
 is partially in effect: the Welcome-processing secrets and the confirmation
@@ -182,24 +192,91 @@ decision, not more tests. Second, §9.2's per-message MUSTs (delete the
 `encryption_secret` and ratchet secrets as messages are consumed) await
 phase 6, which is where message consumption itself arrives.
 
-**One planned hardening item did not ship.** Two own-leaf guards in
-`Protect.swift` (reject decrypting your own message; verify the sender is the
-self leaf) are not implemented. Neither is spec-mandated — they are properties
-mls-rs has that this profile does not — but the deferral reason ("whichever
-phase owns group-membership state") has been discharged since `Group` landed,
-so this is now an open item rather than a pending dependency.
+**Both peer-derived own-leaf guards now ship.** Neither is spec-mandated —
+they are properties mls-rs enforces that this profile originally did not —
+and both waited on "whichever layer owns this client's own leaf index *and*
+calls these functions," which arrived with `Group.protect`/`unprotect` in the
+application-message layer. Rejecting decryption of one's own message is a
+runtime check (`cannotDecryptOwnMessage`, before any key derivation, so a
+reflected message costs no ratchet state). Verifying the framed sender is the
+caller's own leaf is stronger than the runtime check the finding asked for:
+`Group.protectContent` builds `FramedContent` with `sender: .member(myLeafIndex)`
+and exposes no parameter to override it, so framing a message as another
+member is unrepresentable rather than rejected.
 
 ---
 
-## 5. What phase 7 must add before "conformant" is claimable
+## 5. Interop harness — what runs today, and what "conformant" still waits on
 
-The gRPC interop harness (`mls-interop-server` implementing `MLSClient`,
-out-of-scope RPCs answering `UNIMPLEMENTED`), run under the mlswg Go runner
-across swift-mls ↔ mls-rs ↔ OpenMLS. Passing vectors proves agreement with
-implementations that have already agreed with each other on *chosen* inputs;
-interop proves agreement on inputs neither side chose, including this profile's
-own commits — which today no vector exercises at all, because it cannot yet
-build one.
+`mls-interop-server` implements the mlswg `MLSClient` gRPC service over
+`MLS.RFC9420` (out-of-scope RPCs answer `ABORTED "unsupported"`, matching
+mls-rs). It runs under the **real mlswg Go test-runner** — the same driver
+the reference implementations use — over the runner's own scenario configs.
+`Scripts/run-interop.sh` reproduces the matrix.
 
-Until that runs, `MLSProfileRFC9420` ships as a product whose own specification
-directory declines to give it the badge.
+**swift ↔ swift, every supported cipher suite (1, 2, 3, 5, 7):**
+
+| config | scripts | result |
+|---|---|---|
+| `application` | in-order, out-of-order within epoch, out-of-order across epochs | **pass, all 5 suites** |
+| `welcome_join` | force-path and external-tree join variants | **pass, all 5 suites** |
+| `commit` | add, empty, remove, external_psk, group_context_extensions | **pass, all 5 suites** |
+| `commit` | update, resumption_psk, all_together_{alice,bob}_proposes | ABORTED — deferred features (the updater key-handoff, and reinit/branch resumption PSKs) |
+
+This proves the harness end to end and the runner-driven scenario semantics
+on every implemented feature and every suite the stack supports — group
+creation, key packages, welcome/join in both tree-delivery modes, the four
+implemented proposal types, path and pathless commits, and the full
+application-message ratchet with cross-epoch out-of-order delivery. It is a
+materially stronger signal than the self-interop gate, because the *runner*
+chose the call sequence, not us.
+
+**swift ↔ mls-rs — the independent-implementation half, now run.** The same
+harness, a second `-client` pointed at mls-rs's own `harness_client` (Wickr
+MLS), suite 1, both handshake-public. Under `ClientModeAll` the runner runs
+every actor→client assignment, so each scenario runs with swift creating and
+mls-rs joining, mls-rs creating and swift joining, and each same-stack pair —
+the same wire bytes leaving one implementation and consumed by the other:
+
+| config | cross-impl result |
+|---|---|
+| `application` (all 3 scripts) | **pass, both directions** |
+| `welcome_join` (path, no-path, external-tree, with-psk) | **pass, both directions** |
+| `commit`: add, empty, remove, external_psk, group_context_extensions | **pass, both directions** |
+| `commit`: `update` with mls-rs proposing, swift committing | **pass** — our commit-of-a-peer's-Update path agrees with mls-rs |
+| `commit`: `update` with swift proposing | swift-side deferred (the updater key-handoff) |
+| `commit`: `resumption_psk`, `all_together_*` | swift-side deferred (reinit/branch resumption PSKs) |
+
+Every failure is a swift-side **documented deferred feature** being invoked,
+never a wire disagreement: when both stacks use only implemented paths, they
+agree byte-for-byte on every group operation — create, key package, welcome
+and join in both tree-delivery modes and with PSKs, add, remove,
+group-context-extensions, path and pathless commits, and the full
+application-message ratchet across epochs and out of order.
+
+This satisfies both halves of `spec/README.md`'s **conformant** definition —
+the official test vectors (all 16 consumed, phases 0–6) *and* an independent
+implementation (mls-rs, here). The maturity table now carries the badge, with
+the scope qualifier rather than unqualified.
+
+The caveat is scope, not correctness. `MLS.RFC9420` defers the updater
+self-proposal and, project-wide, ReInit, branching, external join/commit and
+external senders — so it is conformant over a feature set complete for the
+core group lifecycle and not yet for those. Every one of them fails closed
+with a named error (§3), so a caller invoking a deferred path gets a
+rejection, never a plausible-looking result. What the interop run adds is
+that on everything *not* deferred, two independently written implementations
+agree on the bytes — which vectors alone cannot show, because vectors are
+inputs both sides were given rather than inputs either side chose.
+
+**Agreement was proven without a public `Export` or `StateAuth` surface.**
+Across all three configs the runner never calls either RPC — every
+convergence check runs through `epoch_authenticator` alone, already public on
+`Group.epoch`. `mls-interop-server`'s `Export` answers `unsupported`, and
+`MLS.KeySchedule.exportSecret` stays `package`-scoped. That was a deliberate
+bet recorded when the harness was built (no forward secrecy on that path,
+recent drafts favor safe-export, "not as an adopter-facing API"); this run is
+the first real evidence for it — nothing exercised needed more than the
+authenticator to settle whether two independent implementations derived the
+identical key schedule. Revisit only if a future scenario config genuinely
+requires it; neither the mlswg nor the mls-rs config sets do today.

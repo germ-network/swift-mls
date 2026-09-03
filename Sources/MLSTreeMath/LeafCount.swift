@@ -33,9 +33,8 @@ extension MLS {
 		/// input that is not one — zero included, since an MLS tree is never
 		/// empty — or that reaches `LeafIndex.ceiling`. The ceiling check is
 		/// not decoration: `RatchetTree.leafCount` computes its value with
-		/// `try!`, so a count that reaches 2^24 aborts the process rather
-		/// than throwing; bounding that growth structurally is a tracked
-		/// follow-up.
+		/// `try!`, made safe by `setNode`'s bounds guard and
+		/// `insertLeaf`'s `treeFull` check.
 		public init(validating value: UInt32) throws {
 			guard value.nonzeroBitCount == 1, value < MLS.LeafIndex.ceiling else {
 				throw MLS.TreeMathError.invalidLeafCount(value)

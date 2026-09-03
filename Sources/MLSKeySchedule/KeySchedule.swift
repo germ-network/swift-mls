@@ -42,7 +42,7 @@ extension MLS {
 		/// never lets this step be skipped, only its input be trivial.
 		public static func advance(
 			_ provider: any CipherSuiteProvider,
-			initSecret: Data,
+			initSecret: some ContiguousBytes,
 			commitSecret: Data,
 			pskSecret: Data,
 			groupContext: Data
@@ -169,7 +169,7 @@ extension MLS {
 		/// 9420 conformance and internal use, not as an adopter-facing API.
 		package static func exportSecret(
 			_ provider: any CipherSuiteProvider,
-			exporterSecret: Data,
+			exporterSecret: some ContiguousBytes,
 			label: String,
 			context: Data,
 			length: Int

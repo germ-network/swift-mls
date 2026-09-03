@@ -23,7 +23,7 @@ extension MLS.RFC9420.Group {
 	///   the §9.2 MUST applies directly.
 	/// - `confirmationKey`: consumed once the epoch-establishing
 	///   confirmation tag is verified. Later commits are checked with the
-	///   *next* epoch's key, and a committer (phase 6) computes its tag
+	///   *next* epoch's key, and a committer (`committing`) computes its tag
 	///   from the new epoch it just derived in-line — nothing reads a
 	///   retained confirmation key.
 	/// - `externalSecret`, `externalPublicKey`: only power external
@@ -39,16 +39,15 @@ extension MLS.RFC9420.Group {
 	///
 	/// What is retained, and why: `initSecret` is unconsumed until the
 	/// next commit's `advance`; `membershipKey` verifies every incoming
-	/// `PublicMessage` this epoch; `senderDataSecret` and
-	/// `encryptionSecret` are the epoch's message-protection roots
-	/// (consumed per §9.2's own schedule only as messages are handled —
-	/// phase 6 wires that in); `exporterSecret` backs the exporter for the
-	/// epoch's lifetime; `epochAuthenticator` is the value RFC 9420
-	/// exposes to applications.
+	/// `PublicMessage` this epoch; `exporterSecret` backs the exporter
+	/// for the epoch's lifetime; `epochAuthenticator` is the value RFC
+	/// 9420 exposes to applications. `senderDataSecret` and
+	/// `encryptionSecret` moved into the per-epoch *message-secret store*
+	/// (`MessageProtection.swift`) the moment message handling arrived —
+	/// there they are consumed per §9.2's own schedule, which a flat
+	/// retained field could never express.
 	public struct EpochSecrets: Sendable {
 		public let initSecret: Data
-		public let senderDataSecret: Data
-		public let encryptionSecret: Data
 		public let exporterSecret: Data
 		public let epochAuthenticator: Data
 		public let membershipKey: Data
@@ -57,8 +56,6 @@ extension MLS.RFC9420.Group {
 		/// welcome secret to drop in the first place.
 		init(retaining fanOut: MLS.KeySchedule.EpochFanOut) {
 			self.initSecret = fanOut.initSecret
-			self.senderDataSecret = fanOut.senderDataSecret
-			self.encryptionSecret = fanOut.encryptionSecret
 			self.exporterSecret = fanOut.exporterSecret
 			self.epochAuthenticator = fanOut.epochAuthenticator
 			self.membershipKey = fanOut.membershipKey
@@ -66,8 +63,6 @@ extension MLS.RFC9420.Group {
 
 		init(retaining epoch: MLS.KeySchedule.Epoch) {
 			self.initSecret = epoch.initSecret
-			self.senderDataSecret = epoch.senderDataSecret
-			self.encryptionSecret = epoch.encryptionSecret
 			self.exporterSecret = epoch.exporterSecret
 			self.epochAuthenticator = epoch.epochAuthenticator
 			self.membershipKey = epoch.membershipKey
@@ -96,8 +91,27 @@ extension MLS.RFC9420.Group {
 		/// PSK is consumed.
 		public var resumptionPskDepth: Int
 
-		public init(resumptionPskDepth: Int = 3) {
+		/// Past epochs whose *message* secrets stay decryptable — the
+		/// cross-epoch out-of-order window. 0 = current epoch only.
+		/// RFC 9420 §15.3 makes all three message-secret bounds
+		/// application policy; these defaults are deliberately modest.
+		public var messageSecretsDepth: Int
+		/// §15.3's "maximum number of steps... move the ratchet forward"
+		/// — checked BEFORE any derivation loop, because the RFC's own
+		/// DoS is a forged generation of 0xffffffff.
+		public var maxForwardJump: Int
+		/// §15.3's cap on retained unconsumed key/nonce pairs, per
+		/// sender chain.
+		public var maxSkippedKeysPerSender: Int
+
+		public init(
+			resumptionPskDepth: Int = 3, messageSecretsDepth: Int = 1,
+			maxForwardJump: Int = 1_000, maxSkippedKeysPerSender: Int = 1_024
+		) {
 			self.resumptionPskDepth = max(0, resumptionPskDepth)
+			self.messageSecretsDepth = max(0, messageSecretsDepth)
+			self.maxForwardJump = max(0, maxForwardJump)
+			self.maxSkippedKeysPerSender = max(0, maxSkippedKeysPerSender)
 		}
 	}
 }

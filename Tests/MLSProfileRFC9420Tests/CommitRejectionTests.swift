@@ -9,14 +9,17 @@ import Testing
 
 /// The rejection branches `Group.processing` grew in 5b. The vector gate
 /// proves the **accept** path only — an adversarial review deleted both
-/// `checkUpdatePathKeysAreFresh` and the path-required check and all 382
-/// commit epochs still passed (91 records x 2 epochs from
-/// `passive-client-handling-commit`, 200 from `passive-client-random` --
-/// an earlier version of this header said 330, itself a counting error).
-/// Everything here exists because of that.
+/// `checkUpdatePathKeysAreFresh` and the path-required check and all 330
+/// commit epochs still passed (65 records x 2 epochs from
+/// `passive-client-handling-commit` after the cipher-suite filter -- the
+/// file carries 91 records, and a revision of this header briefly
+/// "corrected" 330 to 382 by counting the 26 X448 records the tests never
+/// run -- plus 200 from `passive-client-random`). Everything here exists
+/// because of that.
 ///
 /// **What is coverable without a signing oracle, and what isn't.**
-/// `processing` can throw 16 distinct `GroupError` cases. It verifies the
+/// `processing` can throw dozens of distinct `GroupError` cases (the
+/// exact count lives in `spec/conformance.md`, recounted per phase). It verifies the
 /// commit's framing signature at step 5, so a test that *mutates a commit*
 /// can only reach checks running before that point — but mutation is not
 /// the only route, and treating it as though it were is how this suite's
