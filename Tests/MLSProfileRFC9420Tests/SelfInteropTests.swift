@@ -94,6 +94,25 @@ struct SelfInteropTests {
 		}
 	}
 
+	/// Every commit in this suite comes from `committing()`'s
+	/// `.privateMessage` default -- unwrap and process it through
+	/// `Group.process(privateCommit:)`, the receive-side half of that
+	/// default.
+	static func processPrivate(
+		_ group: inout MLS.RFC9420.Group, _ provider: any MLS.CipherSuiteProvider,
+		_ commit: MLS.RFC9420.Message,
+		proposals: MLS.RFC9420.ProposalStore = [:],
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil },
+		_ location: SourceLocation = #_sourceLocation
+	) throws {
+		guard case .privateMessage(let privateCommit) = commit else {
+			Issue.record("expected a privateMessage-framed commit", sourceLocation: location)
+			return
+		}
+		try group.process(
+			provider, privateCommit: privateCommit, proposals: proposals, psk: psk)
+	}
+
 	/// The backbone: create → add (full commit + Welcome) → join → empty
 	/// PCS commit back → pathless add → external-PSK commit → remove.
 	@Test("a constructed group survives five epochs of round trips")
@@ -122,7 +141,7 @@ struct SelfInteropTests {
 			randomness: .generate(provider))
 		groupB = pcs.group
 		#expect(pcs.welcome == nil)
-		try groupA.process(provider, commit: pcs.commit, proposals: [:], psk: { _ in nil })
+		try Self.processPrivate(&groupA, provider, pcs.commit)
 		Self.assertConverged(groupA, groupB)
 
 		// Epoch 2 -> 3: Alice adds Carol *pathlessly* (§12.4's MAY).
@@ -133,8 +152,7 @@ struct SelfInteropTests {
 			randomness: .generate(provider),
 			includePath: false)
 		groupA = addCarol.group
-		try groupB.process(
-			provider, commit: addCarol.commit, proposals: [:], psk: { _ in nil })
+		try Self.processPrivate(&groupB, provider, addCarol.commit)
 		var groupC = try MLS.RFC9420.Group.join(
 			provider, welcome: try #require(addCarol.welcome),
 			credentials: carol.joinCredentials, psk: { _ in nil })
@@ -163,8 +181,8 @@ struct SelfInteropTests {
 			includePath: false,
 			psk: resolve)
 		groupB = psk.group
-		try groupA.process(provider, commit: psk.commit, proposals: [:], psk: resolve)
-		try groupC.process(provider, commit: psk.commit, proposals: [:], psk: resolve)
+		try Self.processPrivate(&groupA, provider, psk.commit, psk: resolve)
+		try Self.processPrivate(&groupC, provider, psk.commit, psk: resolve)
 		Self.assertConverged(groupA, groupB)
 		Self.assertConverged(groupB, groupC)
 
@@ -175,11 +193,9 @@ struct SelfInteropTests {
 			signingKey: alice.signingKey,
 			randomness: .generate(provider))
 		groupA = remove.group
-		try groupB.process(
-			provider, commit: remove.commit, proposals: [:], psk: { _ in nil })
+		try Self.processPrivate(&groupB, provider, remove.commit)
 		#expect(throws: MLS.RFC9420.GroupError.removedFromGroup) {
-			try groupC.process(
-				provider, commit: remove.commit, proposals: [:], psk: { _ in nil })
+			try Self.processPrivate(&groupC, provider, remove.commit)
 		}
 		Self.assertConverged(groupA, groupB)
 	}
@@ -233,8 +249,8 @@ struct SelfInteropTests {
 			signingKey: alice.signingKey, randomness: .generate(provider),
 			includePath: false, psk: resolve)
 		groupA = pathless.group
-		try groupB.process(provider, commit: pathless.commit, proposals: [:], psk: resolve)
-		try groupC.process(provider, commit: pathless.commit, proposals: [:], psk: resolve)
+		try Self.processPrivate(&groupB, provider, pathless.commit, psk: resolve)
+		try Self.processPrivate(&groupC, provider, pathless.commit, psk: resolve)
 
 		// Carol answers with a full-path commit; Alice must still be able
 		// to decap it.
@@ -242,8 +258,8 @@ struct SelfInteropTests {
 			provider, proposals: [], signingKey: carol.signingKey,
 			randomness: .generate(provider))
 		groupC = full.group
-		try groupA.process(provider, commit: full.commit, proposals: [:], psk: { _ in nil })
-		try groupB.process(provider, commit: full.commit, proposals: [:], psk: { _ in nil })
+		try Self.processPrivate(&groupA, provider, full.commit)
+		try Self.processPrivate(&groupB, provider, full.commit)
 		Self.assertConverged(groupA, groupC)
 		Self.assertConverged(groupA, groupB)
 	}
@@ -291,9 +307,7 @@ struct SelfInteropTests {
 		groupA = removeAndRequire.group
 		#expect(groupA.context.extensions.count == 1)
 		#expect(throws: MLS.RFC9420.GroupError.removedFromGroup) {
-			try groupB.process(
-				provider, commit: removeAndRequire.commit, proposals: [:],
-				psk: { _ in nil })
+			try Self.processPrivate(&groupB, provider, removeAndRequire.commit)
 		}
 	}
 
@@ -343,8 +357,7 @@ struct SelfInteropTests {
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = commit.group
-		try groupB.process(
-			provider, commit: commit.commit, proposals: store, psk: { _ in nil })
+		try Self.processPrivate(&groupB, provider, commit.commit, proposals: store)
 		let groupC = try MLS.RFC9420.Group.join(
 			provider, welcome: try #require(commit.welcome),
 			credentials: carol.joinCredentials, psk: { _ in nil })
@@ -413,8 +426,7 @@ struct SelfInteropTests {
 		// that key -- a stale held leaf key fails AEAD-open. A real
 		// updater holds the new secret from the moment it proposes.
 		groupB.secretKeys[2 * groupB.myLeafIndex.value] = newLeafSecret
-		try groupB.process(
-			provider, commit: commit.commit, proposals: store, psk: { _ in nil })
+		try Self.processPrivate(&groupB, provider, commit.commit, proposals: store)
 		Self.assertConverged(groupA, groupB)
 
 		// Both sides keep working: Bob commits the next epoch.
@@ -422,7 +434,7 @@ struct SelfInteropTests {
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))
 		groupB = next.group
-		try groupA.process(provider, commit: next.commit, proposals: [:], psk: { _ in nil })
+		try Self.processPrivate(&groupA, provider, next.commit)
 		Self.assertConverged(groupA, groupB)
 	}
 }

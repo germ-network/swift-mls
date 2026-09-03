@@ -31,28 +31,34 @@ struct BaselineBenchmarkTests {
 		var groupA = try SelfInteropTests.createGroup(alice)
 		let add = try groupA.committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
-			signingKey: alice.signingKey, randomness: .generate(provider))
+			signingKey: alice.signingKey, randomness: .generate(provider),
+			framing: .publicMessage)
 		groupA = add.group
 		let rotation = try groupA.committing(
 			provider, proposals: [], signingKey: alice.signingKey,
-			randomness: .generate(provider))
+			randomness: .generate(provider), framing: .publicMessage)
 
 		func size(_ message: MLS.RFC9420.Message) throws -> Int {
 			var writer = MLS.Writer()
 			try message.encode(to: &writer)
 			return writer.bytes.count
 		}
-		guard case .commit(let commit) = rotation.commit.content.content else {
+		guard case .publicMessage(let rotationCommit) = rotation.commit,
+			case .publicMessage(let addCommit) = add.commit
+		else {
+			throw CommitRejectionTests.Failure.shape
+		}
+		guard case .commit(let commit) = rotationCommit.content.content else {
 			throw CommitRejectionTests.Failure.shape
 		}
 		// Signature counts by byte length, not presence flags: a
 		// construction that signed twice, or elided the leaf signature
 		// while keeping the path, must move these numbers.
-		let framingSignatureBytes = rotation.commit.auth.signature?.data.count ?? 0
+		let framingSignatureBytes = rotationCommit.auth.signature?.data.count ?? 0
 		let leafSignatureBytes = commit.path?.leafNode.signature.count ?? 0
 		return Measured(
-			rotationCommit: try size(.publicMessage(rotation.commit)),
-			addCommit: try size(.publicMessage(add.commit)),
+			rotationCommit: try size(.publicMessage(rotationCommit)),
+			addCommit: try size(.publicMessage(addCommit)),
 			welcome: try size(.welcome(try #require(add.welcome))),
 			keyPackage: try size(.keyPackage(bob.keyPackage)),
 			rotationFramingSignatures: framingSignatureBytes == 64 ? 1 : 0,

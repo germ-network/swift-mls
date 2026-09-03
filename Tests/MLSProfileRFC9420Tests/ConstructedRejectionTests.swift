@@ -248,8 +248,11 @@ struct ConstructedRejectionTests {
 		let pair = try Self.pair()
 		let out = try pair.groupA.committing(
 			Self.provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(Self.provider))
-		var message = out.commit
+			randomness: .generate(Self.provider), framing: .publicMessage)
+		guard case .publicMessage(var message) = out.commit else {
+			Issue.record("expected a publicMessage-framed commit")
+			return
+		}
 		message.auth.confirmationTag = MLS.ConfirmationTag(
 			Data(repeating: 0xCD, count: 32))
 
