@@ -58,7 +58,7 @@ extension MLS.TreeKEM.RatchetTree {
 				publicKey: parentNode.encryptionKey, parentHash: hash,
 				originalSiblingTreeHash: siblingHash, provider)
 			parentNode.parentHash = hash
-			setParent(step.path, to: parentNode)
+			try setParent(step.path, to: parentNode)
 			hash = calculated
 		}
 		return hash

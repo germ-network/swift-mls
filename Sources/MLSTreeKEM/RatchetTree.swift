@@ -20,28 +20,17 @@ extension MLS.TreeKEM {
 		/// always agree with `nodes.count` and mutation never invalidates
 		/// that relationship on its own.
 		public var leafCount: MLS.LeafCount {
-			// **This can trap, and the caller's contract is what stops
-			// it.** An earlier version of this comment claimed otherwise --
-			// that every grower only reaches tree-math-derived indices, so
-			// the array could never exceed what `paddedLeafCount` accepts.
-			// That was false. `setLeaf`/`setParent` are public and
-			// unconditional by design, and `LeafIndex` is bounded only by
-			// its own 2^24 ceiling, never against the tree it indexes. A
-			// `setLeaf` at leaf 2^23 pads `nodes` toward 2^25 entries and
-			// the next `leafCount` read traps here -- reproduced directly,
-			// not argued.
-			//
-			// The invariant is therefore a *precondition on callers*: an
-			// index handed to `setLeaf`/`setParent` must already have been
-			// bounded against this tree. `MLS.RFC9420.CommitProcessing`
-			// carries that obligation for both wire-supplied indices it
-			// applies (`updateFromNonMember`, `removeOfNonMember`).
-			//
-			// Making it structural instead -- bounding growth inside
-			// `setNode` and turning the setters throwing -- is tracked as a
-			// follow-up.
-			// It changes signatures across this module, so it is not
-			// bolted on here.
+			// Cannot throw, and this time the claim is enforced rather
+			// than asserted: `setNode` refuses any growth beyond the
+			// current padded `nodeCount` except the single legal doubling
+			// step, and `insertLeaf` throws `treeFull` at the ceiling --
+			// so `nodes.count` can never reach a length `paddedLeafCount`
+			// rejects. (An earlier version of this comment made the same
+			// "never throws" claim while the setters were unconditional;
+			// that was false and reproduced as a process abort. The
+			// difference now is that the invariant lives in the one
+			// mutation func every setter funnels through, not in a
+			// comment about its callers.)
 			try! MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)
 		}
 
@@ -73,18 +62,35 @@ extension MLS.TreeKEM {
 			return nodes[i]
 		}
 
-		mutating func setNode(at index: UInt32, to value: TreeNode?) {
+		/// The one growth path. Every legal grow is one of exactly two
+		/// shapes: filling in an index inside the current padded
+		/// `nodeCount` that trailing-blank trimming left physically absent
+		/// (`applyUpdatePath` does this routinely — a direct-path ancestor
+		/// can sit past where blanks were trimmed), or the single doubling
+		/// step `insertLeaf` performs at index `2 * leafCount` when the
+		/// tree is full (mirrors mls-rs `NodeVec::insert_leaf`). Anything
+		/// else — in particular a wire-supplied index bounded only by
+		/// `LeafIndex`'s own 2^24 ceiling and not by *this* tree — used to
+		/// pad the array unboundedly and then abort the process on
+		/// `leafCount`'s `try!`; now it throws.
+		mutating func setNode(at index: UInt32, to value: TreeNode?) throws {
+			let limit = MLS.TreeMath.nodeCount(leafCount: leafCount)
+			guard index < limit || index == 2 * leafCount.value else {
+				throw MLS.TreeKEM.TreeError.nodeIndexOutOfBounds(
+					index: index, nodeCount: limit)
+			}
+			setNodeUnchecked(at: index, to: value)
+		}
+
+		/// Skips the bounds check. Only for indices this module's own
+		/// tree-math derived against the current tree — never for a
+		/// decoded or caller-supplied index, which must go through
+		/// `setNode`'s guard.
+		private mutating func setNodeUnchecked(at index: UInt32, to value: TreeNode?) {
 			if let i = Int(exactly: index), i < nodes.count {
 				nodes[i] = value
 				return
 			}
-			// Growing past the current array happens through `insertLeaf`
-			// (mirrors mls-rs `NodeVec::insert_leaf`, growing exactly as
-			// far as needed) and through `setParent`/`setLeaf` on an index
-			// past a trimmed tree's current physical length —
-			// `applyUpdatePath` does the latter routinely, since a
-			// direct-path ancestor can legitimately sit past where trailing
-			// blanks were trimmed away.
 			while UInt32(nodes.count) < index { nodes.append(nil) }
 			nodes.append(value)
 		}
@@ -101,12 +107,15 @@ extension MLS.TreeKEM {
 
 		public func isBlank(at nodeIndex: UInt32) -> Bool { node(at: nodeIndex) == nil }
 
-		public mutating func setLeaf(_ index: MLS.LeafIndex, to record: LeafRecord?) {
-			setNode(at: 2 * index.value, to: record.map(TreeNode.leaf))
+		public mutating func setLeaf(_ index: MLS.LeafIndex, to record: LeafRecord?) throws
+		{
+			try setNode(at: 2 * index.value, to: record.map(TreeNode.leaf))
 		}
 
-		public mutating func setParent(_ nodeIndex: UInt32, to parentNode: ParentNode?) {
-			setNode(at: nodeIndex, to: parentNode.map(TreeNode.parent))
+		public mutating func setParent(_ nodeIndex: UInt32, to parentNode: ParentNode?)
+			throws
+		{
+			try setNode(at: nodeIndex, to: parentNode.map(TreeNode.parent))
 		}
 
 		/// Every non-blank leaf, in ascending index order.
@@ -139,7 +148,7 @@ extension MLS.TreeKEM {
 			for step in MLS.TreeMath.directPath(
 				from: 2 * index.value, leafCount: leafCount)
 			{
-				setNode(at: step.path, to: nil)
+				setNodeUnchecked(at: step.path, to: nil)
 			}
 		}
 
@@ -147,7 +156,7 @@ extension MLS.TreeKEM {
 		/// does: the member is gone, so both the leaf and the ancestor
 		/// chain (which nobody can re-derive without them) go blank.
 		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) {
-			setLeaf(index, to: nil)
+			setNodeUnchecked(at: 2 * index.value, to: nil)
 			blankDirectPath(of: index)
 		}
 
@@ -175,13 +184,19 @@ extension MLS.TreeKEM {
 		/// inserted leaf's own node index requires).
 		public mutating func insertLeaf(
 			_ record: LeafRecord, hint: MLS.LeafIndex = MLS.LeafIndex(value: 0)
-		) -> MLS.LeafIndex {
+		) throws -> MLS.LeafIndex {
 			if let blank = leftmostBlankLeaf(atOrAfter: hint) {
-				setLeaf(blank, to: record)
+				setNodeUnchecked(at: 2 * blank.value, to: .leaf(record))
 				return blank
 			}
+			// The doubling step. Guarded here rather than in `setNode`
+			// because only growth can breach the ceiling -- filling a
+			// blank in an existing tree cannot.
 			let newIndex = MLS.LeafIndex(value: leafCount.value)
-			setNode(at: 2 * newIndex.value, to: .leaf(record))
+			guard newIndex.value < MLS.LeafIndex.ceiling / 2 else {
+				throw MLS.TreeKEM.TreeError.treeFull
+			}
+			setNodeUnchecked(at: 2 * newIndex.value, to: .leaf(record))
 			return newIndex
 		}
 
@@ -206,7 +221,7 @@ extension MLS.TreeKEM {
 			}
 			parentNode.unmergedLeaves.insert(
 				leafIndex, at: position ?? parentNode.unmergedLeaves.count)
-			setParent(nodeIndex, to: parentNode)
+			try setParent(nodeIndex, to: parentNode)
 		}
 
 		/// Every non-blank slot's node kind (leaf vs. parent) must match

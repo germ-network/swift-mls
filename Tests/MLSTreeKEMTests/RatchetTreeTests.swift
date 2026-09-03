@@ -43,9 +43,9 @@ struct RatchetTreeTests {
 		var tree = try MLS.TreeKEM.RatchetTree(nodes: [
 			.leaf(syntheticLeaf(1)), nil, .leaf(syntheticLeaf(2)),
 		])
-		tree.setParent(1, to: syntheticParent(9))
+		try tree.setParent(1, to: syntheticParent(9))
 		#expect(tree.parent(at: 1) == syntheticParent(9))
-		tree.setParent(1, to: nil)
+		try tree.setParent(1, to: nil)
 		#expect(tree.parent(at: 1) == nil)
 	}
 
@@ -73,7 +73,7 @@ struct RatchetTreeTests {
 	func insertFillsBlankFirst() throws {
 		var tree = try MLS.TreeKEM.RatchetTree(
 			nodes: [.leaf(syntheticLeaf(1)), .parent(syntheticParent(9)), nil])
-		let index = tree.insertLeaf(syntheticLeaf(3))
+		let index = try tree.insertLeaf(syntheticLeaf(3))
 		#expect(index == MLS.LeafIndex(value: 1))
 		#expect(tree.leaf(at: .init(value: 1)) == syntheticLeaf(3))
 		#expect(tree.leafCount.value == 2)
@@ -87,7 +87,7 @@ struct RatchetTreeTests {
 				.leaf(syntheticLeaf(2)),
 			])
 		#expect(tree.leafCount.value == 2)
-		let index = tree.insertLeaf(syntheticLeaf(3))
+		let index = try tree.insertLeaf(syntheticLeaf(3))
 		#expect(index == MLS.LeafIndex(value: 2))
 		#expect(tree.leafCount.value == 4)
 		#expect(tree.leaf(at: .init(value: 2)) == syntheticLeaf(3))
@@ -219,5 +219,56 @@ struct ResolutionTests {
 		// Copath node 2 (blank leaf) resolves empty -> filtered = true.
 		// Copath node 5 (non-blank) resolves non-empty -> filtered = false.
 		#expect(try tree.filteredDirectPath(from: .init(value: 0)) == [true, false])
+	}
+}
+
+/// The structural growth bound: `setNode` refuses any index beyond the
+/// current padded tree except `insertLeaf`'s single doubling step. Before
+/// this, the exact call below padded the backing array toward 2^25 entries
+/// one nil at a time and then aborted the process on `leafCount`'s `try!`
+/// — reproduced, not argued. `.timeLimit` because the pre-fix failure mode
+/// at smaller indices is minutes of allocation, not a thrown error.
+@Suite("RatchetTree growth bounds")
+struct RatchetTreeGrowthTests {
+	private func leaf(_ byte: UInt8) -> MLS.TreeKEM.LeafRecord {
+		.init(
+			encryptionKey: MLS.HpkePublicKey(Data([byte])), parentHash: nil,
+			encoded: Data([byte]))
+	}
+
+	@Test(
+		"an index beyond the padded tree throws instead of allocating toward an abort",
+		.timeLimit(.minutes(1)),
+		arguments: [UInt32(1) << 20, UInt32(1) << 23])
+	func outOfBoundsThrows(_ index: UInt32) throws {
+		var tree = MLS.TreeKEM.RatchetTree(singleLeaf: leaf(1))
+		#expect(
+			throws: MLS.TreeKEM.TreeError.nodeIndexOutOfBounds(
+				index: 2 * index, nodeCount: 1)
+		) {
+			try tree.setLeaf(MLS.LeafIndex(value: index), to: nil)
+		}
+		// And the tree is untouched -- no partial growth happened.
+		#expect(tree.physicalNodeCount == 1)
+	}
+
+	@Test("the doubling step still works: a full tree grows by exactly one leaf pair")
+	func doublingStepStillGrows() throws {
+		var tree = MLS.TreeKEM.RatchetTree(singleLeaf: leaf(1))
+		let index = try tree.insertLeaf(leaf(2))
+		#expect(index.value == 1)
+		#expect(tree.leafCount.value == 2)
+	}
+
+	@Test("filling a trimmed-away slot inside the padded tree still works")
+	func trimmedFillStillWorks() throws {
+		// Physical length 3 (leafCount 2); parent slot 1 exists, leaf
+		// slot 2 exists. Padded nodeCount is 3 -- setting index 2 fills
+		// within it even though a trimmed array might not carry it.
+		var tree = try MLS.TreeKEM.RatchetTree(nodes: [.leaf(leaf(1)), nil])
+		#expect(tree.physicalNodeCount == 2)
+		try tree.setLeaf(MLS.LeafIndex(value: 1), to: leaf(2))
+		#expect(tree.leafCount.value == 2)
+		#expect(tree.physicalNodeCount == 3)
 	}
 }

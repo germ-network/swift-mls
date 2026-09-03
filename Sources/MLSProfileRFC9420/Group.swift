@@ -96,14 +96,39 @@ extension MLS.RFC9420.Group {
 	/// not.
 	static func validateLeaves(
 		_ tree: MLS.TreeKEM.RatchetTree, groupID: Data,
+		groupExtensions: [MLS.RFC9420.Extension],
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
-		var seenSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		let groupRequirements = try groupExtensions.requiredCapabilities()
+
+		// Decode every leaf once; the mutual-credential-support check is
+		// pairwise over the whole membership, so the collections must be
+		// complete before any leaf is judged.
+		var leaves: [(MLS.LeafIndex, MLS.RFC9420.LeafNode)] = []
+		var memberCapabilities: [MLS.RFC9420.Capabilities] = []
+		var memberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
 		for (leafIndex, record) in tree.nonBlankLeaves() {
 			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			leaves.append((leafIndex, leafNode))
+			memberCapabilities.append(leafNode.capabilities)
+			memberCredentialTypes.insert(leafNode.credential.credentialType)
+		}
+
+		var seenSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		for (leafIndex, leafNode) in leaves {
 			try leafNode.verifySignature(
 				provider,
 				placement: .inGroup(groupID: groupID, leafIndex: leafIndex))
+			// §7.3's policy half, ending the deferral phase 5 documented.
+			// `.treeWalk` because a joiner legitimately meets all three
+			// sources; no `currentTime` because the receive-side lifetime
+			// check is RECOMMENDED-not-mandatory and hundreds of official
+			// vector leaves are already expired.
+			try leafNode.validatePolicy(
+				.treeWalk,
+				groupRequirements: groupRequirements,
+				memberCredentialTypes: memberCredentialTypes,
+				memberCapabilities: memberCapabilities)
 			guard seenSignatureKeys.insert(leafNode.signatureKey).inserted else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}
@@ -197,7 +222,9 @@ extension MLS.RFC9420.Group {
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch
 		}
-		try validateLeaves(tree, groupID: groupInfo.groupContext.groupID, provider)
+		try validateLeaves(
+			tree, groupID: groupInfo.groupContext.groupID,
+			groupExtensions: groupInfo.groupContext.extensions, provider)
 
 		// bullet 7. RFC 9420 §10.1 pairs these two in one sentence --
 		// "Verify that the cipher suite and protocol version of the

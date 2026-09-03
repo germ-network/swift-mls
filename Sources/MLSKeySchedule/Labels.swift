@@ -14,7 +14,7 @@ extension MLS.KeySchedule {
 	/// (`uint8 psktype ++ select(psktype){...} ++ opaque psk_nonce<V>`) is
 	/// a real wire type with two shapes — external and resumption — and
 	/// this component has "no wire types" as an explicit design goal (see
-	/// `germ-swift-mls/docs/plan.md`). An earlier version of this function
+	/// the project plan). An earlier version of this function
 	/// built `PreSharedKeyID` inline with `psktype` fixed to external,
 	/// which meant this component could not compute a correct PSK secret
 	/// for a resumption PSK at all — caught once `MLSProfileRFC9420`

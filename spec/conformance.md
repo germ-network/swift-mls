@@ -118,37 +118,46 @@ The official suite contains no malformed input. Every rejection path in this
 codebase is therefore pinned by tests written here, and an adversarial review
 during phase 5b demonstrated the cost of assuming otherwise: **both**
 `checkUpdatePathKeysAreFresh` and the path-required check were deleted, and all
-330 commit epochs still passed (130 from
-`passive-client-handling-commit.json`, 200 from `passive-client-random.json`).
+382 commit epochs still passed (91 records x 2 epochs from
+`passive-client-handling-commit.json`, 200 from `passive-client-random.json` —
+an earlier revision of this document said 330, itself a counting error).
 
 Two consequences worth stating plainly.
 
 **Rejection coverage is partial, and only partly bounded by a signing oracle.**
-`Group.processing` can throw **16** distinct `GroupError` cases. It verifies the
-commit's framing signature at step 5, so a test that *mutates* a commit can only
-reach checks running before that point — but mutation is not the only route, and
-reasoning as though it were is what made the first draft of this section
-undercount.
+Counted from source (not reasoned — an earlier draft of this section
+undercounted twice by assuming commit *mutation* was the only route to a
+check): the commit-processing path, including phase 6a's §12.1/§12.2
+validation pass, can throw **35** distinct `GroupError` cases plus signature
+failures (`cipherSuiteMismatch` and `protocolVersionMismatch`, previously
+join-only, are now also commit-path — Add validation reuses them for §10.1's
+match-the-GroupContext bullet).
 
-**Eight are covered.** Five by mutation (`wrongEpoch`, `wrongGroup`,
-`notACommit`, `unsupportedSender`, `blankSenderLeaf`) and three by *supplying or
-withholding caller state*, which disturbs no signature at all because
-`processing` takes the `ProposalStore` and the PSK resolver on trust:
-`unknownProposalReference`, `unresolvedPreSharedKey`, and `updateFromNonMember`.
+**All thirty-five are now covered** — phase 6b's `create` supplied the
+committer signing key that the six oracle-bound rejections had waited on
+since 5b. The breakdown: five by commit mutation; three by withholding
+caller state; ten by supplying crafted `ProposalStore` state; five §7.3
+policy cases as direct units; two on the join path (`cipherSuiteMismatch`,
+`protocolVersionMismatch`); and — new in 6b — eight by *constructed*
+commits, validly signed and membership-tagged by a real member and
+malformed in exactly one way (`pathRequired`, `unsupportedReInit`,
+`removeOfNonMember`, `updatePathLeafNotCommitSource`,
+`updatePathReusesEncryptionKey`, `removedFromGroup` via the self-interop
+backbone, and the two former holes: `confirmationTagMismatch` — a wrong
+tag with an honestly recomputed membership tag, which is the
+malicious-member adversary, since a network attacker's tag rewrite dies at
+the membership MAC instead — and `unsupportedResumptionUsage`).
 
-**Six need a commit that is both malformed and validly signed by the
-committer** — `pathRequired`, `removeOfNonMember`,
-`updatePathLeafNotCommitSource`, `updatePathReusesEncryptionKey` (thrown at two
-sites: the committer's own previous leaf key, and the UpdatePath key-freshness
-sweep), `removedFromGroup`, and `unsupportedReInit`. The vectors supply the
-joiner's secrets, never a committer's signing key, so no test here can construct
-one. Those rest on reading, and `CommitRejectionTests` records the limit in its
-own header.
-
-**Two are real holes rather than inherent limits**, since neither needs a
-committer secret: `confirmationTagMismatch` (a wrong tag can simply be written
-in) and `unsupportedResumptionUsage` (reachable by the same store-supplied route
-as `updateFromNonMember`). Both should be covered; neither currently is.
+The self-interop gate is the other thing 6b adds to this document's
+evidence: constructed commits and Welcomes are processed by the
+vector-proven receive path across five epochs (full, pathless, PSK, and
+remove commits), with cross-member convergence asserted on the group
+context, the tree, both transcript hashes, the epoch authenticator, and
+every jointly-held private key. Construction and processing share the
+§12.3 application code (`applyProposals`) by design, so "the two sides
+agree" is partly structural — the mutation tests are what prove the parts
+that are not (transcript binding in the provisional context, old-epoch
+membership keys, the GroupSecrets-to-encrypted-GroupInfo binding).
 
 The store-supplied route is worth naming on its own, because it is where the
 one real defect this audit found lived. `processing` reads a by-reference

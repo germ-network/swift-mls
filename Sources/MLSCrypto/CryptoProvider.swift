@@ -97,3 +97,20 @@ extension MLS.CipherSuiteProvider {
 		try kdfExtract(salt: key, ikm: data)
 	}
 }
+
+extension MLS.CipherSuiteProvider {
+	/// Fresh random bytes from the platform CSPRNG. A provider-surface
+	/// convenience (default implementation, overridable) so construction
+	/// code has one randomness seam — the same reasoning that keeps
+	/// `beginCommitPath` deterministic by taking its seed as a parameter:
+	/// callers own randomness, and tests substitute fixed bytes at the
+	/// call sites, not by faking this.
+	public func randomBytes(_ count: Int) -> Data {
+		var generator = SystemRandomNumberGenerator()
+		var bytes = Data(capacity: count)
+		for _ in 0..<count {
+			bytes.append(UInt8.random(in: .min ... .max, using: &generator))
+		}
+		return bytes
+	}
+}

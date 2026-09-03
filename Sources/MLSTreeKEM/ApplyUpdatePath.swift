@@ -37,11 +37,11 @@ extension MLS.TreeKEM.RatchetTree {
 				expected: expectedCount, actual: pathNodes.count)
 		}
 
-		setLeaf(sender, to: leaf)
+		try setLeaf(sender, to: leaf)
 
 		var pathIndex = 0
 		for (step, isFiltered) in zip(path, filtered) where !isFiltered {
-			setParent(
+			try setParent(
 				step.path,
 				to: .init(
 					encryptionKey: pathNodes[pathIndex].encryptionKey,

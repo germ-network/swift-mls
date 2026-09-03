@@ -43,6 +43,27 @@ extension MLS.RFC9420 {
 		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
 		membershipKey: Data
 	) throws -> PublicMessage {
+		let (signedContent, signature) = try signPublic(
+			provider, content: content, groupContext: groupContext,
+			signingKey: signingKey)
+		return try sealPublic(
+			provider, content: content, signedContent: signedContent,
+			signature: signature, confirmationTag: confirmationTag,
+			membershipKey: membershipKey)
+	}
+
+	/// The signing half of `protectPublic`, split out because commit
+	/// construction cannot use the whole: RFC 9420 §12.4.1's confirmation
+	/// tag is computed over a transcript hash that *includes this
+	/// signature*, so the tag does not exist yet when the signature is
+	/// made — and signing twice is not an option, since ECDSA signatures
+	/// are randomized on three of the five supported suites. A committer
+	/// signs here, chains the transcript, derives the new epoch and its
+	/// tag, then seals with `sealPublic`.
+	public static func signPublic(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
 		if case .application = content.content {
 			throw MLS.FramingError.applicationContentMustNotBePublic
 		}
@@ -56,6 +77,15 @@ extension MLS.RFC9420 {
 			try MLS.signWithLabel(
 				provider, privateKey: signingKey, label: "FramedContentTBS",
 				content: try signedContent.toBeSigned()))
+		return (signedContent, signature)
+	}
+
+	/// The tagging half — see `signPublic`.
+	public static func sealPublic(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		signedContent: MLS.Framing.SignedContent, signature: MLS.Signature,
+		confirmationTag: MLS.ConfirmationTag?, membershipKey: Data
+	) throws -> PublicMessage {
 		let auth = MLS.FramedContentAuthData(
 			signature: signature, confirmationTag: confirmationTag)
 

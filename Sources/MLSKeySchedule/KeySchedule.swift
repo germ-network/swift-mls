@@ -74,7 +74,51 @@ extension MLS {
 			let epochSecret = try expandWithLabel(
 				provider, secret: epochSeed, label: "epoch", context: groupContext,
 				length: provider.hashSize)
+			let fanOut = try fromEpochSecret(provider, epochSecret: epochSecret)
 
+			return Epoch(
+				joinerSecret: joinerSecret,
+				welcomeSecret: welcomeSecret,
+				initSecret: fanOut.initSecret,
+				senderDataSecret: fanOut.senderDataSecret,
+				encryptionSecret: fanOut.encryptionSecret,
+				exporterSecret: fanOut.exporterSecret,
+				epochAuthenticator: fanOut.epochAuthenticator,
+				externalSecret: fanOut.externalSecret,
+				externalPublicKey: fanOut.externalPublicKey,
+				confirmationKey: fanOut.confirmationKey,
+				membershipKey: fanOut.membershipKey,
+				resumptionPsk: fanOut.resumptionPsk
+			)
+		}
+
+		/// RFC 9420 §11's epoch-0 fan-out: at group creation "Epoch
+		/// secret: A fresh random value of size KDF.Nh" — the epoch secret
+		/// itself is the random value, so `joiner_secret` and
+		/// `welcome_secret`, its *siblings* in the derivation (not its
+		/// children), do not exist for that epoch. This type omits them by
+		/// construction rather than fabricating values with no protocol
+		/// meaning — which is also why creation does not simply call
+		/// `advance` with a random init secret, though that would be
+		/// observationally indistinguishable from outside.
+		public struct EpochFanOut: Sendable {
+			public let initSecret: Data
+			public let senderDataSecret: Data
+			public let encryptionSecret: Data
+			public let exporterSecret: Data
+			public let epochAuthenticator: Data
+			public let externalSecret: Data
+			public let externalPublicKey: HpkePublicKey
+			public let confirmationKey: Data
+			public let membershipKey: Data
+			public let resumptionPsk: Data
+		}
+
+		/// The fan-out from a raw `epoch_secret` — the half below
+		/// `fromJoinerSecret`, which wraps this.
+		public static func fromEpochSecret(
+			_ provider: any CipherSuiteProvider, epochSecret: Data
+		) throws -> EpochFanOut {
 			func derive(_ label: String) throws -> Data {
 				try deriveSecret(provider, secret: epochSecret, label: label)
 			}
@@ -83,9 +127,7 @@ extension MLS {
 			let (_, externalPublicKey) = try provider.hpkeDeriveKeyPair(
 				ikm: externalSecret)
 
-			return try Epoch(
-				joinerSecret: joinerSecret,
-				welcomeSecret: welcomeSecret,
+			return try EpochFanOut(
 				initSecret: derive("init"),
 				senderDataSecret: derive("sender data"),
 				encryptionSecret: derive("encryption"),
@@ -179,6 +221,6 @@ extension MLS {
 		// of the epoch fan-out; deriving a *per-message* key/nonce from it
 		// is framing's job, not the key schedule's. It lived here only
 		// because MLSFraming didn't exist yet when phase 2 needed it
-		// tested. See germ-swift-mls/docs/status.md's "Phase 3" section.
+		// tested.
 	}
 }

@@ -49,7 +49,7 @@ struct UpdatePathTests {
 		// round trip is this test's concern.
 		let (senderSecretKey, senderPublicKey) = try provider.hpkeGenerateKeyPair()
 		leafKeys[sender] = (senderSecretKey, senderPublicKey)
-		tree.setLeaf(
+		try tree.setLeaf(
 			sender,
 			to: .init(
 				encryptionKey: senderPublicKey, parentHash: stage.leafParentHash,
@@ -105,7 +105,7 @@ struct UpdatePathTests {
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
 		let (_, senderPublicKey) = try provider.hpkeGenerateKeyPair()
-		tree.setLeaf(
+		try tree.setLeaf(
 			sender,
 			to: .init(
 				encryptionKey: senderPublicKey, parentHash: stage.leafParentHash,
@@ -157,7 +157,7 @@ struct UpdatePathTests {
 		let newLeaf = MLS.TreeKEM.LeafRecord(
 			encryptionKey: senderPublicKey, parentHash: stage.leafParentHash,
 			encoded: Data([0xFE]))
-		committerTree.setLeaf(sender, to: newLeaf)
+		try committerTree.setLeaf(sender, to: newLeaf)
 
 		let groupContext = try committerTree.treeHash(provider)
 		let (pathNodes, _) = try committerTree.finishCommitPath(

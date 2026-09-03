@@ -53,6 +53,17 @@ extension MLS.RFC9420.Group {
 		public let epochAuthenticator: Data
 		public let membershipKey: Data
 
+		/// The §11 creation path: an epoch-0 fan-out has no joiner or
+		/// welcome secret to drop in the first place.
+		init(retaining fanOut: MLS.KeySchedule.EpochFanOut) {
+			self.initSecret = fanOut.initSecret
+			self.senderDataSecret = fanOut.senderDataSecret
+			self.encryptionSecret = fanOut.encryptionSecret
+			self.exporterSecret = fanOut.exporterSecret
+			self.epochAuthenticator = fanOut.epochAuthenticator
+			self.membershipKey = fanOut.membershipKey
+		}
+
 		init(retaining epoch: MLS.KeySchedule.Epoch) {
 			self.initSecret = epoch.initSecret
 			self.senderDataSecret = epoch.senderDataSecret

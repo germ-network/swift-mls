@@ -21,7 +21,7 @@ extension MLS.RFC9420 {
 	/// forward compatibility by treating anything past `basic`/`x509` as
 	/// `opaque<V>` (`mls-rs-core/src/identity/credential.rs:206-212`); this
 	/// type follows the same convention, and applies it to `x509` too
-	/// (deferred — see `germ-swift-mls/docs/plan.md`'s credential section
+	/// (deferred project-wide
 	/// — so its `certificates<V>` body is carried as opaque bytes for
 	/// round-trip purposes, not parsed).
 	public enum Credential: Sendable, Equatable {

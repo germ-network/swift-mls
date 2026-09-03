@@ -52,6 +52,25 @@ extension MLS.TreeKEM {
 		/// the `LeafNode` being signed (encap step 3) before computing the
 		/// tree hash for `GroupContext` (step 4).
 		public let leafParentHash: Data
+
+		/// The path secret at node index `node`, or nil if `node` is not
+		/// an unfiltered direct-path position of this stage. The one
+		/// deliberate window into the otherwise-opaque stage: RFC 9420
+		/// §12.4.3.1 makes the committer send *the path secret at the
+		/// least common ancestor* to each newly added member inside
+		/// `GroupSecrets`, and nothing else can recover it — a node
+		/// secret key is one-way from its path secret, and the derivation
+		/// chain is this component's own.
+		public func pathSecret(atNode node: UInt32) -> Data? {
+			var unfilteredIndex = 0
+			for (step, isFiltered) in zip(path, filtered) where !isFiltered {
+				if step.path == node {
+					return unfilteredPathSecrets[unfilteredIndex]
+				}
+				unfilteredIndex += 1
+			}
+			return nil
+		}
 	}
 }
 
@@ -88,7 +107,7 @@ extension MLS.TreeKEM.RatchetTree {
 			let (secretKey, publicKey) = try MLS.TreeKEM.nodeKeyPair(
 				provider, pathSecret: secret)
 			secretKeys.append(secretKey)
-			setParent(
+			try setParent(
 				step.path,
 				to: .init(
 					encryptionKey: publicKey, parentHash: Data(),
