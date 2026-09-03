@@ -12,13 +12,55 @@ RFC 9420 is implemented here as a **profile** — the conformance reference and
 the interop target — rather than as a core with extension points. Other
 profiles sit beside it, not beneath it.
 
+## Motivation
+
+There are mature implementations of MLS already in peer languages to Swift —
+why this one?
+
+First, to enable full access to MLS capabilities for a Swift adopter without
+the flattening of API expressiveness through an FFI layer.
+
+There are two additional goals that come out of our experience with shipping
+MLS.
+
+**Reusable Components**
+The [MLS WG](https://datatracker.ietf.org/wg/mls/about/) continues to
+spawn new drafts and extensions as adoption continues and features grow.
+We've found it cumbersome to implement behaviors that diverge from RFC
+9420 either inline, or as a permanently maintained fork.
+
+Motivated by our work with
+[oauth4swift](https://github.com/germ-network/oauth4swift), we want to explore
+modular code reuse for many profiles. That library, in the pattern of the
+mature [oauth4web](https://github.com/panva/oauth4webapi), exposes reusable
+building blocks from which adopters can construct particular varieties of
+OAuth clients. Similarly, we want to extract the modular building blocks of
+MLS, so that we can more easily, expressively, and clearly define draft
+behavior (or combinatorics of draft behavior[^combinatorics]) without
+impacting the core RFC 9420 implementation. That core spec is one core
+profile, which this repo builds out of those components.
+
+**State Machine Persistence**
+We've found it helpful to model MLS as a state machine, so that the outcome of
+processing a message — both the decrypted message and the mutation of the
+epoch state(s) — is returned to the application to save atomically.
+
 ## Status
 
-Early. `MLSCodec` is the only target that exists.
+The component libraries — `MLSCodec`, `MLSCrypto`, `MLSTreeMath`,
+`MLSKeySchedule`, `MLSFraming`, `MLSTreeKEM` — and the `MLSProfileRFC9420`
+profile built on them are implemented.
 
 | profile | status |
 |---|---|
-| `MLS.RFC9420` | in progress |
+| `MLS.RFC9420` | **conformant** — core group lifecycle |
+
+`MLS.RFC9420` is verified against the official RFC 9420 test vectors and runs
+against mls-rs under the mlswg interop harness, agreeing in both directions on
+every feature both stacks implement. The qualifier is load-bearing: ReInit,
+branching, external join/commit, and external senders are deferred and refused
+explicitly, and persistence is not yet in the claim. See
+[`spec/conformance.md`](spec/conformance.md) for the per-vector accounting.
 
 Profiles that are not RFC 9420 will each carry their own maturity note. A
 profile that changes what a signature covers is **experimental until its
@@ -39,3 +81,5 @@ machinery and the wire format; the decisions belong to whatever is built on top.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+[^combinatorics]: Rohan Mahy, "Rohan's Draft," IETF 124 MLS working group, slide 22: <https://datatracker.ietf.org/meeting/124/materials/slides-124-mls-rohans-draft-00>
