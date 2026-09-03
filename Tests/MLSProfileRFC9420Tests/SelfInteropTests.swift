@@ -106,7 +106,8 @@ struct SelfInteropTests {
 		_ location: SourceLocation = #_sourceLocation
 	) throws {
 		guard case .privateMessage(let privateCommit) = commit else {
-			Issue.record("expected a privateMessage-framed commit", sourceLocation: location)
+			Issue.record(
+				"expected a privateMessage-framed commit", sourceLocation: location)
 			return
 		}
 		try group.process(

@@ -430,7 +430,8 @@ extension MLS.RFC9420.Group {
 		let message = try MLS.RFC9420.sealPrivate(
 			provider, keySource: OneShotKey(key: key, nonce: nonce),
 			content: framed, signature: signature, generation: generation,
-			confirmationTag: confirmationTag, senderDataSecret: secrets.senderDataSecret,
+			confirmationTag: confirmationTag,
+			senderDataSecret: secrets.senderDataSecret,
 			reuseGuard: reuseGuard, paddingLength: paddingLength)
 
 		secrets = messageSecrets[oldEpoch]!

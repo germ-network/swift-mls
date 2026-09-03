@@ -477,7 +477,8 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.notACommit
 		}
 		self = try processing(
-			provider, authenticatedContent: authenticated, proposals: proposals, psk: psk)
+			provider, authenticatedContent: authenticated, proposals: proposals,
+			psk: psk)
 	}
 
 	/// What `applyProposals` hands back: the provisional tree plus the two
