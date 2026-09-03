@@ -27,7 +27,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// blank leaf is never walked at all, so any entry naming one is never
 	/// consumed and fails the final check).
 	public func validateUnmergedLeaves() throws {
-		for i in stride(from: UInt32(1), to: physicalNodeCount, by: 2) {
+		for i in stride(from: UInt32(1), to: serializedNodeCount, by: 2) {
 			guard let p = parent(at: i) else { continue }
 			guard
 				zip(p.unmergedLeaves, p.unmergedLeaves.dropFirst())
@@ -38,7 +38,7 @@ extension MLS.TreeKEM.RatchetTree {
 		}
 
 		var remaining: [UInt32: Set<MLS.LeafIndex>] = [:]
-		for i in stride(from: UInt32(1), to: physicalNodeCount, by: 2) {
+		for i in stride(from: UInt32(1), to: serializedNodeCount, by: 2) {
 			guard let p = parent(at: i), !p.unmergedLeaves.isEmpty else { continue }
 			remaining[i] = Set(p.unmergedLeaves)
 		}
@@ -80,7 +80,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// share a path secret's key material.
 	public func validateNoDuplicateEncryptionKeys() throws {
 		var seen: Set<MLS.HpkePublicKey> = []
-		for i in 0..<physicalNodeCount {
+		for i in 0..<serializedNodeCount {
 			let key: MLS.HpkePublicKey?
 			switch node(at: i) {
 			case .leaf(let record): key = record.encryptionKey

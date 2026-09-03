@@ -102,14 +102,6 @@ extension MLS {
 			}
 			return result
 		}
-
-		/// Superseded by `MLS.LeafCount.init(nodeArrayCount:)`, which
-		/// returns the validated type rather than a raw `UInt32` a caller
-		/// could then pass anywhere. Kept as a thin forwarder because it is
-		/// the name the tree-decode path already reads well with.
-		public static func paddedLeafCount(nodeArrayCount: Int) throws -> MLS.LeafCount {
-			try MLS.LeafCount(nodeArrayCount: nodeArrayCount)
-		}
 	}
 }
 

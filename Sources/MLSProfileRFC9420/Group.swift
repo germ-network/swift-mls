@@ -210,6 +210,7 @@ extension MLS.RFC9420.Group {
 		} else {
 			throw MLS.RFC9420.GroupError.missingRatchetTree
 		}
+		try MLS.RFC9420.validateNoTrailingBlank(nodes)
 		let tree = try MLS.TreeKEM.RatchetTree(nodes)
 
 		// bullet 8 (tree-integrity sub-bullets, plus every non-blank
@@ -220,7 +221,6 @@ extension MLS.RFC9420.Group {
 		// judgement needs a clock,
 		// which aren't this function's job to adjudicate.
 		try tree.validateNodeKinds()
-		try tree.validateNoTrailingBlank()
 		try tree.validateParentHashChain(provider)
 		try tree.validateUnmergedLeaves()
 		try tree.validateNoDuplicateEncryptionKeys()

@@ -31,10 +31,9 @@ extension MLS {
 
 		/// Derives the height of a power-of-two leaf count, rejecting any
 		/// input that is not one — zero included, since an MLS tree is never
-		/// empty — or that reaches `LeafIndex.ceiling`. The ceiling check is
-		/// not decoration: `RatchetTree.leafCount` computes its value with
-		/// `try!`, made safe by `setNode`'s bounds guard and
-		/// `insertLeaf`'s `treeFull` check.
+		/// empty — or that reaches `LeafIndex.ceiling`, the maximum tree
+		/// size (which `RatchetTree`'s own growth guard enforces too, via
+		/// `doubled()` returning `nil`).
 		public init(validating value: UInt32) throws {
 			guard value.nonzeroBitCount == 1, value < MLS.LeafIndex.ceiling else {
 				throw MLS.TreeMathError.invalidLeafCount(value)
@@ -93,6 +92,35 @@ extension MLS {
 			guard x > 1 else { return 1 }
 			guard x <= 1 << 31 else { return .max }
 			return UInt32(1) << (UInt32.bitWidth - (x - 1).leadingZeroBitCount)
+		}
+
+		/// Skips validation. Sound because a height is inherently a valid
+		/// power-of-two leaf count — unlike the removed value-based
+		/// `unchecked`, no input can be malformed. Only for a height this
+		/// type's own arithmetic (`doubled`/`halved`) produced, capped at
+		/// `maxHeight`.
+		private init(height: UInt8) { self.height = height }
+
+		/// A single-leaf tree — the smallest, and the one every group starts
+		/// from. Non-throwing, unlike `init(validating: 1)`.
+		public static let single = LeafCount(height: 0)
+
+		/// The tallest tree `LeafCount` can name: `1 << maxHeight` is the
+		/// largest power of two below `LeafIndex.ceiling`.
+		public static let maxHeight = UInt8(MLS.LeafIndex.ceiling.trailingZeroBitCount - 1)
+
+		/// One level taller (twice the leaves), or `nil` at the ceiling.
+		/// The `nil` reproduces `RatchetTree`'s growth guard exactly:
+		/// growth is legal iff the current size is `< 2^maxHeight`.
+		public func doubled() -> LeafCount? {
+			height < Self.maxHeight ? LeafCount(height: height + 1) : nil
+		}
+
+		/// One level shorter (half the leaves), or `nil` at a single leaf.
+		/// Drives `RatchetTree.truncate`'s §7.7 shrink with no throwing
+		/// derivation.
+		public func halved() -> LeafCount? {
+			height > 0 ? LeafCount(height: height - 1) : nil
 		}
 	}
 }

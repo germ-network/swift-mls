@@ -7,53 +7,59 @@ extension MLS.TreeKEM {
 	/// and whose internal nodes carry `ParentNode`s, either of which may be
 	/// blank (`nil`).
 	///
-	/// The backing array is not always `2 * leafCount - 1` long: RFC 9420
-	/// trims trailing blank slots before the tree is serialized (see
-	/// `MLS.TreeMath.paddedLeafCount`'s doc comment), so a shorter array is
-	/// normal, not malformed. Every accessor below treats an index beyond
-	/// the physical array as blank, exactly like a stored `nil`.
+	/// The tree owns its **dimension**: `leafCount` is stored, and `nodes` is
+	/// held at full width (`nodeCount` slots, `nil`-padded), so every in-tree
+	/// index is a real slot. Size changes in exactly two places — `init` and
+	/// the `insertLeaf`/`truncate` pair — never as a side effect of a set. The
+	/// wire format's trailing-blank trimming is *not* a storage concern here:
+	/// it is applied at encode time (`serializedNodeCount`) and undone at
+	/// decode (`init(nodes:)` pads), so the in-memory tree is always canonical
+	/// for its `leafCount`.
 	public struct RatchetTree: Sendable, Equatable {
-		private var nodes: [TreeNode?]
+		/// The tree's size, the single source of truth for its shape. Only
+		/// `init`, `insertLeaf`, and `truncate` change it, each in lockstep
+		/// with `nodes.count`.
+		public private(set) var leafCount: MLS.LeafCount
 
-		/// The padded leaf count implied by the current (possibly trimmed)
-		/// array length — recomputed on access, not cached, since it must
-		/// always agree with `nodes.count` and mutation never invalidates
-		/// that relationship on its own.
-		public var leafCount: MLS.LeafCount {
-			// Cannot throw, and this time the claim is enforced rather
-			// than asserted: `setNode` refuses any index beyond the
-			// current padded `nodeCount`, and the only growth path,
-			// `insertLeaf`, throws `treeFull` at the ceiling -- so
-			// `nodes.count` can never reach a length `paddedLeafCount`
-			// rejects. (An earlier version of this comment made the same
-			// "never throws" claim while the setters were unconditional;
-			// that was false and reproduced as a process abort. The
-			// difference now is that the invariant lives in the one
-			// mutation func every setter funnels through, not in a
-			// comment about its callers.)
-			try! MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)
-		}
+		/// Invariant: `nodes.count == nodeCount`. Interior blanks are stored
+		/// `nil`; there is no trimmed-or-overlong transient state.
+		private var nodes: [TreeNode?]
 
 		public var nodeCount: UInt32 { MLS.TreeMath.nodeCount(leafCount: leafCount) }
 
-		/// The backing array's actual current length — possibly less than
-		/// `nodeCount` (trailing blanks trimmed), possibly more (before a
-		/// caller has trimmed a just-edited tree). This is what a byte-exact
-		/// re-serialization must iterate, not the padded `nodeCount`.
-		public var physicalNodeCount: UInt32 { UInt32(nodes.count) }
+		/// The number of leading slots up to and including the last non-blank
+		/// one — what the wire form carries (RFC 9420 §12.4.3.3 forbids blank
+		/// nodes after the last non-blank), and a tight upper bound for any
+		/// sweep over the tree's content. Scans from the end, so it costs only
+		/// the trailing-blank run. A well-formed tree always has ≥ 1 non-blank
+		/// node, so this is ≥ 1.
+		public var serializedNodeCount: UInt32 {
+			guard let last = nodes.lastIndex(where: { $0 != nil }) else { return 0 }
+			return UInt32(last + 1)
+		}
 
-		/// Validates the array's length implies a valid padded leaf count
-		/// (throwing `MLS.TreeMathError.invalidLeafCount` otherwise) but
-		/// does not otherwise check the array's contents — node-kind/slot
-		/// parity, parent hashes, and every other content invariant are
-		/// `TreeValidation`'s job, run separately once a tree is fully
-		/// decoded.
-		public init(nodes: [TreeNode?]) throws {
-			_ = try MLS.TreeMath.paddedLeafCount(nodeArrayCount: nodes.count)
-			self.nodes = nodes
+		/// Decodes a wire node array. Its length determines `leafCount`
+		/// (`(count / 2 + 1)` rounded up — a shorter, trailing-trimmed array
+		/// resolves to the same size), after which the array is padded to full
+		/// width. A trailing blank would inflate `leafCount`; rejecting that is
+		/// the caller's decode-time job (see the profile's
+		/// `validateNoTrailingBlank(_:)`), kept separate so a decoder rejects
+		/// rather than silently normalizes.
+		public init(nodes wireNodes: [TreeNode?]) throws {
+			let leafCount = try MLS.LeafCount(nodeArrayCount: wireNodes.count)
+			let fullCount = Int(MLS.TreeMath.nodeCount(leafCount: leafCount))
+			var padded = wireNodes
+			if padded.count < fullCount {
+				padded.append(
+					contentsOf: repeatElement(
+						nil, count: fullCount - padded.count))
+			}
+			self.leafCount = leafCount
+			self.nodes = padded
 		}
 
 		public init(singleLeaf record: LeafRecord) {
+			self.leafCount = .single
 			self.nodes = [.leaf(record)]
 		}
 
@@ -62,41 +68,18 @@ extension MLS.TreeKEM {
 			return nodes[i]
 		}
 
-		/// The one checked growth path: filling in an index inside the
-		/// current padded `nodeCount` that trailing-blank trimming left
-		/// physically absent (`applyUpdatePath` does this routinely — a
-		/// direct-path ancestor can sit past where blanks were trimmed).
-		/// Anything beyond the padded tree — in particular a wire-supplied
-		/// index bounded only by `LeafIndex`'s own 2^24 ceiling and not by
-		/// *this* tree — used to pad the array unboundedly and then abort
-		/// the process on `leafCount`'s `try!`; now it throws. Growing the
-		/// tree itself is `insertLeaf`'s job alone, which carries the
-		/// ceiling guard and uses the unchecked path for the one index it
-		/// derives itself. (An earlier version of this guard admitted the
-		/// doubling index `2 * leafCount` as an exception for `insertLeaf`
-		/// — which had stopped calling it, leaving a public `setLeaf` able
-		/// to double the tree ceiling-unchecked, twenty-four calls from
-		/// the abort. The stage-5 review executed exactly that.)
+		/// The one mutation path: a bounds-checked assign into a slot that
+		/// always physically exists. It cannot resize the tree — that is what
+		/// makes the class of "a setter silently grew the tree and aborted 24
+		/// calls later" (twice reopened, twice caught by review, under the old
+		/// length-is-truth storage) unrepresentable rather than guarded. An
+		/// out-of-range index throws; growth is `insertLeaf`'s job alone.
 		mutating func setNode(at index: UInt32, to value: TreeNode?) throws {
-			let limit = MLS.TreeMath.nodeCount(leafCount: leafCount)
-			guard index < limit else {
+			guard index < nodeCount else {
 				throw MLS.TreeKEM.TreeError.nodeIndexOutOfBounds(
-					index: index, nodeCount: limit)
+					index: index, nodeCount: nodeCount)
 			}
-			setNodeUnchecked(at: index, to: value)
-		}
-
-		/// Skips the bounds check. Only for indices this module's own
-		/// tree-math derived against the current tree — never for a
-		/// decoded or caller-supplied index, which must go through
-		/// `setNode`'s guard.
-		private mutating func setNodeUnchecked(at index: UInt32, to value: TreeNode?) {
-			if let i = Int(exactly: index), i < nodes.count {
-				nodes[i] = value
-				return
-			}
-			while UInt32(nodes.count) < index { nodes.append(nil) }
-			nodes.append(value)
+			nodes[Int(index)] = value
 		}
 
 		public func leaf(at index: MLS.LeafIndex) -> LeafRecord? {
@@ -130,29 +113,37 @@ extension MLS.TreeKEM {
 			}
 		}
 
-		/// Remove nodes from the end of the array while the last one is
-		/// blank. RFC 9420 §12.4.3.3 requires the *serialized* form end
-		/// non-blank ("the sender MUST NOT include blank nodes after the
-		/// last non-blank node"); Remove additionally truncates trailing
-		/// all-blank subtrees as part of applying the proposal (§12.1.3).
-		/// Load-bearing for byte-exact re-serialization
-		/// (`tree-operations.json`'s `tree_after` check) — an untrimmed
-		/// tail would round-trip to different bytes than what a
-		/// well-formed peer sent.
-		public mutating func trim() {
-			while nodes.last == .some(nil) { nodes.removeLast() }
+		/// RFC 9420 §7.7 tree truncation: after a Remove empties the rightmost
+		/// subtree, shrink to the smallest power-of-two size that still holds
+		/// every non-blank node. Halve while the whole upper half (root + right
+		/// subtree) is blank. This is the `leafCount`-shrinking half of what
+		/// the old length-derived `trim()` did for free; it is semantically
+		/// load-bearing (a too-large `leafCount` gives a larger root and a
+		/// wrong tree hash, though the wire bytes still match), so it runs
+		/// after every applied proposal. The wire-byte trimming is separate —
+		/// `serializedNodeCount` at encode. Non-throwing, via `halved()`.
+		public mutating func truncate() {
+			while let smaller = leafCount.halved() {
+				let leftNodeCount = Int(MLS.TreeMath.nodeCount(leafCount: smaller))
+				guard nodes[leftNodeCount...].allSatisfy({ $0 == nil }) else {
+					break
+				}
+				nodes.removeSubrange(leftNodeCount...)
+				leafCount = smaller
+			}
 		}
 
 		/// Blanks every node on `index`'s direct path — the ancestor chain
 		/// only, never the sibling/copath nodes, and never `index`'s own
 		/// leaf slot. This is what Update blanks: the leaf itself gets the
 		/// *new* `LeafNode` installed instead of going blank, since Update
-		/// changes a member's content without removing them.
-		public mutating func blankDirectPath(of index: MLS.LeafIndex) {
+		/// changes a member's content without removing them. `throws` only
+		/// nominally: every direct-path index is in range by construction.
+		public mutating func blankDirectPath(of index: MLS.LeafIndex) throws {
 			for step in MLS.TreeMath.directPath(
 				from: 2 * index.value, leafCount: leafCount)
 			{
-				setNodeUnchecked(at: step.path, to: nil)
+				try setNode(at: step.path, to: nil)
 			}
 		}
 
@@ -160,14 +151,8 @@ extension MLS.TreeKEM {
 		/// does: the member is gone, so both the leaf and the ancestor
 		/// chain (which nobody can re-derive without them) go blank.
 		public mutating func blankLeafAndDirectPath(_ index: MLS.LeafIndex) throws {
-			// Checked: `index` is caller-supplied, exactly what
-			// `setNodeUnchecked`'s contract excludes -- routing it there
-			// re-opened the unbounded-growth abort this type's guard
-			// exists to close (found by the stage-5 review; not
-			// wire-reachable, since both Remove call sites pre-check
-			// membership, but a public method must not depend on that).
 			try setNode(at: 2 * index.value, to: nil)
-			blankDirectPath(of: index)
+			try blankDirectPath(of: index)
 		}
 
 		/// The leftmost blank leaf at or after `hint` (wrapping is not
@@ -188,25 +173,27 @@ extension MLS.TreeKEM {
 		}
 
 		/// Installs `record` at the leftmost blank leaf at or after `hint`,
-		/// or grows the tree by exactly one leaf slot pair if none exists
-		/// (mirrors mls-rs `NodeVec::insert_leaf`, which never grows to a
-		/// full new power-of-two doubling — only as far as the newly
-		/// inserted leaf's own node index requires).
+		/// or grows the tree by doubling if none exists (mirrors mls-rs
+		/// `NodeVec::insert_leaf` — the new leaf lands at index `leafCount`,
+		/// which doubling makes room for). The doubling guard is
+		/// `LeafCount.doubled()` returning `nil` at the ceiling — the single
+		/// place the tree grows, so the single place that guard lives.
 		public mutating func insertLeaf(
 			_ record: LeafRecord, hint: MLS.LeafIndex = MLS.LeafIndex(value: 0)
 		) throws -> MLS.LeafIndex {
 			if let blank = leftmostBlankLeaf(atOrAfter: hint) {
-				setNodeUnchecked(at: 2 * blank.value, to: .leaf(record))
+				try setNode(at: 2 * blank.value, to: .leaf(record))
 				return blank
 			}
-			// The doubling step. Guarded here rather than in `setNode`
-			// because only growth can breach the ceiling -- filling a
-			// blank in an existing tree cannot.
-			let newIndex = MLS.LeafIndex(value: leafCount.value)
-			guard newIndex.value < MLS.LeafIndex.ceiling / 2 else {
+			guard let bigger = leafCount.doubled() else {
 				throw MLS.TreeKEM.TreeError.treeFull
 			}
-			setNodeUnchecked(at: 2 * newIndex.value, to: .leaf(record))
+			let newIndex = MLS.LeafIndex(value: leafCount.value)
+			let newNodeCount = Int(MLS.TreeMath.nodeCount(leafCount: bigger))
+			nodes.append(
+				contentsOf: repeatElement(nil, count: newNodeCount - nodes.count))
+			leafCount = bigger
+			try setNode(at: 2 * newIndex.value, to: .leaf(record))
 			return newIndex
 		}
 
@@ -242,23 +229,13 @@ extension MLS.TreeKEM {
 		/// (leaf) index; left unchecked, `leaf(at:)` would just read it as
 		/// blank rather than surfacing the mismatch.
 		public func validateNodeKinds() throws {
-			for i in 0..<UInt32(nodes.count) {
+			for i in 0..<serializedNodeCount {
 				guard let treeNode = node(at: i) else { continue }
 				switch (treeNode, MLS.TreeMath.isLeaf(i)) {
 				case (.leaf, true), (.parent, false): continue
 				default: throw TreeError.wrongNodeKind(index: i)
 				}
 			}
-		}
-
-		/// RFC 9420 requires trimming trailing blanks before a tree is
-		/// serialized (`trim()` above does this); a tree that arrives with
-		/// one anyway is malformed on the wire, not merely untidy —
-		/// checked separately from `trim()` itself so a decoder can reject
-		/// it instead of silently normalizing it.
-		public func validateNoTrailingBlank() throws {
-			guard let last = nodes.last else { throw TreeError.emptyTree }
-			guard last != nil else { throw TreeError.trailingBlankLeaves }
 		}
 	}
 }
