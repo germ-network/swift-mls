@@ -220,7 +220,7 @@ extension MLS.RFC9420.Group {
 				content: try newLeaf.toBeSigned(
 					placement: .inGroup(
 						groupID: context.groupID, leafIndex: myLeafIndex)))
-			try newTree.setLeaf(myLeafIndex, to: try newLeaf.record)
+			try newTree.setLeaf(myLeafIndex, to: newLeaf.record)
 
 			// Provisional context: new epoch, post-merge tree hash, OLD
 			// confirmed transcript hash, new extensions (§12.4.1).

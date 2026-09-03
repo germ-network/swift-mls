@@ -35,7 +35,7 @@ extension MLS.TreeKEM.RatchetTree {
 		var addedIndex: MLS.LeafIndex?
 		switch proposal {
 		case .add(let keyPackage):
-			let newIndex = try insertLeaf(try keyPackage.leafNode.record)
+			let newIndex = try insertLeaf(keyPackage.leafNode.record)
 			for step in MLS.TreeMath.directPath(
 				from: 2 * newIndex.value, leafCount: leafCount)
 			{
