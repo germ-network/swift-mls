@@ -292,6 +292,12 @@ serializes its `ExporterTree(SecretTree)`, not the root. Only the current
 epoch's tree is kept. A decoder MUST reject a `leaf_count` other than 2^16 and
 a `node_secrets` index outside a 2^16-leaf tree.
 
+`node_secrets` is **sparse**, not 2^16 entries: the tree materializes nodes on
+demand, so an unexported tree persists one secret (the root) and each export
+adds at most one copath sibling per level (≤ 16, the tree's depth), fewer with
+the overlap of nearby `ComponentID`s. A typical archive carries a handful of
+`node_secrets`, never one per leaf.
+
 ## 5. Versioning
 
 `format` is required and is the only version in this format; sections do not

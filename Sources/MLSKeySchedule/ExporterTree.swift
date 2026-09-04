@@ -44,6 +44,12 @@ extension MLS.KeySchedule {
 		/// forward secrecy: a consumed component's path nodes are absent here, so
 		/// it cannot be re-derived. Retaining the root instead would re-derive
 		/// every component, defeating the consume-once deletion.
+		///
+		/// Sparse, not 2^16: the tree materializes nodes on demand, so an
+		/// unexported tree holds one secret (the root), and each export leaves at
+		/// most one copath sibling per level — `O(exports × log2(2^16) = 16)`,
+		/// less with the overlap of nearby component ids. So this is what the
+		/// archive carries: a handful of secrets, never a leaf per component.
 		public var frontier: [UInt32: SecretBytes] { tree.nodeSecrets }
 
 		/// Restores a tree from a persisted `frontier`, at the fixed 2^16 leaves.
