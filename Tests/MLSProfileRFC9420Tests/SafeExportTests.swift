@@ -30,13 +30,13 @@ struct SafeExportTests {
 
 	/// The independent oracle: derive the exporter root from `epochSecret` via
 	/// the public `fromEpochSecret`, build a fresh tree, export the component.
-	static func independentExport(epochSecret: Data, _ componentID: UInt32) throws
-		-> SecretBytes
-	{
+	static func independentExport(
+		epochSecret: Data, _ componentID: MLS.KeySchedule.ComponentID
+	) throws -> SecretBytes {
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: epochSecret)
 		var tree = try MLS.KeySchedule.ExporterTree(
 			applicationExportSecret: fanOut.applicationExportSecret)
-		return try tree.safeExportSecret(provider, componentID: .init(componentID))
+		return try tree.safeExportSecret(provider, componentID: componentID)
 	}
 
 	@Test("a group's export matches an independent derivation from the same epoch secret")
@@ -44,9 +44,11 @@ struct SafeExportTests {
 		let provider = Self.provider
 		let seed = Data(repeating: 0x5A, count: provider.hashSize)
 		var group = try Self.soloGroup(epochSecret: seed)
-		for id: UInt32 in [0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF] {
+		for id: MLS.KeySchedule.ComponentID in [
+			0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF,
+		] {
 			#expect(
-				try group.safeExportSecret(provider, componentID: .init(id))
+				try group.safeExportSecret(provider, componentID: id)
 					== Self.independentExport(epochSecret: seed, id))
 		}
 	}
@@ -60,18 +62,6 @@ struct SafeExportTests {
 			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(7)
 		) {
 			try group.safeExportSecret(provider, componentID: 7)
-		}
-	}
-
-	@Test("an out-of-range component id is rejected at the group level")
-	func groupExportRejectsOutOfRange() throws {
-		let provider = Self.provider
-		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
-		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(
-				.init(1 << 16))
-		) {
-			try group.safeExportSecret(provider, componentID: .init(1 << 16))
 		}
 	}
 
