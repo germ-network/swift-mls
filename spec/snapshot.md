@@ -120,8 +120,9 @@ Snapshot = {
     8: message_secrets       ; { + uint => MessageSecretStore }
     9: retention             ; Retention
   ? 10: config               ; Config — absent when empty
-    11: exporter_tree        ; SecretTreeState (§4.6), the current epoch's
-                             ;   Exporter Tree frontier
+  ? 11: exporter_tree        ; SecretTreeState (§4.6), the current epoch's
+                             ;   Exporter Tree frontier — absent only from a
+                             ;   producer that predates it (a migration source)
 }
 ```
 
@@ -297,6 +298,14 @@ demand, so an unexported tree persists one secret (the root) and each export
 adds at most one copath sibling per level (≤ 16, the tree's depth), fewer with
 the overlap of nearby `ComponentID`s. A typical archive carries a handful of
 `node_secrets`, never one per leaf.
+
+`exporter_tree` is **optional** (key 11): every live group installs a tree, so a
+conforming producer of this format emits it. It is absent only from an archive
+written by a producer that predates the Exporter Tree — a migration source such
+as a peer's cross-implementation export. Restoring such an archive yields a
+group with no exporter tree; `SafeExportSecret` is unavailable until the group
+advances an epoch and installs one. Nothing is re-derivable in the meantime, so
+the absence is forward-secrecy-safe.
 
 ## 5. Versioning
 

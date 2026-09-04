@@ -184,4 +184,20 @@ struct SafeExportTests {
 		#expect(restoredFF02.byteCount == provider.hashSize)
 		#expect(try groupB.safeExportSecret(provider, componentID: 0xFF02) == restoredFF02)
 	}
+
+	/// A migration source that predates the exporter tree (e.g. the deployed
+	/// `export_for_swift()`) persists no `exporter_tree`. Such a snapshot still
+	/// restores, but the group has no tree, so `safeExportSecret` reports it
+	/// unavailable until the group advances an epoch and installs one.
+	@Test("a snapshot without an exporter tree restores; export is unavailable")
+	func restoreWithoutExporterTree() throws {
+		let provider = Self.provider
+		var snapshot = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+			.makeSnapshot()
+		snapshot.exporterTree = nil
+		var restored = try MLS.RFC9420.Group.restore(from: snapshot, provider)
+		#expect(throws: MLS.RFC9420.GroupError.exporterTreeUnavailable) {
+			try restored.safeExportSecret(provider, componentID: 0xFF01)
+		}
+	}
 }
