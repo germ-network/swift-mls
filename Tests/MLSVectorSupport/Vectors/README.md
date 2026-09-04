@@ -77,3 +77,16 @@ in that checkout is an older, non-standard mls-rs-internal fixture — not vendo
 source, and has no official mlswg counterpart either — there is no ground truth for
 what it is even testing. `key-schedule.json`'s own per-epoch `exporter` field already
 covers the MLS-Exporter computation with a documented, executable consumer.
+
+## Migration fixture (binary, not JSON)
+
+`mls-rs-export-p256-classical.cbor` — a plaintext format-1 group Snapshot
+(`spec/snapshot.md`) emitted by the deployed Rust peer's `Group::export_for_swift()`
+(`mls-rs-pq` branch `ger-2372-export-for-swift`, `mls-rs/src/group/swift_export.rs`,
+feature `swift_export`). Captured 2026-09-04 from the crate's own
+`export_for_swift_has_expected_shape` scenario: a 2-member `P256_AES128` group where
+member 1 sends one application message member 0 processes — so it carries BOTH a
+populated ratchet chain and a secret-tree `node_secrets` frontier, the fatal-if-wrong
+migration case. Regenerate by running that export and writing `bytes` to this path;
+the group is randomly keyed, so exact bytes differ per capture (the differential test
+asserts structure, not fixed secret values).
