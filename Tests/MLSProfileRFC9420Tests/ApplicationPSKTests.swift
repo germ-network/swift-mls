@@ -53,14 +53,32 @@ struct ApplicationPSKTests {
 						3, 0x00, 0x00, 0xFF, 0x01, 3, 7, 8, 9, 2, 0xAA,
 						0xBB,
 					]))
+			// The storage id is a *local* key, pinned to the canonical u16 even
+			// under the u32 wire width — so it doesn't shift with the session.
 			#expect(
 				try id.applicationStorageID()
-					== Data([3, 0x00, 0x00, 0xFF, 0x01, 3, 7, 8, 9]))
+					== Data([3, 0xFF, 0x01, 3, 7, 8, 9]))
 
 			var reader = MLS.Reader(try id.mlsEncoded())
 			#expect(try MLS.RFC9420.PreSharedKeyIdentifier(from: &reader) == id)
 			try reader.finish()
 		}
+	}
+
+	/// `applicationStorageID` is a local lookup key that never crosses the wire, so
+	/// it must be width-independent: a PSK derived and stored outside a `.uint32`
+	/// scope has to resolve against a fork commit processed *inside* one. Both
+	/// widths yield the same canonical (u16) key.
+	@Test("applicationStorageID is stable across the wire width")
+	func storageIDWidthIndependent() throws {
+		let id = MLS.RFC9420.PreSharedKeyIdentifier.application(
+			componentID: 0xFF01, pskID: Data([7, 8, 9]), nonce: Data([0xAA, 0xBB]))
+		let canonical = Data([3, 0xFF, 0x01, 3, 7, 8, 9])
+
+		#expect(try id.applicationStorageID() == canonical)
+		let underU32 = try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth
+			.withValue(.uint32) { try id.applicationStorageID() }
+		#expect(underU32 == canonical)
 	}
 
 	/// A `uint32`-form component_id ≥ 2^16 has no leaf and cannot fit -09's

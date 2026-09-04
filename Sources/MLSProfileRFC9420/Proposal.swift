@@ -158,11 +158,20 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 	/// The width `encode`/`decode` use for an `application` `component_id`,
 	/// defaulting to the -09 `uint16`. A peer speaks one width for a whole
 	/// session, and the two widths are indistinguishable from the bytes, so this
-	/// is an **ambient session setting**, not a per-message flag: to interoperate
-	/// with a `uint32` (deployed-fork / -08) peer, scope *both* the commit encode
-	/// and the peer's-commit decode under
-	/// `$componentIDWireWidth.withValue(.uint32) { … }`. Leaving it at `.uint16`
-	/// keeps swift-mls draft-09-clean; the fork compat is the caller's to opt into.
+	/// is an **ambient session setting**, not a per-message flag.
+	///
+	/// The width feeds more than the proposal's wire bytes: `pskSecret` binds each
+	/// PSK by its *encoded* `PreSharedKeyID` inside the `PSKLabel` (RFC 9420 §8.4),
+	/// so a mismatch here diverges the epoch secrets, not just the parse. To
+	/// interoperate with a `uint32` (deployed-fork / -08) peer, scope the **whole**
+	/// operation that encodes or decodes an application id — the entire
+	/// `committing` / `processing` / `join` call, so the wire encode, the peer's
+	/// decode, and the `PSKLabel` all agree — under
+	/// `$componentIDWireWidth.withValue(.uint32) { … }`. The local
+	/// `applicationStorageID` key is deliberately *not* affected (it pins `uint16`),
+	/// so deriving a PSK outside the scope and resolving it inside still matches.
+	/// Leaving the width at `.uint16` keeps swift-mls draft-09-clean; the fork
+	/// compat is the caller's to opt into.
 	@TaskLocal public static var componentIDWireWidth: ComponentIDWireWidth = .uint16
 
 	/// The `psk_nonce` common to every arm — RFC 9420 §8.4 requires it "a fresh
@@ -176,9 +185,13 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 	}
 
 	/// The `psktype` + type-specific select fields, *without* the trailing
-	/// `psk_nonce` — the identity `encode(to:)` prepends before the nonce, and the
-	/// key an application PSK's value is stored under (see `applicationStorageID`).
-	func encodeIdentity(to writer: inout MLS.Writer) throws {
+	/// `psk_nonce` — the identity `encode(to:)` prepends before the nonce. `width`
+	/// selects the `component_id` encoding for the `application` arm; it defaults
+	/// to the ambient wire width for the on-wire encode, but `applicationStorageID`
+	/// pins `.uint16` so the local key stays width-independent.
+	func encodeIdentity(
+		to writer: inout MLS.Writer, componentIDWidth width: ComponentIDWireWidth
+	) throws {
 		switch self {
 		case .external(let pskID, _):
 			try writer.encode(MLS.RFC9420.PSKType.external)
@@ -188,7 +201,7 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 			try writer.encode(resumption)
 		case .application(let componentID, let pskID, _):
 			try writer.encode(MLS.RFC9420.PSKType.application)
-			switch Self.componentIDWireWidth {
+			switch width {
 			case .uint16: writer.writeUInt16(componentID.rawValue)
 			case .uint32: writer.writeUInt32(UInt32(componentID.rawValue))
 			}
@@ -198,8 +211,13 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 
 	/// The key an application PSK's value is looked up under — the encoded
 	/// identity *without* the `psk_nonce`, `0x03 ‖ component_id ‖ psk_id<V>`
-	/// (draft-ietf-mls-extensions-08 §4.5). `nil` for non-application ids. Shares
-	/// `encodeIdentity`, so it cannot drift from the wire encoding.
+	/// (draft-ietf-mls-extensions §4.5). `nil` for non-application ids.
+	///
+	/// A purely *local* lookup key — it never crosses the wire (only the full
+	/// `PreSharedKeyID` does, in the proposal), so it pins the canonical `uint16`
+	/// `component_id` regardless of the ambient `componentIDWireWidth`. That keeps
+	/// the key stable across a width switch: a PSK derived and stored outside a
+	/// `.uint32` scope still resolves against a fork commit processed inside one.
 	///
 	/// This lives in the same key space as external PSK ids: an adopter keying one
 	/// store by both application storage ids and raw external ids must avoid
@@ -209,14 +227,14 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 	public func applicationStorageID() throws -> Data? {
 		guard case .application = self else { return nil }
 		var writer = MLS.Writer()
-		try encodeIdentity(to: &writer)
+		try encodeIdentity(to: &writer, componentIDWidth: .uint16)
 		return Data(writer.bytes)
 	}
 }
 
 extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try encodeIdentity(to: &writer)
+		try encodeIdentity(to: &writer, componentIDWidth: Self.componentIDWireWidth)
 		try writer.writeOpaque(nonce)
 	}
 
@@ -238,10 +256,10 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 				// so is unexportable), but a malformed one cannot fit our -09
 				// `uint16`, so reject rather than truncate.
 				let wide = try reader.readUInt32()
-				guard wide <= UInt32(UInt16.max) else {
+				guard let narrow = UInt16(exactly: wide) else {
 					throw MLS.RFC9420.WireError.componentIDOverflowsUInt16(wide)
 				}
-				rawComponentID = UInt16(wide)
+				rawComponentID = narrow
 			}
 			let componentID = MLS.KeySchedule.ComponentID(rawValue: rawComponentID)
 			let pskID = Data(try reader.readOpaque())
