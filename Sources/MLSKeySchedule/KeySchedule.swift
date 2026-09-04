@@ -16,7 +16,7 @@ extension MLS {
 		/// (`SecretBytes`) — the fan-out is where the longest
 		/// -lived key material is born. The two exceptions are deliberate:
 		/// `externalPublicKey` is a public key, and `epochAuthenticator` is
-		/// RFC 9420 §8.6's public out-of-band authenticator, which
+		/// RFC 9420 §8.7's public out-of-band authenticator, which
 		/// applications read and compare directly — a redacted secret type
 		/// would impede that legitimate use, and it carries no
 		/// confidentiality to protect.
@@ -151,7 +151,7 @@ extension MLS {
 				senderDataSecret: derive("sender data"),
 				encryptionSecret: derive("encryption"),
 				exporterSecret: derive("exporter"),
-				// Public §8.6 authenticator, not confidential — see `Epoch`.
+				// Public §8.7 authenticator, not confidential — see `Epoch`.
 				epochAuthenticator: deriveSecret(
 					provider, secret: epochSecret, label: "authentication"),
 				externalSecret: externalSecret,
