@@ -114,8 +114,11 @@ struct ApplicationPSKTests {
 		let nonce = provider.randomBytes(provider.hashSize)
 		let appID = MLS.RFC9420.PreSharedKeyIdentifier.application(
 			componentID: 0xFF01, pskID: pskIDA, nonce: nonce)
-		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
-			Self.bytes(pskA)
+		// Resolve by the wire id (its `applicationStorageID`) rather than blindly,
+		// so the closure proves it received the `.application` id it expects.
+		let storageID = try #require(try appID.applicationStorageID())
+		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+			(try id.applicationStorageID()) == storageID ? Self.bytes(pskA) : nil
 		}
 		let commit = try groupA.committing(
 			provider, proposals: [.proposal(.preSharedKey(appID))],
@@ -123,8 +126,8 @@ struct ApplicationPSKTests {
 		)
 		groupA = commit.group
 
-		let resolveB: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
-			Self.bytes(pskB)
+		let resolveB: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+			(try id.applicationStorageID()) == storageID ? Self.bytes(pskB) : nil
 		}
 		try SelfInteropTests.processPrivate(
 			&groupB, provider, commit.commit, psk: resolveB)

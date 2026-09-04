@@ -176,9 +176,14 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 
 	/// The key an application PSK's value is looked up under — the encoded
 	/// identity *without* the `psk_nonce`, `0x03 ‖ component_id ‖ psk_id<V>`
-	/// (draft-ietf-mls-extensions-08 §4.5; matches the deployed fork's
-	/// `storage_id`). `nil` for non-application ids. Shares `encodeIdentity`, so
-	/// it cannot drift from the wire encoding.
+	/// (draft-ietf-mls-extensions-08 §4.5). `nil` for non-application ids. Shares
+	/// `encodeIdentity`, so it cannot drift from the wire encoding.
+	///
+	/// This lives in the same key space as external PSK ids: an adopter keying one
+	/// store by both application storage ids and raw external ids must avoid
+	/// external ids that begin with the `0x03` `application` tag, or an external id
+	/// could shadow an application PSK. The key schedule itself stays
+	/// domain-separated regardless, since it binds the full typed `PreSharedKeyID`.
 	public func applicationStorageID() throws -> Data? {
 		guard case .application = self else { return nil }
 		var writer = MLS.Writer()
