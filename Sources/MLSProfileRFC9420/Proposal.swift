@@ -61,11 +61,12 @@ extension MLS.RFC9420 {
 	public enum PreSharedKeyIdentifier: Sendable, Equatable {
 		case external(pskID: Data, nonce: Data)
 		case resumption(ResumptionPSK, nonce: Data)
-		/// draft-ietf-mls-extensions-08 §4.5's application PSK: the `application`
-		/// select arm is `ComponentID component_id; opaque psk_id<V>;`, so on the
-		/// wire this is `component_id` (a §4.1 `uint32`) followed by `psk_id`. Like
-		/// the other arms, `psk_nonce` follows the select. Domain-separates a
-		/// component's PSKs from the core protocol's and from other components'.
+		/// draft-ietf-mls-extensions §4.5's application PSK: the `application` select
+		/// arm is `ComponentID component_id; opaque psk_id<V>;`, so on the wire this
+		/// is `component_id` (draft-09's `uint16` by default; a `uint32` under the
+		/// `.uint32` `componentIDWireWidth`) followed by `psk_id`. Like the other
+		/// arms, `psk_nonce` follows the select. Domain-separates a component's PSKs
+		/// from the core protocol's and from other components'.
 		case application(componentID: MLS.KeySchedule.ComponentID, pskID: Data, nonce: Data)
 	}
 
@@ -146,6 +147,24 @@ extension MLS.RFC9420 {
 }
 
 extension MLS.RFC9420.PreSharedKeyIdentifier {
+	/// The on-wire width of an `application` PSK's `component_id`. draft-09 §4.1
+	/// makes `ComponentID` a `uint16`, which swift-mls emits by default; the
+	/// deployed fork (and draft-08) encode it as a `uint32`.
+	public enum ComponentIDWireWidth: Sendable {
+		case uint16
+		case uint32
+	}
+
+	/// The width `encode`/`decode` use for an `application` `component_id`,
+	/// defaulting to the -09 `uint16`. A peer speaks one width for a whole
+	/// session, and the two widths are indistinguishable from the bytes, so this
+	/// is an **ambient session setting**, not a per-message flag: to interoperate
+	/// with a `uint32` (deployed-fork / -08) peer, scope *both* the commit encode
+	/// and the peer's-commit decode under
+	/// `$componentIDWireWidth.withValue(.uint32) { … }`. Leaving it at `.uint16`
+	/// keeps swift-mls draft-09-clean; the fork compat is the caller's to opt into.
+	@TaskLocal public static var componentIDWireWidth: ComponentIDWireWidth = .uint16
+
 	/// The `psk_nonce` common to every arm — RFC 9420 §8.4 requires it "a fresh
 	/// random value of length KDF.Nh" (§12.1.4 validates the length on receipt).
 	public var nonce: Data {
@@ -169,7 +188,10 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 			try writer.encode(resumption)
 		case .application(let componentID, let pskID, _):
 			try writer.encode(MLS.RFC9420.PSKType.application)
-			writer.writeUInt32(componentID.rawValue)
+			switch Self.componentIDWireWidth {
+			case .uint16: writer.writeUInt16(componentID.rawValue)
+			case .uint32: writer.writeUInt32(UInt32(componentID.rawValue))
+			}
 			try writer.writeOpaque(pskID)
 		}
 	}
@@ -207,8 +229,21 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 			let resumption = try MLS.RFC9420.ResumptionPSK(from: &reader)
 			self = .resumption(resumption, nonce: Data(try reader.readOpaque()))
 		case .application:
-			let componentID = MLS.KeySchedule.ComponentID(
-				rawValue: try reader.readUInt32())
+			let rawComponentID: UInt16
+			switch Self.componentIDWireWidth {
+			case .uint16:
+				rawComponentID = try reader.readUInt16()
+			case .uint32:
+				// A `uint32`-form peer never *sends* an id ≥ 2^16 (it has no leaf,
+				// so is unexportable), but a malformed one cannot fit our -09
+				// `uint16`, so reject rather than truncate.
+				let wide = try reader.readUInt32()
+				guard wide <= UInt32(UInt16.max) else {
+					throw MLS.RFC9420.WireError.componentIDOverflowsUInt16(wide)
+				}
+				rawComponentID = UInt16(wide)
+			}
+			let componentID = MLS.KeySchedule.ComponentID(rawValue: rawComponentID)
 			let pskID = Data(try reader.readOpaque())
 			self = .application(
 				componentID: componentID, pskID: pskID,

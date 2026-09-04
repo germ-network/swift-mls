@@ -8,31 +8,75 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-/// draft-ietf-mls-extensions-08 §4.5 application PSKs and draft-ietf-mls-combiner-02
+/// draft-ietf-mls-extensions §4.5 application PSKs and draft-ietf-mls-combiner-02
 /// §6.2's derivation over the Exporter Tree — the mechanism the deployed TwoMLSPQ
-/// APQ combiner binds its groups with. Wire bytes are pinned to the deployed fork
-/// (`germ-network/mls-rs@b43703f`, `psk.rs`).
+/// APQ combiner binds its groups with. swift-mls emits the -09 `uint16`
+/// `component_id` by default; the `.uint32` `componentIDWireWidth` reproduces the
+/// deployed fork's layout (`germ-network/mls-rs@b43703f`, `psk.rs`).
 @Suite("Application PSKs (mls-extensions §4.5 / combiner §6.2)")
 struct ApplicationPSKTests {
 	static let provider = SelfInteropTests.provider
 
 	static func bytes(_ s: SecretBytes) -> Data { s.withUnsafeBytes { Data($0) } }
 
-	/// The `.application` `PreSharedKeyID` encodes as `PSKType(3) ‖ component_id
-	/// (u32, big-endian) ‖ psk_id<V> ‖ psk_nonce<V>`, and its storage id drops the
-	/// nonce — both pinned to the fork's own vectors (component `0x01020304`,
-	/// psk_id `[7,8,9]`, nonce `[AA,BB]`).
-	@Test("an application PreSharedKeyID matches the fork's wire and storage-id vectors")
-	func applicationPreSharedKeyIDWire() throws {
+	/// Default (draft-09) wire: `PSKType(3) ‖ component_id(u16 BE) ‖ psk_id<V> ‖
+	/// psk_nonce<V>`, storage id dropping the nonce. Component `0xFF01`, psk_id
+	/// `[7,8,9]`, nonce `[AA,BB]`.
+	@Test("an application PreSharedKeyID encodes and round-trips at the default u16 width")
+	func applicationPreSharedKeyIDWireDefault() throws {
 		let id = MLS.RFC9420.PreSharedKeyIdentifier.application(
-			componentID: 0x0102_0304, pskID: Data([7, 8, 9]), nonce: Data([0xAA, 0xBB]))
+			componentID: 0xFF01, pskID: Data([7, 8, 9]), nonce: Data([0xAA, 0xBB]))
 
-		#expect(try id.mlsEncoded() == Data([3, 1, 2, 3, 4, 3, 7, 8, 9, 2, 0xAA, 0xBB]))
-		#expect(try id.applicationStorageID() == Data([3, 1, 2, 3, 4, 3, 7, 8, 9]))
+		#expect(
+			try id.mlsEncoded() == Data([3, 0xFF, 0x01, 3, 7, 8, 9, 2, 0xAA, 0xBB]))
+		#expect(try id.applicationStorageID() == Data([3, 0xFF, 0x01, 3, 7, 8, 9]))
 
 		var reader = MLS.Reader(try id.mlsEncoded())
 		#expect(try MLS.RFC9420.PreSharedKeyIdentifier(from: &reader) == id)
 		try reader.finish()
+	}
+
+	/// Under the `.uint32` compat width (deployed fork / draft-08), the same
+	/// `component_id` widens to four big-endian bytes — encode and decode must run
+	/// under the same ambient width. The fork's own published vector uses a
+	/// `u32`-range component (`0x01020304`) that -09's `uint16` can't hold, so this
+	/// pins the u32 *encoding* of a valid component instead.
+	@Test("the uint32 compat width widens component_id to four bytes, both directions")
+	func applicationPreSharedKeyIDWireUInt32() throws {
+		try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth.withValue(.uint32) {
+			let id = MLS.RFC9420.PreSharedKeyIdentifier.application(
+				componentID: 0xFF01, pskID: Data([7, 8, 9]),
+				nonce: Data([0xAA, 0xBB]))
+			#expect(
+				try id.mlsEncoded()
+					== Data([
+						3, 0x00, 0x00, 0xFF, 0x01, 3, 7, 8, 9, 2, 0xAA,
+						0xBB,
+					]))
+			#expect(
+				try id.applicationStorageID()
+					== Data([3, 0x00, 0x00, 0xFF, 0x01, 3, 7, 8, 9]))
+
+			var reader = MLS.Reader(try id.mlsEncoded())
+			#expect(try MLS.RFC9420.PreSharedKeyIdentifier(from: &reader) == id)
+			try reader.finish()
+		}
+	}
+
+	/// A `uint32`-form component_id ≥ 2^16 has no leaf and cannot fit -09's
+	/// `uint16`, so decode rejects it rather than truncating.
+	@Test("a uint32 component_id at or above 2^16 is rejected on decode")
+	func applicationPreSharedKeyIDUInt32Overflow() throws {
+		try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth.withValue(.uint32) {
+			// PSKType 3, component_id 0x00010000 (= 2^16), psk_id [], nonce [].
+			var reader = MLS.Reader(Data([3, 0x00, 0x01, 0x00, 0x00, 0, 0]))
+			#expect(
+				throws: MLS.RFC9420.WireError.componentIDOverflowsUInt16(
+					0x0001_0000)
+			) {
+				try MLS.RFC9420.PreSharedKeyIdentifier(from: &reader)
+			}
+		}
 	}
 
 	@Test("applicationStorageID is nil for non-application ids")

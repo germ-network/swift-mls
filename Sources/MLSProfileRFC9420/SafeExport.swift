@@ -8,8 +8,8 @@ extension MLS.RFC9420.Group {
 	/// draft-ietf-mls-extensions-08 §4.4 `SafeExportSecret`: the per-component
 	/// exported secret for this group's **current epoch**, consumed once — a
 	/// second export of the same component in the same epoch throws
-	/// (`ExporterTree.ExportError`). `componentID` indexes the 2^16-leaf tree;
-	/// ids ≥ 2^16 are rejected.
+	/// (`ExporterTree.ExportError`). Every `ComponentID` (a `uint16`) names a valid
+	/// leaf of the 2^16-leaf tree.
 	///
 	/// Forward secrecy (RFC 9420 §9.2, which §4.4 invokes): the group holds the
 	/// *consuming* Exporter Tree, built at epoch install and never the raw
