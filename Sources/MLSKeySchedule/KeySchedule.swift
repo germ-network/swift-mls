@@ -125,6 +125,11 @@ extension MLS {
 			public let senderDataSecret: SecretBytes
 			public let encryptionSecret: SecretBytes
 			public let exporterSecret: SecretBytes
+			/// draft-ietf-mls-extensions-08 §4.4: the Exporter Tree's root,
+			/// `DeriveSecret(epoch_secret, "application_export")` — a sibling of
+			/// `exporterSecret` off the same epoch_secret, from which
+			/// `SafeExportSecret` derives per-component secrets.
+			public let applicationExportSecret: SecretBytes
 			public let epochAuthenticator: Data
 			public let externalSecret: SecretBytes
 			public let externalPublicKey: HpkePublicKey
@@ -151,6 +156,7 @@ extension MLS {
 				senderDataSecret: derive("sender data"),
 				encryptionSecret: derive("encryption"),
 				exporterSecret: derive("exporter"),
+				applicationExportSecret: derive("application_export"),
 				// Public §8.7 authenticator, not confidential — see `Epoch`.
 				epochAuthenticator: deriveSecret(
 					provider, secret: epochSecret, label: "authentication"),
