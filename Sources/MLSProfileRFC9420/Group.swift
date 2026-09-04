@@ -52,10 +52,12 @@ extension MLS.RFC9420 {
 		/// The current epoch's draft §4.4 Exporter Tree, lazily built from
 		/// `epoch.applicationExportSecret` on the first `safeExportSecret` and
 		/// mutated as components are consumed. Keyed by epoch so a stale entry is
-		/// never read after an advance; only the current epoch is ever kept (past
-		/// epochs' seeds are not retained). Not persisted: `restore` rebuilds a
-		/// fresh tree from the retained seed, so consumption state does not
-		/// survive an archive round-trip — see `safeExportSecret`.
+		/// never read after an advance, and pruned to the current epoch on every
+		/// epoch install (`installMessageSecrets`) so a past epoch's tree never
+		/// outlives its epoch (past epochs' seeds are not retained). Not
+		/// persisted: `restore` rebuilds a fresh tree from the retained seed, so
+		/// consumption state does not survive an archive round-trip — see
+		/// `safeExportSecret`.
 		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
 
 		/// Self-proposed Updates awaiting a commit, seeded by `proposeUpdate`

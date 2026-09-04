@@ -99,6 +99,13 @@ extension MLS.RFC9420.Group {
 		let depth = UInt64(retention.messageSecretsDepth)
 		let floor = context.epoch >= depth ? context.epoch - depth : 0
 		messageSecrets = messageSecrets.filter { $0.key >= floor }
+
+		// The exporter tree is single-epoch — past epochs' seeds are not retained,
+		// so a prior epoch's cached tree would be the only surviving copy of that
+		// epoch's exporter material. Drop it here, alongside the message-secret
+		// prune, so it never outlives its epoch; the current epoch's tree is
+		// (re)built lazily on the next `safeExportSecret`.
+		exporterTrees = exporterTrees.filter { $0.key == context.epoch }
 	}
 
 	/// Key/nonce for `(leaf, generation, kind)` in `epoch`, plus the

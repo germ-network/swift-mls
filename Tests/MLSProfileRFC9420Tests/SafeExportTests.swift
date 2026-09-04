@@ -97,6 +97,27 @@ struct SafeExportTests {
 		#expect(e2a != e1a)
 	}
 
+	/// A prior epoch's exporter tree is scrubbed on advance: its seed is dropped
+	/// with the old `EpochSecrets`, so a lingering cached tree would be the only
+	/// surviving copy of that epoch's not-yet-exported component material.
+	@Test("a prior epoch's exporter tree is pruned on epoch advance")
+	func staleExporterTreePrunedOnAdvance() throws {
+		let provider = Self.provider
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+
+		var groupA = try SelfInteropTests.createGroup(alice)
+		_ = try groupA.safeExportSecret(provider, componentID: 3)
+		#expect(groupA.exporterTrees.keys.contains(0))
+
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		#expect(groupA.exporterTrees[0] == nil)
+		#expect(groupA.exporterTrees.isEmpty)
+	}
+
 	/// The retained seed round-trips through archive/restore, so a restored group
 	/// exports the same bytes a fresh tree from the pre-archive seed would.
 	@Test("export survives an archive/restore round-trip")
