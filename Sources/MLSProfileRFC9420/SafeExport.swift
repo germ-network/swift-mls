@@ -34,4 +34,36 @@ extension MLS.RFC9420.Group {
 		defer { exporterTrees[epochNumber] = tree }
 		return try tree.safeExportSecret(provider, componentID: componentID)
 	}
+
+	/// draft-ietf-mls-combiner-02 §6.2's application-PSK derivation over the
+	/// draft-ietf-mls-extensions-08 §4.5 exporter: exports this component's secret
+	/// for the current epoch and derives the pair `(psk_id, psk)` from it —
+	/// `psk_id = DeriveSecret(exporter, "psk_id")` (a public identifier),
+	/// `psk = DeriveSecret(exporter, "psk")` (the secret). The exporter secret is
+	/// consumed (`safeExportSecret`) and dropped after both derivations, per
+	/// §6.2's / RFC 9420 §9.2's MUST-delete.
+	///
+	/// **Single-shot.** The exporter leaf is consumed and its deletion persists
+	/// (the snapshot archives the consumed frontier), so a given
+	/// `(group, epoch, component)` derives exactly once and the pair is
+	/// unrecoverable from group state afterward. Derive immediately before the
+	/// commit or Welcome that imports the PSK, or persist the pair yourself; drop
+	/// `psk` once that commit consumes it (forward secrecy), keeping only the
+	/// public `psk_id` if still needed. Both parties on the same
+	/// `(group, epoch, component)` derive an identical pair independently — only
+	/// the `PreSharedKeyID` (with its nonce) crosses the wire, inside the proposal
+	/// the caller assembles as `.application(componentID:, pskID:, nonce:)`.
+	///
+	/// The labels `"psk_id"`/`"psk"` are draft-combiner-02 Figure 3; the deployed
+	/// fork (`germ-network/mls-rs@b43703f`) applies plain RFC 9420 `DeriveSecret`
+	/// with them — the tie-breaker the KAT pins, since the draft's prose is silent.
+	public mutating func deriveApplicationPSK(
+		_ provider: any MLS.CipherSuiteProvider,
+		componentID: MLS.KeySchedule.ComponentID
+	) throws -> (pskID: Data, psk: SecretBytes) {
+		let exporter = try safeExportSecret(provider, componentID: componentID)
+		let pskID = try MLS.deriveSecret(provider, secret: exporter, label: "psk_id")
+		let psk = try MLS.deriveSecretSecret(provider, secret: exporter, label: "psk")
+		return (pskID, psk)
+	}
 }

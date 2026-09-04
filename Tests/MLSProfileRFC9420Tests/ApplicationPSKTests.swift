@@ -1,0 +1,153 @@
+import Crypto
+import Foundation
+import MLSCodec
+import MLSCrypto
+import MLSKeySchedule
+import SecretBytes
+import Testing
+
+@testable import MLSProfileRFC9420
+
+/// draft-ietf-mls-extensions-08 §4.5 application PSKs and draft-ietf-mls-combiner-02
+/// §6.2's derivation over the Exporter Tree — the mechanism the deployed TwoMLSPQ
+/// APQ combiner binds its groups with. Wire bytes are pinned to the deployed fork
+/// (`germ-network/mls-rs@b43703f`, `psk.rs`).
+@Suite("Application PSKs (mls-extensions §4.5 / combiner §6.2)")
+struct ApplicationPSKTests {
+	static let provider = SelfInteropTests.provider
+
+	static func bytes(_ s: SecretBytes) -> Data { s.withUnsafeBytes { Data($0) } }
+
+	/// The `.application` `PreSharedKeyID` encodes as `PSKType(3) ‖ component_id
+	/// (u32, big-endian) ‖ psk_id<V> ‖ psk_nonce<V>`, and its storage id drops the
+	/// nonce — both pinned to the fork's own vectors (component `0x01020304`,
+	/// psk_id `[7,8,9]`, nonce `[AA,BB]`).
+	@Test("an application PreSharedKeyID matches the fork's wire and storage-id vectors")
+	func applicationPreSharedKeyIDWire() throws {
+		let id = MLS.RFC9420.PreSharedKeyIdentifier.application(
+			componentID: 0x0102_0304, pskID: Data([7, 8, 9]), nonce: Data([0xAA, 0xBB]))
+
+		#expect(try id.mlsEncoded() == Data([3, 1, 2, 3, 4, 3, 7, 8, 9, 2, 0xAA, 0xBB]))
+		#expect(try id.applicationStorageID() == Data([3, 1, 2, 3, 4, 3, 7, 8, 9]))
+
+		var reader = MLS.Reader(try id.mlsEncoded())
+		#expect(try MLS.RFC9420.PreSharedKeyIdentifier(from: &reader) == id)
+		try reader.finish()
+	}
+
+	@Test("applicationStorageID is nil for non-application ids")
+	func storageIDNilForOthers() throws {
+		#expect(
+			try MLS.RFC9420.PreSharedKeyIdentifier.external(
+				pskID: Data([1]), nonce: Data([2])
+			).applicationStorageID() == nil)
+	}
+
+	/// `deriveApplicationPSK` derives `(psk_id, psk)` with the combiner §6.2 labels
+	/// `"psk_id"`/`"psk"` off the component's exported secret. Checked against an
+	/// independent derivation from a known epoch secret — a wrong label in the
+	/// helper diverges here.
+	@Test("deriveApplicationPSK uses the psk_id/psk labels over the exported secret")
+	func deriveApplicationPSKLabels() throws {
+		let provider = Self.provider
+		let seed = Data(repeating: 0x11, count: provider.hashSize)
+		var group = try SafeExportTests.soloGroup(epochSecret: seed)
+		let (pskID, psk) = try group.deriveApplicationPSK(provider, componentID: 0x8000)
+
+		// Independent exporter secret for the same component + epoch.
+		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: seed)
+		var tree = try MLS.KeySchedule.ExporterTree(
+			applicationExportSecret: fanOut.applicationExportSecret)
+		let exporter = try tree.safeExportSecret(provider, componentID: 0x8000)
+
+		#expect(
+			pskID == (try MLS.deriveSecret(provider, secret: exporter, label: "psk_id"))
+		)
+		#expect(
+			Self.bytes(psk)
+				== Self.bytes(
+					try MLS.deriveSecretSecret(
+						provider, secret: exporter, label: "psk")))
+		// psk_id is public and distinct from the secret psk.
+		#expect(pskID != Self.bytes(psk))
+	}
+
+	/// The exporter leaf is consumed, so a component's PSK derives at most once per
+	/// epoch — a second derivation is a replay signal.
+	@Test("deriveApplicationPSK for the same component twice throws")
+	func deriveApplicationPSKConsumesOnce() throws {
+		let provider = Self.provider
+		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+		_ = try group.deriveApplicationPSK(provider, componentID: 0xFF01)
+		#expect(
+			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(
+				0xFF01)
+		) {
+			try group.deriveApplicationPSK(provider, componentID: 0xFF01)
+		}
+	}
+
+	/// Both members of a group derive an identical `(psk_id, psk)` for the same
+	/// component and epoch, independently — and a commit importing that PSK
+	/// converges. Only the `PreSharedKeyID` crosses the wire, in the proposal.
+	@Test("both parties derive the same application PSK and a commit importing it converges")
+	func applicationPSKRoundTripsThroughACommit() throws {
+		let provider = Self.provider
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+
+		var groupA = try SelfInteropTests.createGroup(alice)
+		let add = try groupA.committing(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try MLS.RFC9420.Group.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Both derive the epoch's APQ component independently, before the commit.
+		let (pskIDA, pskA) = try groupA.deriveApplicationPSK(provider, componentID: 0xFF01)
+		let (pskIDB, pskB) = try groupB.deriveApplicationPSK(provider, componentID: 0xFF01)
+		#expect(pskIDA == pskIDB)
+		#expect(Self.bytes(pskA) == Self.bytes(pskB))
+
+		let nonce = provider.randomBytes(provider.hashSize)
+		let appID = MLS.RFC9420.PreSharedKeyIdentifier.application(
+			componentID: 0xFF01, pskID: pskIDA, nonce: nonce)
+		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
+			Self.bytes(pskA)
+		}
+		let commit = try groupA.committing(
+			provider, proposals: [.proposal(.preSharedKey(appID))],
+			signingKey: alice.signingKey, randomness: .generate(provider), psk: resolveA
+		)
+		groupA = commit.group
+
+		let resolveB: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
+			Self.bytes(pskB)
+		}
+		try SelfInteropTests.processPrivate(
+			&groupB, provider, commit.commit, psk: resolveB)
+		SelfInteropTests.assertConverged(groupA, groupB)
+	}
+
+	/// §12.1.4: the `psk_nonce` MUST be KDF.Nh long — for the application arm too.
+	/// Pre-fix, the length check covered only external/resumption, so a wrong-length
+	/// application nonce would be accepted where the fork rejects it.
+	@Test("an application PSK with a wrong-length nonce is rejected")
+	func applicationPSKWrongNonceLength() throws {
+		let provider = Self.provider
+		let solo = try SelfInteropTests.member("solo")
+		let group = try SelfInteropTests.createGroup(solo)
+		let badID = MLS.RFC9420.PreSharedKeyIdentifier.application(
+			componentID: 0xFF01, pskID: Data([1, 2, 3]), nonce: Data([0x00]))
+		#expect(
+			throws: MLS.RFC9420.GroupError.wrongPskNonceLength(
+				expected: provider.hashSize, actual: 1)
+		) {
+			try group.committing(
+				provider, proposals: [.proposal(.preSharedKey(badID))],
+				signingKey: solo.signingKey, randomness: .generate(provider))
+		}
+	}
+}

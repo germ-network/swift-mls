@@ -2,13 +2,17 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSFraming
+import MLSKeySchedule
 import MLSTreeMath
 
 extension MLS.RFC9420 {
-	/// `enum { reserved(0), external(1), resumption(2), (255) } PSKType;`
+	/// `enum { reserved(0), external(1), resumption(2), (255) } PSKType;` —
+	/// draft-ietf-mls-extensions-08 §4.5 adds `application(3)` for the PSKs a
+	/// Safe Extensions component derives (an Exporter Tree leaf → `psk_id`/`psk`).
 	public enum PSKType: UInt8, MLSClosedEnum {
 		case external = 1
 		case resumption = 2
+		case application = 3
 	}
 
 	/// `enum { reserved(0), application(1), reinit(2), branch(3), (255) }
@@ -57,6 +61,12 @@ extension MLS.RFC9420 {
 	public enum PreSharedKeyIdentifier: Sendable, Equatable {
 		case external(pskID: Data, nonce: Data)
 		case resumption(ResumptionPSK, nonce: Data)
+		/// draft-ietf-mls-extensions-08 §4.5's application PSK: the `application`
+		/// select arm is `ComponentID component_id; opaque psk_id<V>;`, so on the
+		/// wire this is `component_id` (a §4.1 `uint32`) followed by `psk_id`. Like
+		/// the other arms, `psk_nonce` follows the select. Domain-separates a
+		/// component's PSKs from the core protocol's and from other components'.
+		case application(componentID: MLS.KeySchedule.ComponentID, pskID: Data, nonce: Data)
 	}
 
 	/// `struct { opaque kem_output<V>; } ExternalInit;`
@@ -135,18 +145,52 @@ extension MLS.RFC9420 {
 	}
 }
 
-extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
-	public func encode(to writer: inout MLS.Writer) throws {
+extension MLS.RFC9420.PreSharedKeyIdentifier {
+	/// The `psk_nonce` common to every arm — RFC 9420 §8.4 requires it "a fresh
+	/// random value of length KDF.Nh" (§12.1.4 validates the length on receipt).
+	public var nonce: Data {
 		switch self {
-		case .external(let pskID, let nonce):
+		case .external(_, let nonce): nonce
+		case .resumption(_, let nonce): nonce
+		case .application(_, _, let nonce): nonce
+		}
+	}
+
+	/// The `psktype` + type-specific select fields, *without* the trailing
+	/// `psk_nonce` — the identity `encode(to:)` prepends before the nonce, and the
+	/// key an application PSK's value is stored under (see `applicationStorageID`).
+	func encodeIdentity(to writer: inout MLS.Writer) throws {
+		switch self {
+		case .external(let pskID, _):
 			try writer.encode(MLS.RFC9420.PSKType.external)
 			try writer.writeOpaque(pskID)
-			try writer.writeOpaque(nonce)
-		case .resumption(let resumption, let nonce):
+		case .resumption(let resumption, _):
 			try writer.encode(MLS.RFC9420.PSKType.resumption)
 			try writer.encode(resumption)
-			try writer.writeOpaque(nonce)
+		case .application(let componentID, let pskID, _):
+			try writer.encode(MLS.RFC9420.PSKType.application)
+			writer.writeUInt32(componentID.rawValue)
+			try writer.writeOpaque(pskID)
 		}
+	}
+
+	/// The key an application PSK's value is looked up under — the encoded
+	/// identity *without* the `psk_nonce`, `0x03 ‖ component_id ‖ psk_id<V>`
+	/// (draft-ietf-mls-extensions-08 §4.5; matches the deployed fork's
+	/// `storage_id`). `nil` for non-application ids. Shares `encodeIdentity`, so
+	/// it cannot drift from the wire encoding.
+	public func applicationStorageID() throws -> Data? {
+		guard case .application = self else { return nil }
+		var writer = MLS.Writer()
+		try encodeIdentity(to: &writer)
+		return Data(writer.bytes)
+	}
+}
+
+extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
+	public func encode(to writer: inout MLS.Writer) throws {
+		try encodeIdentity(to: &writer)
+		try writer.writeOpaque(nonce)
 	}
 
 	public init(from reader: inout MLS.Reader) throws {
@@ -157,6 +201,13 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 		case .resumption:
 			let resumption = try MLS.RFC9420.ResumptionPSK(from: &reader)
 			self = .resumption(resumption, nonce: Data(try reader.readOpaque()))
+		case .application:
+			let componentID = MLS.KeySchedule.ComponentID(
+				rawValue: try reader.readUInt32())
+			let pskID = Data(try reader.readOpaque())
+			self = .application(
+				componentID: componentID, pskID: pskID,
+				nonce: Data(try reader.readOpaque()))
 		}
 	}
 }
