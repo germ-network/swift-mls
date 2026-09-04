@@ -10,6 +10,9 @@ extension MLS.RFC9420 {
 		case unknownProposalOrRefType(UInt8)
 		case unknownContentType(MLS.ContentType)
 		case unsupportedProtocolVersion(MLS.ProtocolVersion)
+		/// A `uint32`-form application PSK carried a `component_id ≥ 2^16`, which
+		/// has no Exporter Tree leaf and cannot fit the -09 `uint16 ComponentID`.
+		case componentIDOverflowsUInt16(UInt32)
 		/// RFC 9420 §10: "The field leaf_node.leaf_node_source of the
 		/// LeafNode in a KeyPackage MUST be set to key_package"; §7.3
 		/// restates it as a validation step. A leaf found in a KeyPackage

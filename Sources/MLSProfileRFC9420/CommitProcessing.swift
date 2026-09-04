@@ -780,23 +780,15 @@ extension MLS.RFC9420.Group {
 				}
 
 			case .preSharedKey(let id):
-				// §12.1.4: nonce length equals the suite's KDF.Nh. Read
-				// from the provider -- suite 5 is SHA512 (Nh = 64), which
-				// a hand table gets wrong. The reinit/branch usage
-				// rejection deliberately stays in `resolvePsk`.
-				if case .external(_, let nonce) = id {
-					guard nonce.count == provider.hashSize else {
-						throw MLS.RFC9420.GroupError.wrongPskNonceLength(
-							expected: provider.hashSize,
-							actual: nonce.count)
-					}
-				}
-				if case .resumption(_, let nonce) = id {
-					guard nonce.count == provider.hashSize else {
-						throw MLS.RFC9420.GroupError.wrongPskNonceLength(
-							expected: provider.hashSize,
-							actual: nonce.count)
-					}
+				// §12.1.4: nonce length equals the suite's KDF.Nh, for *every*
+				// psktype (external, resumption, application) — checked via the
+				// common `nonce` accessor so a new arm can't silently skip it.
+				// Read from the provider -- suite 5 is SHA512 (Nh = 64), which a
+				// hand table gets wrong. The reinit/branch usage rejection
+				// deliberately stays in `resolvePsk`.
+				guard id.nonce.count == provider.hashSize else {
+					throw MLS.RFC9420.GroupError.wrongPskNonceLength(
+						expected: provider.hashSize, actual: id.nonce.count)
 				}
 				// §12.2: "Multiple PSK proposals that reference the same
 				// PreSharedKeyID."

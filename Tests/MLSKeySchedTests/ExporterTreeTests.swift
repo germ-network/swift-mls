@@ -103,7 +103,7 @@ struct ExporterTreeTests {
 		var tree = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
 		// Sibling leaf, far leaf, a leaf sharing most of the path, then the target.
 		for id: UInt32 in [0x8001, 0x0000, 0xFFFF, 0x8002] {
-			_ = try tree.safeExportSecret(cs, componentID: id)
+			_ = try tree.safeExportSecret(cs, componentID: .init(UInt16(id)))
 		}
 		let after = try tree.safeExportSecret(cs, componentID: 0x8000)
 		#expect(after == expected)
@@ -127,23 +127,6 @@ struct ExporterTreeTests {
 		#expect(a.byteCount == cs.hashSize)
 	}
 
-	/// A component id at or above 2^16 has no leaf and is rejected, not
-	/// truncated onto an in-range leaf.
-	@Test("component ids at or above 2^16 are rejected")
-	func componentIDsOutOfRangeAreRejected() throws {
-		let cs = try Self.suite1()
-		var tree = try MLS.KeySchedule.ExporterTree(
-			applicationExportSecret: cs.randomBytes(cs.hashSize))
-		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(1 << 16)
-		) {
-			try tree.safeExportSecret(cs, componentID: 1 << 16)
-		}
-		#expect(throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(.max)) {
-			try tree.safeExportSecret(cs, componentID: .max)
-		}
-	}
-
 	/// The consuming walk cross-checked against the stateless `leafSecret` oracle
 	/// (which re-derives from the root every time — the vector-pinned reference
 	/// `SecretTree` documents itself as) across a spread of bit patterns: the
@@ -161,11 +144,23 @@ struct ExporterTreeTests {
 			0, 1, 2, 3, 0x00FF, 0x0100, 0x5555, 0xAAAA, 0xBEEF, 0x7FFF, 0x8000,
 			0x8001, 0xC000, 0xFFFE, 0xFFFF,
 		] {
-			let consumed = try tree.safeExportSecret(cs, componentID: id)
+			let consumed = try tree.safeExportSecret(cs, componentID: .init(UInt16(id)))
 			let oracle = try MLS.KeySchedule.leafSecret(
 				cs, encryptionSecret: root, leafIndex: id,
 				numLeaves: MLS.KeySchedule.ExporterTree.leafCount)
 			#expect(Self.bytes(consumed) == oracle, "component \(id)")
 		}
+	}
+
+	/// `ComponentID` is a `UInt16` identifier: integer-literal ergonomics, a
+	/// `rawValue`, and value equality. The exporter API takes this, not a raw int.
+	@Test("ComponentID wraps a UInt16 with literal and rawValue access")
+	func componentIDContract() {
+		let id: MLS.KeySchedule.ComponentID = 0xFF01
+		#expect(id.rawValue == 0xFF01)
+		#expect(id == MLS.KeySchedule.ComponentID(0xFF01))
+		#expect(id == MLS.KeySchedule.ComponentID(rawValue: 0xFF01))
+		#expect(id != 0xFF02)
+		#expect(MLS.KeySchedule.ComponentID(rawValue: .max).rawValue == UInt16.max)
 	}
 }
