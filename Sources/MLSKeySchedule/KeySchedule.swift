@@ -34,6 +34,10 @@ extension MLS {
 			public let senderDataSecret: SecretBytes
 			public let encryptionSecret: SecretBytes
 			public let exporterSecret: SecretBytes
+			/// draft-ietf-mls-extensions-08 §4.4 Exporter Tree root — a
+			/// sibling of `exporterSecret` off the same epoch_secret; see
+			/// `EpochFanOut.applicationExportSecret`.
+			public let applicationExportSecret: SecretBytes
 			public let epochAuthenticator: Data
 			public let externalSecret: SecretBytes
 			public let externalPublicKey: HpkePublicKey
@@ -102,6 +106,7 @@ extension MLS {
 				senderDataSecret: fanOut.senderDataSecret,
 				encryptionSecret: fanOut.encryptionSecret,
 				exporterSecret: fanOut.exporterSecret,
+				applicationExportSecret: fanOut.applicationExportSecret,
 				epochAuthenticator: fanOut.epochAuthenticator,
 				externalSecret: fanOut.externalSecret,
 				externalPublicKey: fanOut.externalPublicKey,

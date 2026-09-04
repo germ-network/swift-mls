@@ -155,17 +155,27 @@ The subset of the current epoch's key-schedule fan-out this profile retains
 between operations — exactly the unconsumed values. `init_secret` is
 unconsumed until the next commit's key-schedule advance; `membership_key`
 verifies every incoming `PublicMessage` this epoch; `exporter_secret` backs
-the exporter for the epoch's lifetime; `epoch_authenticator` is the value
-RFC 9420 exposes to applications.
+the exporter for the epoch's lifetime; `application_export_secret` is the
+draft-ietf-mls-extensions-08 §4.4 Exporter Tree root, retained the same way to
+seed `SafeExportSecret` for the epoch's lifetime; `epoch_authenticator` is the
+value RFC 9420 exposes to applications.
 
 ```
 EpochSecrets = {
-    0: init_secret           ; bstr  SECRET  (Nh)
-    1: exporter_secret       ; bstr  SECRET  (Nh)
-    2: epoch_authenticator   ; bstr  (Nh)   — public, not SECRET
-    3: membership_key        ; bstr  SECRET  (Nh)
+    0: init_secret                ; bstr  SECRET  (Nh)
+    1: exporter_secret            ; bstr  SECRET  (Nh)
+    2: epoch_authenticator        ; bstr  (Nh)   — public, not SECRET
+    3: membership_key             ; bstr  SECRET  (Nh)
+    4: application_export_secret  ; bstr  SECRET  (Nh)
 }
 ```
+
+`application_export_secret` (key 4) persists the Exporter Tree's root seed, not
+the tree's consumption state: a restored group rebuilds a fresh tree, so a
+component consumed before archiving can be exported again after restore — a
+bounded, deliberate forward-secrecy relaxation across the archive boundary (the
+seed itself is already in the archive; the derivation is deterministic and
+per-component independent). See `Group.safeExportSecret`.
 
 `epoch_authenticator` is **not** secret-marked. RFC 9420 §8.7 designs it as an
 out-of-band comparison value — members read it and confirm it against each

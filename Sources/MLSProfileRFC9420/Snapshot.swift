@@ -64,6 +64,10 @@ extension MLS.RFC9420.Group {
 		@SecretField var exporterSecret: SecretBytes
 		var epochAuthenticator: Data
 		@SecretField var membershipKey: SecretBytes
+		/// draft-ietf-mls-extensions-08 §4.4 Exporter Tree root — a retained
+		/// per-epoch secret, persisted like `exporterSecret`. Consumption state
+		/// of the tree itself is not persisted; see `Group.safeExportSecret`.
+		@SecretField var applicationExportSecret: SecretBytes
 
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case initSecret = 0
@@ -71,6 +75,7 @@ extension MLS.RFC9420.Group {
 			case epochAuthenticator = 2
 			case
 				membershipKey = 3
+			case applicationExportSecret = 4
 		}
 	}
 
@@ -230,7 +235,8 @@ extension MLS.RFC9420.Group {
 			epochSecrets: EpochSecretsArchive(
 				initSecret: epoch.initSecret, exporterSecret: epoch.exporterSecret,
 				epochAuthenticator: epoch.epochAuthenticator,
-				membershipKey: epoch.membershipKey),
+				membershipKey: epoch.membershipKey,
+				applicationExportSecret: epoch.applicationExportSecret),
 			treeSecretKeys: treeSecretKeysMap,
 			resumptionPsks: resumptionPsksMap,
 			messageSecrets: messageSecretsMap,
@@ -369,6 +375,9 @@ extension MLS.RFC9420.Group {
 		try requireLength(
 			snapshot.epochSecrets.exporterSecret.byteCount, nh, "exporter_secret")
 		try requireLength(
+			snapshot.epochSecrets.applicationExportSecret.byteCount, nh,
+			"application_export_secret")
+		try requireLength(
 			snapshot.epochSecrets.epochAuthenticator.count, nh, "epoch_authenticator")
 		try requireLength(
 			snapshot.epochSecrets.membershipKey.byteCount, nh, "membership_key")
@@ -395,6 +404,7 @@ extension MLS.RFC9420.Group {
 		let epoch = MLS.RFC9420.Group.EpochSecrets(
 			restoringInitSecret: snapshot.epochSecrets.initSecret,
 			exporterSecret: snapshot.epochSecrets.exporterSecret,
+			applicationExportSecret: snapshot.epochSecrets.applicationExportSecret,
 			epochAuthenticator: snapshot.epochSecrets.epochAuthenticator,
 			membershipKey: snapshot.epochSecrets.membershipKey)
 

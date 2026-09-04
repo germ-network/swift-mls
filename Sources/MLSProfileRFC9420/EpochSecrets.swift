@@ -51,6 +51,10 @@ extension MLS.RFC9420.Group {
 	public struct EpochSecrets: Sendable {
 		public let initSecret: SecretBytes
 		public let exporterSecret: SecretBytes
+		/// draft-ietf-mls-extensions-08 §4.4's Exporter Tree root, retained for
+		/// the epoch's lifetime the same way `exporterSecret` is: it seeds the
+		/// group's `safeExportSecret` for every component of this epoch.
+		public let applicationExportSecret: SecretBytes
 		/// `Data`, not `SecretBytes`: RFC 9420 §8.7's public out-of-band
 		/// authenticator, read and compared by applications — see
 		/// `MLS.KeySchedule.Epoch`. Non-confidential (§8.7: it is designed for
@@ -64,6 +68,7 @@ extension MLS.RFC9420.Group {
 		init(retaining fanOut: MLS.KeySchedule.EpochFanOut) {
 			self.initSecret = fanOut.initSecret
 			self.exporterSecret = fanOut.exporterSecret
+			self.applicationExportSecret = fanOut.applicationExportSecret
 			self.epochAuthenticator = fanOut.epochAuthenticator
 			self.membershipKey = fanOut.membershipKey
 		}
@@ -71,6 +76,7 @@ extension MLS.RFC9420.Group {
 		init(retaining epoch: MLS.KeySchedule.Epoch) {
 			self.initSecret = epoch.initSecret
 			self.exporterSecret = epoch.exporterSecret
+			self.applicationExportSecret = epoch.applicationExportSecret
 			self.epochAuthenticator = epoch.epochAuthenticator
 			self.membershipKey = epoch.membershipKey
 		}
@@ -82,10 +88,12 @@ extension MLS.RFC9420.Group {
 		/// already-retained values, not a fan-out to select from.
 		init(
 			restoringInitSecret initSecret: SecretBytes, exporterSecret: SecretBytes,
+			applicationExportSecret: SecretBytes,
 			epochAuthenticator: Data, membershipKey: SecretBytes
 		) {
 			self.initSecret = initSecret
 			self.exporterSecret = exporterSecret
+			self.applicationExportSecret = applicationExportSecret
 			self.epochAuthenticator = epochAuthenticator
 			self.membershipKey = membershipKey
 		}

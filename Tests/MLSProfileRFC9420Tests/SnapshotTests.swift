@@ -442,10 +442,12 @@ struct SnapshotTests {
 		assertClassification(
 			Group.EpochSecretsArchive(
 				initSecret: secret, exporterSecret: secret,
-				epochAuthenticator: Data([0]), membershipKey: secret),
+				epochAuthenticator: Data([0]), membershipKey: secret,
+				applicationExportSecret: secret),
 			[
 				"initSecret": .secret, "exporterSecret": .secret,
 				"epochAuthenticator": .plain, "membershipKey": .secret,
+				"applicationExportSecret": .secret,
 			])
 
 		// §4.3 store — group_context is public wire bytes; signature_keys are

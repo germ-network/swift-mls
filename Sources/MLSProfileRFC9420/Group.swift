@@ -49,6 +49,15 @@ extension MLS.RFC9420 {
 		/// `retention.messageSecretsDepth`. See `MessageProtection.swift`.
 		var messageSecrets: [UInt64: MessageSecrets] = [:]
 
+		/// The current epoch's draft §4.4 Exporter Tree, lazily built from
+		/// `epoch.applicationExportSecret` on the first `safeExportSecret` and
+		/// mutated as components are consumed. Keyed by epoch so a stale entry is
+		/// never read after an advance; only the current epoch is ever kept (past
+		/// epochs' seeds are not retained). Not persisted: `restore` rebuilds a
+		/// fresh tree from the retained seed, so consumption state does not
+		/// survive an archive round-trip — see `safeExportSecret`.
+		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
+
 		/// Self-proposed Updates awaiting a commit, seeded by `proposeUpdate`
 		/// and consumed by `processing` when a landing commit applies one —
 		/// `secretKeys` only ever tracks keys a *commit* this member saw
