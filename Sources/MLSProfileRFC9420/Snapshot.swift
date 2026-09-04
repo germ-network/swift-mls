@@ -304,7 +304,7 @@ extension MLS.RFC9420.Group {
 		(UInt64(key.leaf.value) << 1) | (key.isHandshake ? 0 : 1)
 	}
 
-	private static func makeChain(_ chain: RatchetChain) -> ChainArchive {
+	private static func makeChain(_ chain: MLS.KeySchedule.RatchetChain) -> ChainArchive {
 		let skipped = MLS.RFC9420.IntegerKeyedMap(
 			Dictionary(
 				uniqueKeysWithValues: chain.skipped.map {
@@ -557,10 +557,10 @@ extension MLS.RFC9420.Group {
 			}
 			nodeSecrets[node] = secret.wrappedValue
 		}
-		let secretTree = ConsumingSecretTree(
+		let secretTree = MLS.KeySchedule.ConsumingSecretTree(
 			restoringNodeSecrets: nodeSecrets, leafCount: leafCount)
 
-		var chains: [MessageSecrets.ChainKey: RatchetChain] = [:]
+		var chains: [MessageSecrets.ChainKey: MLS.KeySchedule.RatchetChain] = [:]
 		for (packed, chainArchive) in archive.chains.entries {
 			let leafValue = packed >> 1
 			guard leafValue < UInt64(leafCount.value) else {
@@ -583,7 +583,7 @@ extension MLS.RFC9420.Group {
 
 	private static func restoreChain(
 		_ archive: ChainArchive, nh: Int, nk: Int, nn: Int
-	) throws -> RatchetChain {
+	) throws -> MLS.KeySchedule.RatchetChain {
 		// spec/snapshot.md §4.3: skipped keys MUST be < head_generation. This
 		// runs on the on-wire UInt64 head_generation (2^32 for a retired chain)
 		// BEFORE it is narrowed to the in-memory UInt32 — checking against the
@@ -613,7 +613,7 @@ extension MLS.RFC9420.Group {
 					headSecretPresent: true)
 			}
 			try requireLength(headSecret.wrappedValue.byteCount, nh, "head_secret")
-			return RatchetChain(
+			return MLS.KeySchedule.RatchetChain(
 				headGeneration: UInt32(archive.headGeneration),
 				headSecret: headSecret.wrappedValue, skipped: skipped)
 		}
@@ -623,7 +623,8 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.SnapshotError.malformedChainRetirement(
 				headGeneration: archive.headGeneration, headSecretPresent: false)
 		}
-		return RatchetChain(headGeneration: 0, headSecret: nil, skipped: skipped)
+		return MLS.KeySchedule.RatchetChain(
+			headGeneration: 0, headSecret: nil, skipped: skipped)
 	}
 
 	private static func restoreOwnNextGeneration(

@@ -223,27 +223,30 @@ struct ApplicationMessageTests {
 		#expect(data == Data("the real message".utf8))
 	}
 
-	/// The consuming walker against the stateless vector-pinned oracle:
-	/// every leaf of an 8-leaf tree, derived in adversarial order, must
-	/// equal `MLS.KeySchedule.leafSecret`.
-	@Test("the consuming secret tree agrees with the stateless oracle on every leaf")
-	func consumingTreeMatchesOracle() throws {
-		let provider = Self.provider
-		let encryptionSecret = provider.randomBytes(provider.hashSize)
-		let leafCount = try MLS.LeafCount(validating: 8)
-		var tree = try MLS.RFC9420.Group.ConsumingSecretTree(
-			encryptionSecret: encryptionSecret, leafCount: leafCount)
-		for leaf in [5, 0, 7, 2, 6, 1, 3, 4] {
-			let index = MLS.LeafIndex(value: UInt32(leaf))
-			let consumed = try tree.consumeLeafSecret(for: index, provider)
-			let oracle = try MLS.KeySchedule.leafSecret(
-				provider, encryptionSecret: encryptionSecret,
-				leafIndex: UInt32(leaf), numLeaves: leafCount)
-			#expect(consumed.withUnsafeBytes { Data($0) } == oracle, "leaf \(leaf)")
-		}
-		// And the root is long gone: no leaf can be derived twice.
-		#expect(throws: MLS.RFC9420.GroupError.self) {
-			_ = try tree.consumeLeafSecret(for: .init(value: 3), provider)
+	/// After the epoch's secret tree is fully consumed, a message from a leaf
+	/// with no chain surfaces as this layer's public replay error, not the
+	/// relocated mechanism's `package` `SecretTreeError` — the error contract
+	/// the ratchet-mechanism relocation preserves.
+	@Test(
+		"an exhausted secret-tree subtree surfaces as generationAlreadyConsumed, not SecretTreeError"
+	)
+	func exhaustedSubtreeMapsToReplayError() throws {
+		var d = try Self.duo()
+		let epoch = d.groupB.context.epoch
+		// Force the epoch's consuming tree fully consumed (empty frontier) and
+		// clear its chains, so the next derive re-bootstraps and the tree walk
+		// finds no held ancestor — the exhaustion path.
+		let leafCount = d.groupB.messageSecrets[epoch]!.tree.leafCount
+		d.groupB.messageSecrets[epoch]!.tree = MLS.KeySchedule.ConsumingSecretTree(
+			restoringNodeSecrets: [:], leafCount: leafCount)
+		d.groupB.messageSecrets[epoch]!.chains = [:]
+		let msg = try d.groupA.protect(
+			Self.provider, applicationData: Data("x".utf8),
+			signingKey: d.alice.signingKey)
+		#expect(
+			throws: MLS.RFC9420.GroupError.generationAlreadyConsumed(generation: 0)
+		) {
+			_ = try d.groupB.unprotect(Self.provider, message: msg)
 		}
 	}
 }
