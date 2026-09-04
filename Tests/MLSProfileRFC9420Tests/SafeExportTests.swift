@@ -36,7 +36,7 @@ struct SafeExportTests {
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: epochSecret)
 		var tree = try MLS.KeySchedule.ExporterTree(
 			applicationExportSecret: fanOut.applicationExportSecret)
-		return try tree.safeExportSecret(provider, componentID: componentID)
+		return try tree.safeExportSecret(provider, componentID: .init(componentID))
 	}
 
 	@Test("a group's export matches an independent derivation from the same epoch secret")
@@ -46,7 +46,7 @@ struct SafeExportTests {
 		var group = try Self.soloGroup(epochSecret: seed)
 		for id: UInt32 in [0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF] {
 			#expect(
-				try group.safeExportSecret(provider, componentID: id)
+				try group.safeExportSecret(provider, componentID: .init(id))
 					== Self.independentExport(epochSecret: seed, id))
 		}
 	}
@@ -68,9 +68,10 @@ struct SafeExportTests {
 		let provider = Self.provider
 		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
 		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(1 << 16)
+			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(
+				.init(1 << 16))
 		) {
-			try group.safeExportSecret(provider, componentID: 1 << 16)
+			try group.safeExportSecret(provider, componentID: .init(1 << 16))
 		}
 	}
 

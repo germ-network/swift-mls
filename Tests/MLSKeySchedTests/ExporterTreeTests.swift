@@ -103,7 +103,7 @@ struct ExporterTreeTests {
 		var tree = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
 		// Sibling leaf, far leaf, a leaf sharing most of the path, then the target.
 		for id: UInt32 in [0x8001, 0x0000, 0xFFFF, 0x8002] {
-			_ = try tree.safeExportSecret(cs, componentID: id)
+			_ = try tree.safeExportSecret(cs, componentID: .init(id))
 		}
 		let after = try tree.safeExportSecret(cs, componentID: 0x8000)
 		#expect(after == expected)
@@ -135,12 +135,16 @@ struct ExporterTreeTests {
 		var tree = try MLS.KeySchedule.ExporterTree(
 			applicationExportSecret: cs.randomBytes(cs.hashSize))
 		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(1 << 16)
+			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(
+				.init(1 << 16))
 		) {
-			try tree.safeExportSecret(cs, componentID: 1 << 16)
+			try tree.safeExportSecret(cs, componentID: .init(1 << 16))
 		}
-		#expect(throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(.max)) {
-			try tree.safeExportSecret(cs, componentID: .max)
+		#expect(
+			throws: MLS.KeySchedule.ExporterTree.ExportError.invalidComponentID(
+				.init(.max))
+		) {
+			try tree.safeExportSecret(cs, componentID: .init(.max))
 		}
 	}
 
@@ -161,11 +165,23 @@ struct ExporterTreeTests {
 			0, 1, 2, 3, 0x00FF, 0x0100, 0x5555, 0xAAAA, 0xBEEF, 0x7FFF, 0x8000,
 			0x8001, 0xC000, 0xFFFE, 0xFFFF,
 		] {
-			let consumed = try tree.safeExportSecret(cs, componentID: id)
+			let consumed = try tree.safeExportSecret(cs, componentID: .init(id))
 			let oracle = try MLS.KeySchedule.leafSecret(
 				cs, encryptionSecret: root, leafIndex: id,
 				numLeaves: MLS.KeySchedule.ExporterTree.leafCount)
 			#expect(Self.bytes(consumed) == oracle, "component \(id)")
 		}
+	}
+
+	/// `ComponentID` is a `UInt32` identifier: integer-literal ergonomics, a
+	/// `rawValue`, and value equality. The exporter API takes this, not a raw int.
+	@Test("ComponentID wraps a UInt32 with literal and rawValue access")
+	func componentIDContract() {
+		let id: MLS.KeySchedule.ComponentID = 0xFF01
+		#expect(id.rawValue == 0xFF01)
+		#expect(id == MLS.KeySchedule.ComponentID(0xFF01))
+		#expect(id == MLS.KeySchedule.ComponentID(rawValue: 0xFF01))
+		#expect(id != 0xFF02)
+		#expect(MLS.KeySchedule.ComponentID(rawValue: .max).rawValue == UInt32.max)
 	}
 }

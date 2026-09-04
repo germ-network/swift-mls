@@ -20,7 +20,7 @@ extension MLS.RFC9420.Group {
 	/// the root. Matches the deployed fork, which holds and serializes
 	/// `ExporterTree(SecretTree)`, never the root seed.
 	public mutating func safeExportSecret(
-		_ provider: any MLS.CipherSuiteProvider, componentID: UInt32
+		_ provider: any MLS.CipherSuiteProvider, componentID: MLS.KeySchedule.ComponentID
 	) throws -> SecretBytes {
 		let epochNumber = context.epoch
 		// Built by `installMessageSecrets` on every epoch-entry path and by
