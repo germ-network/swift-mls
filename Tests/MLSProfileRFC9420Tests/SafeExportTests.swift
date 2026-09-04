@@ -9,30 +9,45 @@ import Testing
 @testable import MLSProfileRFC9420
 
 /// `Group.safeExportSecret` — the profile wiring over the #46 Exporter Tree
-/// mechanism (draft-ietf-mls-extensions-08 §4.4). Each test bridges the group
-/// API back to a fresh `ExporterTree` built from the group's own retained
-/// `application_export_secret`, so a wiring error (wrong seed, stale epoch,
-/// lost consumption) is caught against an independent derivation.
+/// mechanism (draft-ietf-mls-extensions-08 §4.4). The group holds the
+/// *consuming* tree, never the `application_export_secret` root, so a consumed
+/// component cannot be re-derived (RFC 9420 §9.2 forward secrecy) — live or
+/// across an archive. The independent oracle re-derives from a known
+/// `epoch_secret` via the public component API, since the group keeps no seed.
 @Suite("Group.safeExportSecret (mls-extensions §4.4 wiring)")
 struct SafeExportTests {
 	static let provider = SelfInteropTests.provider
 
-	/// The independent oracle: a fresh tree from the group's retained seed.
-	static func oracle(_ group: MLS.RFC9420.Group, _ componentID: UInt32) throws
+	/// A solo group created from a *known* epoch secret, so an independent
+	/// derivation can be compared against it.
+	static func soloGroup(epochSecret: Data) throws -> MLS.RFC9420.Group {
+		let founder = try SelfInteropTests.member("solo")
+		return try MLS.RFC9420.Group.create(
+			provider, groupID: provider.randomBytes(provider.hashSize),
+			leafNode: founder.keyPackage.leafNode,
+			leafSecretKey: founder.leafSecretKey, epochSecret: epochSecret)
+	}
+
+	/// The independent oracle: derive the exporter root from `epochSecret` via
+	/// the public `fromEpochSecret`, build a fresh tree, export the component.
+	static func independentExport(epochSecret: Data, _ componentID: UInt32) throws
 		-> SecretBytes
 	{
+		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: epochSecret)
 		var tree = try MLS.KeySchedule.ExporterTree(
-			applicationExportSecret: group.epoch.applicationExportSecret)
+			applicationExportSecret: fanOut.applicationExportSecret)
 		return try tree.safeExportSecret(provider, componentID: componentID)
 	}
 
-	@Test("a group's export equals a fresh tree built from its retained seed")
-	func groupExportMatchesSeedOracle() throws {
+	@Test("a group's export matches an independent derivation from the same epoch secret")
+	func groupExportMatchesIndependentDerivation() throws {
 		let provider = Self.provider
-		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+		let seed = Data(repeating: 0x5A, count: provider.hashSize)
+		var group = try Self.soloGroup(epochSecret: seed)
 		for id: UInt32 in [0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF] {
-			let expected = try Self.oracle(group, id)
-			#expect(try group.safeExportSecret(provider, componentID: id) == expected)
+			#expect(
+				try group.safeExportSecret(provider, componentID: id)
+					== Self.independentExport(epochSecret: seed, id))
 		}
 	}
 
@@ -97,31 +112,49 @@ struct SafeExportTests {
 		#expect(e2a != e1a)
 	}
 
-	/// A prior epoch's exporter tree is scrubbed on advance: its seed is dropped
-	/// with the old `EpochSecrets`, so a lingering cached tree would be the only
-	/// surviving copy of that epoch's not-yet-exported component material.
-	@Test("a prior epoch's exporter tree is pruned on epoch advance")
-	func staleExporterTreePrunedOnAdvance() throws {
+	/// The exporter tree is built at install and reset to the current epoch on
+	/// every advance, so a past epoch's tree — which would be the only surviving
+	/// copy of that epoch's not-yet-exported component material — never lingers.
+	@Test("the exporter tree is reset to the current epoch on advance")
+	func exporterTreeResetOnAdvance() throws {
 		let provider = Self.provider
 		let alice = try SelfInteropTests.member("alice")
 		let bob = try SelfInteropTests.member("bob")
 
 		var groupA = try SelfInteropTests.createGroup(alice)
+		#expect(groupA.exporterTrees[0] != nil)  // built at create's install
 		_ = try groupA.safeExportSecret(provider, componentID: 3)
-		#expect(groupA.exporterTrees.keys.contains(0))
 
 		let add = try groupA.committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
-		#expect(groupA.exporterTrees[0] == nil)
-		#expect(groupA.exporterTrees.isEmpty)
+		#expect(groupA.exporterTrees[0] == nil)  // prior epoch dropped
+		#expect(groupA.exporterTrees[1] != nil)  // current epoch built
+		#expect(groupA.exporterTrees.count == 1)
 	}
 
-	/// The retained seed round-trips through archive/restore, so a restored group
-	/// exports the same bytes a fresh tree from the pre-archive seed would.
-	@Test("export survives an archive/restore round-trip")
-	func exportSurvivesRestore() throws {
+	/// A restored group exports exactly what an independent derivation from the
+	/// same epoch secret would — restore rebuilds the tree from its persisted
+	/// frontier, functionally intact, with no wiring drift.
+	@Test("a restored group exports the same as an independent derivation")
+	func restoredExportMatchesIndependentDerivation() throws {
+		let provider = Self.provider
+		let seed = Data(repeating: 0x2B, count: provider.hashSize)
+		let group = try Self.soloGroup(epochSecret: seed)
+		var restored = try MLS.RFC9420.Group.restore(from: try group.archive(), provider)
+		#expect(
+			try restored.safeExportSecret(provider, componentID: 0x1234)
+				== Self.independentExport(epochSecret: seed, 0x1234))
+	}
+
+	/// Forward secrecy across the archive boundary: a component consumed before
+	/// archiving cannot be re-derived after restore. The snapshot persists the
+	/// tree's surviving frontier — the consumed component's path (and the root)
+	/// are gone — so restore cannot re-derive it, while an unconsumed component
+	/// still exports. Retaining the root would break both halves.
+	@Test("a consumed component stays consumed across archive/restore")
+	func consumedComponentStaysConsumedAcrossRestore() throws {
 		let provider = Self.provider
 		let alice = try SelfInteropTests.member("alice")
 		let bob = try SelfInteropTests.member("bob")
@@ -131,12 +164,24 @@ struct SafeExportTests {
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
-		let groupB = try MLS.RFC9420.Group.join(
+		var groupB = try MLS.RFC9420.Group.join(
 			provider, welcome: try #require(add.welcome),
 			credentials: bob.joinCredentials, psk: { _ in nil })
 
-		let expected = try Self.oracle(groupB, 9)
+		// Consume 0xFF01, then archive + restore.
+		_ = try groupB.safeExportSecret(provider, componentID: 0xFF01)
 		var restored = try MLS.RFC9420.Group.restore(from: try groupB.archive(), provider)
-		#expect(try restored.safeExportSecret(provider, componentID: 9) == expected)
+
+		// FS: the consumed component is unrecoverable after restore.
+		#expect(
+			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(
+				0xFF01)
+		) {
+			try restored.safeExportSecret(provider, componentID: 0xFF01)
+		}
+		// An unconsumed component still exports, and matches the pre-archive tree.
+		let restoredFF02 = try restored.safeExportSecret(provider, componentID: 0xFF02)
+		#expect(restoredFF02.byteCount == provider.hashSize)
+		#expect(try groupB.safeExportSecret(provider, componentID: 0xFF02) == restoredFF02)
 	}
 }

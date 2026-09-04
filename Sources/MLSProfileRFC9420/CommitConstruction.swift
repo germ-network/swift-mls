@@ -100,7 +100,9 @@ extension MLS.RFC9420.Group {
 			resumptionPsks: [0: fanOut.resumptionPsk])
 		try group.installMessageSecrets(
 			context: context, senderDataSecret: fanOut.senderDataSecret,
-			encryptionSecret: fanOut.encryptionSecret, tree: tree, provider)
+			encryptionSecret: fanOut.encryptionSecret,
+			applicationExportSecret: fanOut.applicationExportSecret, tree: tree,
+			provider)
 		return group
 	}
 
@@ -336,7 +338,9 @@ extension MLS.RFC9420.Group {
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
 		try updated.installMessageSecrets(
 			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
-			encryptionSecret: newEpoch.encryptionSecret, tree: newTree, provider)
+			encryptionSecret: newEpoch.encryptionSecret,
+			applicationExportSecret: newEpoch.applicationExportSecret, tree: newTree,
+			provider)
 
 		let welcome = try makeWelcome(
 			provider, resolved: resolved, applied: applied, stage: stage,

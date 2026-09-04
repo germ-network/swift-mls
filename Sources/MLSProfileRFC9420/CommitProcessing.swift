@@ -526,7 +526,9 @@ extension MLS.RFC9420.Group {
 		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
 		try updated.installMessageSecrets(
 			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
-			encryptionSecret: newEpoch.encryptionSecret, tree: provisionalTree,
+			encryptionSecret: newEpoch.encryptionSecret,
+			applicationExportSecret: newEpoch.applicationExportSecret,
+			tree: provisionalTree,
 			provider)
 		return updated
 	}

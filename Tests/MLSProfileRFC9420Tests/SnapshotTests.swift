@@ -435,19 +435,17 @@ struct SnapshotTests {
 				"interimTranscriptHash": .plain, "myLeafIndex": .plain,
 				"epochSecrets": .plain, "treeSecretKeys": .secret,
 				"resumptionPsks": .secret, "messageSecrets": .plain,
-				"retention": .plain, "config": .plain,
+				"retention": .plain, "config": .plain, "exporterTree": .plain,
 			])
 
 		// §4.2 — epoch_authenticator is public (RFC 9420 §8.7).
 		assertClassification(
 			Group.EpochSecretsArchive(
 				initSecret: secret, exporterSecret: secret,
-				epochAuthenticator: Data([0]), membershipKey: secret,
-				applicationExportSecret: secret),
+				epochAuthenticator: Data([0]), membershipKey: secret),
 			[
 				"initSecret": .secret, "exporterSecret": .secret,
 				"epochAuthenticator": .plain, "membershipKey": .secret,
-				"applicationExportSecret": .secret,
 			])
 
 		// §4.3 store — group_context is public wire bytes; signature_keys are

@@ -120,6 +120,8 @@ Snapshot = {
     8: message_secrets       ; { + uint => MessageSecretStore }
     9: retention             ; Retention
   ? 10: config               ; Config — absent when empty
+    11: exporter_tree        ; SecretTreeState (§4.6), the current epoch's
+                             ;   Exporter Tree frontier
 }
 ```
 
@@ -155,10 +157,10 @@ The subset of the current epoch's key-schedule fan-out this profile retains
 between operations — exactly the unconsumed values. `init_secret` is
 unconsumed until the next commit's key-schedule advance; `membership_key`
 verifies every incoming `PublicMessage` this epoch; `exporter_secret` backs
-the exporter for the epoch's lifetime; `application_export_secret` is the
-draft-ietf-mls-extensions-08 §4.4 Exporter Tree root, retained the same way to
-seed `SafeExportSecret` for the epoch's lifetime; `epoch_authenticator` is the
-value RFC 9420 exposes to applications.
+the exporter for the epoch's lifetime; `epoch_authenticator` is the value RFC
+9420 exposes to applications. The draft §4.4 Exporter Tree is **not** here: its
+root (`application_export_secret`) must not be retained past the first export
+(RFC 9420 §9.2), so §4.6 persists the tree's consuming frontier instead.
 
 ```
 EpochSecrets = {
@@ -166,16 +168,8 @@ EpochSecrets = {
     1: exporter_secret            ; bstr  SECRET  (Nh)
     2: epoch_authenticator        ; bstr  (Nh)   — public, not SECRET
     3: membership_key             ; bstr  SECRET  (Nh)
-    4: application_export_secret  ; bstr  SECRET  (Nh)
 }
 ```
-
-`application_export_secret` (key 4) persists the Exporter Tree's root seed, not
-the tree's consumption state: a restored group rebuilds a fresh tree, so a
-component consumed before archiving can be exported again after restore — a
-bounded, deliberate forward-secrecy relaxation across the archive boundary (the
-seed itself is already in the archive; the derivation is deterministic and
-per-component independent). See `Group.safeExportSecret`.
 
 `epoch_authenticator` is **not** secret-marked. RFC 9420 §8.7 designs it as an
 out-of-band comparison value — members read it and confirm it against each
@@ -272,6 +266,32 @@ config keys; the section MUST be absent. When a future format defines
 configuration, an unsupported value MUST fail decode — a group is never
 silently restored under different rules than it was persisted under.
 
+### 4.6 Exporter Tree
+
+The current epoch's draft-ietf-mls-extensions-08 §4.4 Exporter Tree — an RFC
+9420 §9 Secret Tree fixed at 2^16 leaves, rooted at `application_export_secret`
+(`DeriveSecret(epoch_secret, "application_export")`) and indexed by a
+`ComponentID`. It is persisted as a `SecretTreeState`, the same shape §4.3's
+`secret_tree` uses: the surviving node-secret **frontier**, never the root.
+
+```
+SecretTreeState = {
+    0: leaf_count    ; uint, MUST be 2^16 for the Exporter Tree
+    1: node_secrets  ; { + uint => bstr }  SECRET values, length Nh
+}
+```
+
+Persisting the frontier and not the root is what keeps forward secrecy across
+the archive. `SafeExportSecret` consumes a component and deletes its
+root-to-leaf path (RFC 9420 §9.2, invoked by draft §4.4) — including the root,
+which the first export splits and deletes — so a component consumed before
+archiving has no surviving node on its path and cannot be re-derived after
+restore. The root, from which every component (consumed or not) could be
+re-derived, is therefore never persisted; this matches the deployed peer, which
+serializes its `ExporterTree(SecretTree)`, not the root. Only the current
+epoch's tree is kept. A decoder MUST reject a `leaf_count` other than 2^16 and
+a `node_secrets` index outside a 2^16-leaf tree.
+
 ## 5. Versioning
 
 `format` is required and is the only version in this format; sections do not
@@ -280,9 +300,9 @@ is a new `format` value plus an explicit, specified transform from the
 previous one — never a silent reinterpretation of existing fields.
 
 Format 1 is **not frozen** until the wire cut: while the target is still under
-development it may gain required fields in place (e.g. `application_export_secret`,
-key 4 of §4.2) without a `format` bump, so an archive written by an earlier build
-may fail to decode against a later one. There is no persisted archive corpus to
+development it may gain required fields in place (e.g. `exporter_tree`, key 11
+of §4.1) without a `format` bump, so an archive written by an earlier build may
+fail to decode against a later one. There is no persisted archive corpus to
 preserve pre-cut. Once the wire is cut, format 1 freezes and this in-place-growth
 allowance ends — any later change takes a new `format` value under the rule above.
 

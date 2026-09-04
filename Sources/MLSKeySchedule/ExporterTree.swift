@@ -39,6 +39,21 @@ extension MLS.KeySchedule {
 			)
 		}
 
+		/// The surviving node secrets — the §9.2 frontier after any consumption.
+		/// Persisting *this* (not the root) is what lets a restored tree keep its
+		/// forward secrecy: a consumed component's path nodes are absent here, so
+		/// it cannot be re-derived. Retaining the root instead would re-derive
+		/// every component, defeating the consume-once deletion.
+		public var frontier: [UInt32: SecretBytes] { tree.nodeSecrets }
+
+		/// Restores a tree from a persisted `frontier`, at the fixed 2^16 leaves.
+		/// The root is *not* an input — an already-consumed component stays
+		/// unrecoverable, unlike a root-seeded rebuild.
+		public init(restoringFrontier frontier: [UInt32: SecretBytes]) {
+			self.tree = ConsumingSecretTree(
+				restoringNodeSecrets: frontier, leafCount: Self.leafCount)
+		}
+
 		public enum ExportError: Error, Sendable, Equatable {
 			/// `component_id ≥ 2^16` — outside the Exporter Tree's leaf range.
 			case invalidComponentID(UInt32)

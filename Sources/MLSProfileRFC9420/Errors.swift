@@ -89,6 +89,10 @@ extension MLS.RFC9420 {
 		/// project-wide, so a non-member sender is rejected rather than
 		/// silently mishandled.
 		case unsupportedSender
+		/// `safeExportSecret` found no Exporter Tree for the current epoch — an
+		/// internal inconsistency (every epoch-entry path and `restore` install
+		/// one), surfaced rather than force-unwrapped.
+		case exporterTreeUnavailable
 		/// The commit's sender names a blank leaf.
 		case blankSenderLeaf
 		/// S22: a by-reference proposal names a `ProposalRef` the caller's

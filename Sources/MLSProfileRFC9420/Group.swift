@@ -49,15 +49,16 @@ extension MLS.RFC9420 {
 		/// `retention.messageSecretsDepth`. See `MessageProtection.swift`.
 		var messageSecrets: [UInt64: MessageSecrets] = [:]
 
-		/// The current epoch's draft §4.4 Exporter Tree, lazily built from
-		/// `epoch.applicationExportSecret` on the first `safeExportSecret` and
-		/// mutated as components are consumed. Keyed by epoch so a stale entry is
-		/// never read after an advance, and pruned to the current epoch on every
-		/// epoch install (`installMessageSecrets`) so a past epoch's tree never
-		/// outlives its epoch (past epochs' seeds are not retained). Not
-		/// persisted: `restore` rebuilds a fresh tree from the retained seed, so
-		/// consumption state does not survive an archive round-trip — see
-		/// `safeExportSecret`.
+		/// The current epoch's draft §4.4 Exporter Tree — the *consuming* tree,
+		/// built at epoch install from `application_export_secret` and mutated as
+		/// components are consumed. The raw root is **not** kept (it goes into the
+		/// tree and is deleted on the first split), so a consumed component cannot
+		/// be re-derived — the forward secrecy RFC 9420 §9.2 requires. Keyed by
+		/// epoch and reset to the current epoch on every install
+		/// (`installMessageSecrets`) so a past epoch's tree never outlives it. The
+		/// snapshot persists this tree's surviving *frontier*, not the root, so FS
+		/// holds across an archive round-trip too (`Snapshot.swift`,
+		/// `safeExportSecret`).
 		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
 
 		/// Self-proposed Updates awaiting a commit, seeded by `proposeUpdate`
@@ -349,7 +350,9 @@ extension MLS.RFC9420.Group {
 		try group.installMessageSecrets(
 			context: groupInfo.groupContext,
 			senderDataSecret: epoch.senderDataSecret,
-			encryptionSecret: epoch.encryptionSecret, tree: tree, provider)
+			encryptionSecret: epoch.encryptionSecret,
+			applicationExportSecret: epoch.applicationExportSecret, tree: tree, provider
+		)
 		return group
 	}
 }
