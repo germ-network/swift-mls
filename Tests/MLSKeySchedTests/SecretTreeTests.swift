@@ -74,6 +74,32 @@ struct SecretTreeTests {
 		#expect(nonce == record.senderData.nonce.bytes)
 	}
 
+	/// The consuming walker against the stateless vector-pinned oracle:
+	/// every leaf of an 8-leaf tree, derived in adversarial order, must equal
+	/// `leafSecret`. Homed beside the oracle it is differentially tested
+	/// against (the walker relocated here from the RFC 9420 profile).
+	@Test("the consuming secret tree agrees with the stateless oracle on every leaf")
+	func consumingTreeMatchesOracle() throws {
+		let provider = try #require(
+			Self.provider.cipherSuiteProvider(for: .curve25519Aes128))
+		let encryptionSecret = provider.randomBytes(provider.hashSize)
+		let leafCount = try MLS.LeafCount(validating: 8)
+		var tree = try MLS.KeySchedule.ConsumingSecretTree(
+			encryptionSecret: encryptionSecret, leafCount: leafCount)
+		for leaf in [5, 0, 7, 2, 6, 1, 3, 4] {
+			let index = MLS.LeafIndex(value: UInt32(leaf))
+			let consumed = try tree.consumeLeafSecret(for: index, provider)
+			let oracle = try MLS.KeySchedule.leafSecret(
+				provider, encryptionSecret: encryptionSecret,
+				leafIndex: UInt32(leaf), numLeaves: leafCount)
+			#expect(consumed.withUnsafeBytes { Data($0) } == oracle, "leaf \(leaf)")
+		}
+		// And the root is long gone: no leaf can be derived twice.
+		#expect(throws: MLS.KeySchedule.SecretTreeError.self) {
+			_ = try tree.consumeLeafSecret(for: .init(value: 3), provider)
+		}
+	}
+
 	@Test("an out-of-range leafIndex throws rather than returning the root secret")
 	func leafSecretRejectsOutOfRangeIndex() throws {
 		let provider = try #require(

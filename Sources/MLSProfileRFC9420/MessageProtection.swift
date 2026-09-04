@@ -7,115 +7,6 @@ import MLSTreeMath
 import SecretBytes
 
 extension MLS.RFC9420.Group {
-	/// The §9.2-conforming secret-tree state: a map of *live* node
-	/// secrets, seeded with `[root: encryption_secret]`, that consumes as
-	/// it descends. Deriving a leaf deletes every path node it passes and
-	/// caches every copath sibling — so after the first derivation the
-	/// root (the epoch's `encryption_secret` itself, per §9.2's worked
-	/// example) no longer exists in any representation, and later leaves
-	/// are reached from retained siblings. The stateless
-	/// `MLS.KeySchedule.leafSecret` walks from the root every time and
-	/// therefore cannot be the store; it remains the vector-pinned oracle
-	/// this walker is differentially tested against.
-	struct ConsumingSecretTree: Sendable {
-		var nodeSecrets: [UInt32: SecretBytes]
-		let leafCount: MLS.LeafCount
-
-		/// `encryptionSecret` is `some ContiguousBytes` so the epoch's
-		/// (zeroizing) `encryption_secret` seeds the tree directly, staying in
-		/// zeroizing storage — the retained node secrets it splits into are
-		/// `SecretBytes` too, so no unscrubbed `Data` copy of a ratchet secret
-		/// is minted here.
-		init(encryptionSecret: some ContiguousBytes, leafCount: MLS.LeafCount) throws {
-			self.leafCount = leafCount
-			self.nodeSecrets = [
-				MLS.TreeMath.root(leafCount: leafCount):
-					try SecretBytes(bytes: encryptionSecret)
-			]
-		}
-
-		/// Restores a consuming tree from a decoded snapshot
-		/// (spec/snapshot.md §4.3 SecretTreeState): the retained node-secret
-		/// frontier verbatim. Distinct from `init(encryptionSecret:leafCount:)`,
-		/// which seeds `[root: encryption_secret]` for a *fresh* epoch — a
-		/// restored tree has already consumed down to whatever frontier the
-		/// snapshot holds, so seeding the root would resurrect a consumed
-		/// secret.
-		init(
-			restoringNodeSecrets nodeSecrets: [UInt32: SecretBytes],
-			leafCount: MLS.LeafCount
-		) {
-			self.leafCount = leafCount
-			self.nodeSecrets = nodeSecrets
-		}
-
-		/// Derives (and consumes toward) the leaf's secret. Throws when
-		/// the subtree covering this leaf has already been fully consumed
-		/// — that is a replay/reuse signal, not a derivation failure.
-		mutating func consumeLeafSecret(
-			for leafIndex: MLS.LeafIndex,
-			_ provider: any MLS.CipherSuiteProvider
-		) throws -> SecretBytes {
-			let leafNode = 2 * leafIndex.value
-			guard leafIndex.value < leafCount.value else {
-				throw MLS.CryptoError.invalidKey
-			}
-			if let ready = nodeSecrets.removeValue(forKey: leafNode) {
-				return ready
-			}
-			// Climb until a held ancestor, then split back down.
-			let path =
-				[leafNode]
-				+ MLS.TreeMath.directPath(from: leafNode, leafCount: leafCount)
-				.map(\.path)
-			guard
-				let heldLevel = path.firstIndex(where: {
-					nodeSecrets[$0] != nil
-				}), heldLevel > 0
-			else {
-				throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
-					generation: 0)
-			}
-			var nodeIndex = path[heldLevel]
-			var secret = nodeSecrets.removeValue(forKey: nodeIndex)!
-			for level in stride(from: heldLevel - 1, through: 0, by: -1) {
-				let child = path[level]
-				let (left, right) = try MLS.KeySchedule.splitTreeNode(
-					provider, secret: secret)
-				let goingLeft = MLS.TreeMath.left(nodeIndex) == child
-				// Cache the sibling we are not taking; the taken side is
-				// consumed by the descent itself.
-				let sibling =
-					goingLeft
-					? MLS.TreeMath.right(nodeIndex)
-					: MLS.TreeMath.left(nodeIndex)
-				nodeSecrets[sibling] = goingLeft ? right : left
-				secret = goingLeft ? left : right
-				nodeIndex = child
-			}
-			return secret
-		}
-	}
-
-	/// One sender's ratchet (handshake or application): the head secret,
-	/// its generation, and the bounded cache of skipped-but-unconsumed
-	/// (key, nonce) pairs — §15.3's three policies live in
-	/// `RetentionPolicy`, and the *ratchet secrets* skipped over are
-	/// consumed and deleted per §9.2 even though their derived keys are
-	/// kept.
-	struct RatchetChain: Sendable {
-		var headGeneration: UInt32
-		/// nil once the chain is retired (head consumed with nothing
-		/// ahead retainable). Zeroizing: the whole forward chain derives from
-		/// it, so its exposure is the worst case.
-		var headSecret: SecretBytes?
-		/// Skipped-but-not-yet-consumed message keys: retained at rest (up to
-		/// `maxSkippedKeysPerSender` per chain, across retained epochs) until a
-		/// late message consumes one or the epoch is pruned — so the key half is
-		/// held zeroizing like every other retained secret, copied out to `Data`
-		/// only at the AEAD call. The nonce stays `Data`: it is not secret.
-		var skipped: [UInt32: (key: SecretBytes, nonce: Data)] = [:]
-	}
 
 	/// Everything unprotecting a *retained* epoch's `PrivateMessage` needs
 	/// — frozen, because the live group has moved on: the group context
@@ -132,8 +23,8 @@ extension MLS.RFC9420.Group {
 		let groupContext: MLS.RFC9420.GroupContext
 		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
-		var tree: ConsumingSecretTree
-		var chains: [ChainKey: RatchetChain] = [:]
+		var tree: MLS.KeySchedule.ConsumingSecretTree
+		var chains: [ChainKey: MLS.KeySchedule.RatchetChain] = [:]
 		var ownNextGeneration: (handshake: UInt32, application: UInt32) = (0, 0)
 
 		struct ChainKey: Hashable, Sendable {
@@ -154,7 +45,7 @@ extension MLS.RFC9420.Group {
 		let chain: MessageSecrets.ChainKey
 		/// nil: the key came from the skipped cache (remove it);
 		/// non-nil: the chain advances to this state.
-		let advanced: RatchetChain?
+		let advanced: MLS.KeySchedule.RatchetChain?
 		let consumedGeneration: UInt32
 	}
 
@@ -203,7 +94,7 @@ extension MLS.RFC9420.Group {
 			// epoch, not consumed in-flight.
 			senderDataSecret: SecretBytes(bytes: senderDataSecret),
 			signatureKeys: signatureKeys,
-			tree: ConsumingSecretTree(
+			tree: MLS.KeySchedule.ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))
 		let depth = UInt64(retention.messageSecretsDepth)
 		let floor = context.epoch >= depth ? context.epoch - depth : 0
@@ -222,7 +113,7 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(epoch: epoch)
 		}
 		let chainKey = MessageSecrets.ChainKey(leaf: leaf, isHandshake: isHandshake)
-		var chain: RatchetChain
+		var chain: MLS.KeySchedule.RatchetChain
 		if let existing = secrets.chains[chainKey] {
 			chain = existing
 		} else {
@@ -234,12 +125,23 @@ extension MLS.RFC9420.Group {
 			// in one shot, so calling it a second time for this leaf, from
 			// the other ratchet's own first touch, would find nothing left
 			// to derive from.
-			let leafSecret = try secrets.tree.consumeLeafSecret(for: leaf, provider)
-			let handshakeChain = RatchetChain(
+			// Surface the mechanism's tree-exhaustion as this layer's public
+			// replay error, preserving the pre-relocation contract: a §9.2
+			// replay of a fully-consumed subtree is `generationAlreadyConsumed`,
+			// matchable by callers, not the `package` `SecretTreeError` leaking
+			// out of `unprotect` as an opaque error.
+			let leafSecret: SecretBytes
+			do {
+				leafSecret = try secrets.tree.consumeLeafSecret(for: leaf, provider)
+			} catch MLS.KeySchedule.SecretTreeError.subtreeExhausted {
+				throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
+					generation: 0)
+			}
+			let handshakeChain = MLS.KeySchedule.RatchetChain(
 				headGeneration: 0,
 				headSecret: try MLS.KeySchedule.handshakeRatchetSecret(
 					provider, leafSecret: leafSecret))
-			let applicationChain = RatchetChain(
+			let applicationChain = MLS.KeySchedule.RatchetChain(
 				headGeneration: 0,
 				headSecret: try MLS.KeySchedule.applicationRatchetSecret(
 					provider, leafSecret: leafSecret))
