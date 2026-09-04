@@ -71,6 +71,7 @@ extension MLS.RFC9420.Group {
 	mutating func installMessageSecrets(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
+		applicationExportSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
@@ -99,6 +100,19 @@ extension MLS.RFC9420.Group {
 		let depth = UInt64(retention.messageSecretsDepth)
 		let floor = context.epoch >= depth ? context.epoch - depth : 0
 		messageSecrets = messageSecrets.filter { $0.key >= floor }
+
+		// draft-ietf-mls-extensions-08 §4.4: build this epoch's Exporter Tree from
+		// application_export_secret and hold the *consuming tree* — never the raw
+		// root. The first export splits and deletes the root, and each export
+		// deletes its component's root-to-leaf path (RFC 9420 §9.2, which §4.4
+		// invokes); retaining the root would re-derive consumed components and
+		// defeat forward secrecy. Single-epoch (past epochs' seeds aren't
+		// retained), so this assignment also drops any prior epoch's tree. Matches
+		// the deployed fork, which holds `ExporterTree(SecretTree)`, not the root.
+		exporterTrees = [
+			context.epoch: try MLS.KeySchedule.ExporterTree(
+				applicationExportSecret: applicationExportSecret)
+		]
 	}
 
 	/// Key/nonce for `(leaf, generation, kind)` in `epoch`, plus the

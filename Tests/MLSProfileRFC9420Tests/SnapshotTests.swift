@@ -435,7 +435,7 @@ struct SnapshotTests {
 				"interimTranscriptHash": .plain, "myLeafIndex": .plain,
 				"epochSecrets": .plain, "treeSecretKeys": .secret,
 				"resumptionPsks": .secret, "messageSecrets": .plain,
-				"retention": .plain, "config": .plain,
+				"retention": .plain, "config": .plain, "exporterTree": .plain,
 			])
 
 		// §4.2 — epoch_authenticator is public (RFC 9420 §8.7).

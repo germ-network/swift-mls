@@ -37,6 +37,21 @@ extension MLS.RFC9420.Group {
 		/// silently ignored — the one §3 unknown-key rejection this build makes
 		/// (the general case is the deferred §8 hostile-decode suite's).
 		var config: SnapshotConfig?
+		/// draft-ietf-mls-extensions-08 §4.4 Exporter Tree (`spec/snapshot.md`
+		/// §4.6): the current epoch's *consuming* tree persisted as its surviving
+		/// node-secret frontier — never the `application_export_secret` root, so a
+		/// component consumed before archiving stays unrecoverable (RFC 9420 §9.2
+		/// forward secrecy). Reuses `SecretTreeStateArchive`; its `leafCount` is
+		/// always 2^16.
+		///
+		/// Optional: `makeSnapshot` always emits it (every live group installs a
+		/// tree), so a swift-produced archive round-trips it. It is absent only in
+		/// an archive from a producer that predates the exporter tree — a
+		/// migration source such as the deployed `export_for_swift()`. Restoring
+		/// such an archive leaves the group with no exporter tree, so
+		/// `safeExportSecret` throws until the group advances an epoch and installs
+		/// one; nothing is re-derivable in the meantime, so this is FS-safe.
+		var exporterTree: SecretTreeStateArchive?
 
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case format = 0
@@ -53,6 +68,7 @@ extension MLS.RFC9420.Group {
 			case
 				retention = 9
 			case config = 10
+			case exporterTree = 11
 		}
 	}
 
@@ -221,6 +237,22 @@ extension MLS.RFC9420.Group {
 				.filter { $0.key >= messageFloor }
 				.mapValues { try Self.makeStore($0) })
 
+		// The current epoch's Exporter Tree, persisted as its surviving frontier
+		// (never the root) — installed on every epoch-entry path, so present here.
+		guard let currentExporterTree = exporterTrees[context.epoch] else {
+			throw MLS.RFC9420.GroupError.exporterTreeUnavailable
+		}
+		let exporterTreeArchive = SecretTreeStateArchive(
+			leafCount: MLS.KeySchedule.ExporterTree.leafCount.value,
+			nodeSecrets: MLS.RFC9420.IntegerKeyedMap(
+				Dictionary(
+					uniqueKeysWithValues: currentExporterTree.frontier.map {
+						(
+							UInt64($0.key),
+							SecretField(wrappedValue: $0.value)
+						)
+					})))
+
 		return Snapshot(
 			format: 1,
 			groupContext: try context.mlsEncoded(),
@@ -235,7 +267,8 @@ extension MLS.RFC9420.Group {
 			resumptionPsks: resumptionPsksMap,
 			messageSecrets: messageSecretsMap,
 			retention: try Self.makeRetention(retention),
-			config: nil)
+			config: nil,
+			exporterTree: exporterTreeArchive)
 	}
 
 	/// The standalone artifact convenience of D10: the `Snapshot` encoded into a
@@ -452,12 +485,47 @@ extension MLS.RFC9420.Group {
 			maxForwardJump: Int(snapshot.retention.maxForwardJump),
 			maxSkippedKeysPerSender: Int(snapshot.retention.maxSkippedKeysPerSender))
 
-		return MLS.RFC9420.Group(
+		var group = MLS.RFC9420.Group(
 			context: context, tree: tree,
 			interimTranscriptHash: snapshot.interimTranscriptHash,
 			myLeafIndex: myLeafIndex, epoch: epoch, retention: retention,
 			secretKeys: secretKeys, resumptionPsks: resumptionPsks,
 			messageSecrets: messageSecrets)
+
+		// spec/snapshot.md §4.6: rebuild the current epoch's Exporter Tree from its
+		// persisted frontier (never a root), so consumed-component deletions
+		// survive the round-trip — FS holds across restore, unlike a root rebuild.
+		// Absent only in a migration source that predates the exporter tree; then
+		// the group has none and `safeExportSecret` throws until it advances an
+		// epoch and installs one (FS-safe — nothing is re-derivable meanwhile).
+		if let exporterTreeArchive = snapshot.exporterTree {
+			guard
+				exporterTreeArchive.leafCount
+					== MLS.KeySchedule.ExporterTree.leafCount.value
+			else {
+				throw MLS.RFC9420.SnapshotError.inconsistentStore(
+					"exporter_tree leaf_count \(exporterTreeArchive.leafCount) is not 2^16"
+				)
+			}
+			let exporterNodeBound = 2 * MLS.KeySchedule.ExporterTree.leafCount.value - 1
+			var exporterFrontier: [UInt32: SecretBytes] = [:]
+			for (node, secret) in exporterTreeArchive.nodeSecrets.entries {
+				try requireLength(
+					secret.wrappedValue.byteCount, nh,
+					"exporter_tree node_secret")
+				guard node < UInt64(exporterNodeBound) else {
+					throw MLS.RFC9420.SnapshotError.inconsistentStore(
+						"exporter_tree node index \(node) outside a 2^16-leaf tree"
+					)
+				}
+				exporterFrontier[UInt32(node)] = secret.wrappedValue
+			}
+			group.exporterTrees = [
+				context.epoch: MLS.KeySchedule.ExporterTree(
+					restoringFrontier: exporterFrontier)
+			]
+		}
+		return group
 	}
 
 	private static func requireLength(_ actual: Int, _ expected: Int, _ field: String) throws {

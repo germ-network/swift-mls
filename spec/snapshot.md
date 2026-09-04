@@ -120,6 +120,9 @@ Snapshot = {
     8: message_secrets       ; { + uint => MessageSecretStore }
     9: retention             ; Retention
   ? 10: config               ; Config — absent when empty
+  ? 11: exporter_tree        ; SecretTreeState (§4.6), the current epoch's
+                             ;   Exporter Tree frontier — absent only from a
+                             ;   producer that predates it (a migration source)
 }
 ```
 
@@ -155,15 +158,17 @@ The subset of the current epoch's key-schedule fan-out this profile retains
 between operations — exactly the unconsumed values. `init_secret` is
 unconsumed until the next commit's key-schedule advance; `membership_key`
 verifies every incoming `PublicMessage` this epoch; `exporter_secret` backs
-the exporter for the epoch's lifetime; `epoch_authenticator` is the value
-RFC 9420 exposes to applications.
+the exporter for the epoch's lifetime; `epoch_authenticator` is the value RFC
+9420 exposes to applications. The draft §4.4 Exporter Tree is **not** here: its
+root (`application_export_secret`) must not be retained past the first export
+(RFC 9420 §9.2), so §4.6 persists the tree's consuming frontier instead.
 
 ```
 EpochSecrets = {
-    0: init_secret           ; bstr  SECRET  (Nh)
-    1: exporter_secret       ; bstr  SECRET  (Nh)
-    2: epoch_authenticator   ; bstr  (Nh)   — public, not SECRET
-    3: membership_key        ; bstr  SECRET  (Nh)
+    0: init_secret                ; bstr  SECRET  (Nh)
+    1: exporter_secret            ; bstr  SECRET  (Nh)
+    2: epoch_authenticator        ; bstr  (Nh)   — public, not SECRET
+    3: membership_key             ; bstr  SECRET  (Nh)
 }
 ```
 
@@ -262,12 +267,59 @@ config keys; the section MUST be absent. When a future format defines
 configuration, an unsupported value MUST fail decode — a group is never
 silently restored under different rules than it was persisted under.
 
+### 4.6 Exporter Tree
+
+The current epoch's draft-ietf-mls-extensions-08 §4.4 Exporter Tree — an RFC
+9420 §9 Secret Tree fixed at 2^16 leaves, rooted at `application_export_secret`
+(`DeriveSecret(epoch_secret, "application_export")`) and indexed by a
+`ComponentID`. It is persisted as a `SecretTreeState`, the same shape §4.3's
+`secret_tree` uses: the surviving node-secret **frontier**, never the root.
+
+```
+SecretTreeState = {
+    0: leaf_count    ; uint, MUST be 2^16 for the Exporter Tree
+    1: node_secrets  ; { + uint => bstr }  SECRET values, length Nh
+}
+```
+
+Persisting the frontier and not the root is what keeps forward secrecy across
+the archive. `SafeExportSecret` consumes a component and deletes its
+root-to-leaf path (RFC 9420 §9.2, invoked by draft §4.4) — including the root,
+which the first export splits and deletes — so a component consumed before
+archiving has no surviving node on its path and cannot be re-derived after
+restore. The root, from which every component (consumed or not) could be
+re-derived, is therefore never persisted; this matches the deployed peer, which
+serializes its `ExporterTree(SecretTree)`, not the root. Only the current
+epoch's tree is kept. A decoder MUST reject a `leaf_count` other than 2^16 and
+a `node_secrets` index outside a 2^16-leaf tree.
+
+`node_secrets` is **sparse**, not 2^16 entries: the tree materializes nodes on
+demand, so an unexported tree persists one secret (the root) and each export
+adds at most one copath sibling per level (≤ 16, the tree's depth), fewer with
+the overlap of nearby `ComponentID`s. A typical archive carries a handful of
+`node_secrets`, never one per leaf.
+
+`exporter_tree` is **optional** (key 11): every live group installs a tree, so a
+conforming producer of this format emits it. It is absent only from an archive
+written by a producer that predates the Exporter Tree — a migration source such
+as a peer's cross-implementation export. Restoring such an archive yields a
+group with no exporter tree; `SafeExportSecret` is unavailable until the group
+advances an epoch and installs one. Nothing is re-derivable in the meantime, so
+the absence is forward-secrecy-safe.
+
 ## 5. Versioning
 
 `format` is required and is the only version in this format; sections do not
 self-version. An unknown `format` is a decode error. A future format change
 is a new `format` value plus an explicit, specified transform from the
 previous one — never a silent reinterpretation of existing fields.
+
+Format 1 is **not frozen** until the wire cut: while the target is still under
+development it may gain required fields in place (e.g. `exporter_tree`, key 11
+of §4.1) without a `format` bump, so an archive written by an earlier build may
+fail to decode against a later one. There is no persisted archive corpus to
+preserve pre-cut. Once the wire is cut, format 1 freezes and this in-place-growth
+allowance ends — any later change takes a new `format` value under the rule above.
 
 ## 6. The Transition contract
 
