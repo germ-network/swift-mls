@@ -34,6 +34,21 @@ extension MLS.RFC9420.Group {
 			]
 		}
 
+		/// Restores a consuming tree from a decoded snapshot
+		/// (spec/snapshot.md §4.3 SecretTreeState): the retained node-secret
+		/// frontier verbatim. Distinct from `init(encryptionSecret:leafCount:)`,
+		/// which seeds `[root: encryption_secret]` for a *fresh* epoch — a
+		/// restored tree has already consumed down to whatever frontier the
+		/// snapshot holds, so seeding the root would resurrect a consumed
+		/// secret.
+		init(
+			restoringNodeSecrets nodeSecrets: [UInt32: SecretBytes],
+			leafCount: MLS.LeafCount
+		) {
+			self.leafCount = leafCount
+			self.nodeSecrets = nodeSecrets
+		}
+
 		/// Derives (and consumes toward) the leaf's secret. Throws when
 		/// the subtree covering this leaf has already been fully consumed
 		/// — that is a replay/reuse signal, not a derivation failure.
