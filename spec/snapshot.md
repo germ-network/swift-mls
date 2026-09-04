@@ -279,6 +279,13 @@ self-version. An unknown `format` is a decode error. A future format change
 is a new `format` value plus an explicit, specified transform from the
 previous one — never a silent reinterpretation of existing fields.
 
+Format 1 is **not frozen** until the wire cut: while the target is still under
+development it may gain required fields in place (e.g. `application_export_secret`,
+key 4 of §4.2) without a `format` bump, so an archive written by an earlier build
+may fail to decode against a later one. There is no persisted archive corpus to
+preserve pre-cut. Once the wire is cut, format 1 freezes and this in-place-growth
+allowance ends — any later change takes a new `format` value under the rule above.
+
 ## 6. The Transition contract
 
 MLS is a state machine. Operations advance the state *and* produce outputs,
