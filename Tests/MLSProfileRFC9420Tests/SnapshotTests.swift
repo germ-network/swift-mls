@@ -388,4 +388,108 @@ struct SnapshotTests {
 		#expect(restored.messageSecrets.count == 1)
 		#expect(restored.messageSecrets[current] != nil)
 	}
+
+	// MARK: - Field-classification guard
+	//
+	// Pins the secret/non-secret status of every archive field. Because
+	// `SecretBytes` is not `Codable`, a genuinely-secret value can ride the
+	// schema only as `@SecretField` (or a `SecretField`-valued container) — so a
+	// field that SHOULD be secret but is typed plain `Data` would diverge its
+	// pinned class from its reflected type here, and adding or renaming any field
+	// breaks the table until it is re-classified in review. Secret-ness is read
+	// structurally: the field's reflected value type names `SecretField`.
+
+	private enum FieldClass: Equatable { case secret, plain }
+
+	private func assertClassification<T>(_ value: T, _ expected: [String: FieldClass]) {
+		var actual: [String: FieldClass] = [:]
+		for child in Mirror(reflecting: value).children {
+			guard let raw = child.label else { continue }
+			let name = raw.hasPrefix("_") ? String(raw.dropFirst()) : raw
+			let carriesSecret = String(describing: type(of: child.value)).contains(
+				"SecretField")
+			actual[name] = carriesSecret ? .secret : .plain
+		}
+		#expect(actual == expected)
+	}
+
+	@Test("every archive field's secret/non-secret classification is pinned")
+	func fieldClassificationsArePinned() throws {
+		let secret = SecretBytes(randomByteCount: 4)
+		let secretMap = MLS.RFC9420.IntegerKeyedMap([
+			UInt64(0): SecretField(wrappedValue: secret)
+		])
+		let publicMap = MLS.RFC9420.IntegerKeyedMap([UInt64(0): Data([0])])
+
+		// §4.1 top level. treeSecretKeys/resumptionPsks hold secrets directly;
+		// the container fields (epoch_secrets, message_secrets, retention) carry
+		// their own secrets, classified in the per-struct tables below.
+		let snapshot = try SelfInteropTests.createGroup(
+			try SelfInteropTests.member("solo")
+		).makeSnapshot()
+		assertClassification(
+			snapshot,
+			[
+				"format": .plain, "groupContext": .plain, "ratchetTree": .plain,
+				"interimTranscriptHash": .plain, "myLeafIndex": .plain,
+				"epochSecrets": .plain, "treeSecretKeys": .secret,
+				"resumptionPsks": .secret, "messageSecrets": .plain,
+				"retention": .plain, "config": .plain,
+			])
+
+		// §4.2 — epoch_authenticator is public (RFC 9420 §8.7).
+		assertClassification(
+			Group.EpochSecretsArchive(
+				initSecret: secret, exporterSecret: secret,
+				epochAuthenticator: Data([0]), membershipKey: secret),
+			[
+				"initSecret": .secret, "exporterSecret": .secret,
+				"epochAuthenticator": .plain, "membershipKey": .secret,
+			])
+
+		// §4.3 store — group_context is public wire bytes; signature_keys are
+		// PUBLIC signature keys.
+		assertClassification(
+			Group.MessageSecretStoreArchive(
+				groupContext: Data([0]), senderDataSecret: secret,
+				signatureKeys: publicMap,
+				secretTree: Group.SecretTreeStateArchive(
+					leafCount: 1, nodeSecrets: secretMap),
+				chains: MLS.RFC9420.IntegerKeyedMap([:]),
+				ownNextGeneration: Group.OwnNextGenerationArchive(
+					handshake: 0, application: 0)),
+			[
+				"groupContext": .plain, "senderDataSecret": .secret,
+				"signatureKeys": .plain, "secretTree": .plain, "chains": .plain,
+				"ownNextGeneration": .plain,
+			])
+
+		assertClassification(
+			Group.SecretTreeStateArchive(leafCount: 1, nodeSecrets: secretMap),
+			["leafCount": .plain, "nodeSecrets": .secret])
+
+		assertClassification(
+			Group.ChainArchive(
+				headGeneration: 0, headSecret: SecretField(wrappedValue: secret),
+				skipped: MLS.RFC9420.IntegerKeyedMap([:])),
+			["headGeneration": .plain, "headSecret": .secret, "skipped": .plain])
+
+		// §4.3 SkippedKey — nonce is an AEAD nonce (public).
+		assertClassification(
+			Group.SkippedKeyArchive(key: secret, nonce: Data([0])),
+			["key": .secret, "nonce": .plain])
+
+		assertClassification(
+			Group.OwnNextGenerationArchive(handshake: 0, application: 0),
+			["handshake": .plain, "application": .plain])
+
+		assertClassification(
+			Group.RetentionArchive(
+				resumptionPskDepth: 0, messageSecretsDepth: 0, maxForwardJump: 0,
+				maxSkippedKeysPerSender: 0),
+			[
+				"resumptionPskDepth": .plain, "messageSecretsDepth": .plain,
+				"maxForwardJump": .plain, "maxSkippedKeysPerSender": .plain,
+			])
+	}
 }
