@@ -26,9 +26,12 @@ let package = Package(
         // below this package's own, so it imposes nothing on adopters; its
         // one dependency is swift-crypto, already in this tree. Pinned to the
         // minor: it is pre-1.0 and breaks at minor bumps by its own changelog.
+        // TEMPORARY revision pin to the plaintext-ingress branch
+        // (germ-network/swift-secret-bytes#9) for the mls-rs migration ingress.
+        // Restore to `.upToNextMinor(from: "0.x.0")` once that PR is tagged.
         .package(
             url: "https://github.com/germ-network/swift-secret-bytes.git",
-            .upToNextMinor(from: "0.2.0")),
+            revision: "0d0d547f428f3e776fffe3e8fbb4a545b974765d"),
         // Interop-harness only — never a dependency of any library product
         // (grpc-swift 2 requires macOS 15+; the executable target below is
         // the sole consumer). Pinned major versions keep the checked-in

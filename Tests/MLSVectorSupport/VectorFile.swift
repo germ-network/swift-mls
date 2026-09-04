@@ -21,6 +21,19 @@ public enum VectorFile {
 		return try JSONDecoder().decode(T.self, from: data)
 	}
 
+	/// Loads a vendored fixture as raw bytes — for non-JSON vectors such as a
+	/// peer implementation's binary export (see `Vectors/README.md` for
+	/// provenance).
+	public static func rawBytes(_ name: String, withExtension ext: String) throws -> Data {
+		guard
+			let url = Bundle.module.url(
+				forResource: name, withExtension: ext, subdirectory: "Vectors")
+		else {
+			throw LoadError.resourceNotFound("\(name).\(ext)")
+		}
+		return try Data(contentsOf: url)
+	}
+
 	/// Encodes to the same JSON shape a vector file uses, for the "emit"
 	/// direction: producing vectors describing a profile this repo defines,
 	/// not only consuming ones published elsewhere.
