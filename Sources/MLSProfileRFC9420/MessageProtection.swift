@@ -64,16 +64,15 @@ extension MLS.RFC9420.Group {
 }
 
 extension MLS.RFC9420.Group {
-	/// Builds and installs the message-secret state for a newly entered
-	/// epoch, and prunes retired epochs to
-	/// `retention.messageSecretsDepth`. Called by every epoch-entering
-	/// path (`create`, `join`, `processing`, `committing`).
 	/// Build — without installing — the new epoch's message-secret store and
-	/// Exporter Tree from the new epoch's secrets and the new tree. Pure over
-	/// its inputs (it reads no `self` state), which is what lets the D17 delta
-	/// (`PendingCommit`) hold these standalone and `apply(onto:)` compose them
-	/// onto a live group (D17 §4).
-	func makeEpochMessageState(
+	/// Exporter Tree from the new epoch's secrets and the new tree. `static` by
+	/// design (D17 §4, L-4): it derives the delta's retained message state from
+	/// the new epoch's inputs alone and *cannot* read the live group's
+	/// (more-consumed) message-secret state, which is exactly the §4 invariant
+	/// that lets a `PendingCommit` hold these standalone and `apply(onto:)`
+	/// compose them onto a live group. Callers that install directly
+	/// (`installMessageSecrets`) prune afterwards; the delta path does not.
+	static func makeEpochMessageState(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
 		applicationExportSecret: some ContiguousBytes,
@@ -125,7 +124,7 @@ extension MLS.RFC9420.Group {
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws {
-		let (store, exporter) = try makeEpochMessageState(
+		let (store, exporter) = try Self.makeEpochMessageState(
 			context: context, senderDataSecret: senderDataSecret,
 			encryptionSecret: encryptionSecret,
 			applicationExportSecret: applicationExportSecret, tree: tree, provider)

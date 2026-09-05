@@ -66,6 +66,27 @@ extension MLS.RFC9420 {
 		public var groupID: Data { content.content.groupID }
 	}
 
+	/// A commit whose framing has been authenticated — the capability the
+	/// commit-processing core (`validatedDelta`) requires, so an unauthenticated
+	/// frame cannot be turned into an epoch delta. Minted only two ways, both of
+	/// which check the framing signature (and, for public framing, the
+	/// membership tag) against the sender's current leaf key: `validating` for a
+	/// `PublicMessage`, and `unprotect` for a `PrivateMessage` (D17 §2.1, M-1).
+	///
+	/// The commit path's analogue of `VerifiedProposal`, and for the same
+	/// reason: an `AuthenticatedContent` is plain wire data — publicly
+	/// constructible and `MLSDecodable` — so requiring *that type* would not
+	/// prove verification. This type's `init` is not `public`, so a caller
+	/// cannot fabricate one from raw bytes. **Do not make it
+	/// `Decodable`/`MLSCodable`** — a synthesized `init(from:)` is a public,
+	/// byte-level constructor with no verification, which reopens the gate.
+	struct VerifiedCommit: ~Copyable {
+		/// The authenticated frame. Not `public`: exposing the raw
+		/// `AuthenticatedContent` would let a caller extract and re-wrap it.
+		let content: AuthenticatedContent
+		init(verified content: AuthenticatedContent) { self.content = content }
+	}
+
 	/// By-reference proposals, keyed by `ProposalRef`.
 	///
 	/// **The store is a trust boundary, and `insert` is its gate.**
@@ -215,24 +236,21 @@ extension MLS.RFC9420.Group {
 				auth: message.auth))
 	}
 
-	/// RFC 9420 §12.4.2, for a `PublicMessage`-framed commit.
-	///
-	/// **Never mutates `self`.** Swift does not roll back partial mutation
-	/// on `throw`, and §12.4.2 ends "if the above checks are successful,
-	/// consider the new GroupContext as the current state" — so a failure
-	/// anywhere below must leave the caller's group exactly as it was. That
-	/// is why this returns a new `Group` rather than mutating; `process`
-	/// below is the thin value-semantics wrapper over it.
-	///
-	/// `psk` resolves *external* PSK ids. Resumption ids are resolved from
-	/// this group's own retained per-epoch history and never reach the
-	/// closure.
 	/// RFC 9420 §12.4.2 step 1 for a `PublicMessage`-framed commit (D17): the
 	/// two-step entry. Authenticate the framing (membership MAC + framing
 	/// signature) and derive the epoch DELTA WITHOUT advancing — public framing
 	/// consumes no key, so nothing is persisted at validation (D17 §1.1).
 	/// Adjudicate `pending.effects`, then `pending.apply(onto:)` the group you
 	/// kept operating on.
+	///
+	/// **Never mutates `self`** — it returns a `PendingCommit`, and every state
+	/// change is deferred to `apply(onto:)`, so a failure anywhere below leaves
+	/// the caller's group exactly as it was (§12.4.2: "if the above checks are
+	/// successful, consider the new GroupContext as the current state").
+	///
+	/// `psk` resolves *external* PSK ids. Resumption ids are resolved from
+	/// this group's own retained per-epoch history and never reach the
+	/// closure.
 	public func validating(
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
@@ -269,9 +287,10 @@ extension MLS.RFC9420.Group {
 		}
 		return try validatedDelta(
 			provider,
-			authenticatedContent: MLS.RFC9420.AuthenticatedContent(
-				wireFormat: .publicMessage, content: message.content,
-				auth: message.auth),
+			commit: MLS.RFC9420.VerifiedCommit(
+				verified: MLS.RFC9420.AuthenticatedContent(
+					wireFormat: .publicMessage, content: message.content,
+					auth: message.auth)),
 			proposals: proposals, psk: psk)
 	}
 
@@ -288,18 +307,20 @@ extension MLS.RFC9420.Group {
 			.apply(onto: self).group
 	}
 
-	/// Transitional shim for an already-authenticated frame — the private path
-	/// routes here via `unprotect`. Internal by design (M5 / D17 §2.1): the
-	/// only public way to apply a handshake is a `validating` entry, so an
+	/// Transitional shim for an already-verified commit — the private path
+	/// routes here via `unprotect`, which mints the `VerifiedCommit` after its
+	/// AEAD-open and framing-signature check. Internal by design (D17 §2.1): the
+	/// only public way to apply a handshake is a `validating` entry, and the
+	/// core is gated on the non-fabricable `VerifiedCommit`, so an
 	/// unauthenticated frame cannot be applied. Removed in the migration slice.
 	func processing(
 		_ provider: any MLS.CipherSuiteProvider,
-		authenticatedContent message: MLS.RFC9420.AuthenticatedContent,
+		commit verified: consuming MLS.RFC9420.VerifiedCommit,
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
 		try validatedDelta(
-			provider, authenticatedContent: message, proposals: proposals, psk: psk
+			provider, commit: verified, proposals: proposals, psk: psk
 		).apply(onto: self).group
 	}
 
@@ -315,13 +336,16 @@ extension MLS.RFC9420.Group {
 	/// checks below still run because the private path does not repeat them.
 	///
 	/// Internal: the public entries are the `validating(commit:)` overloads;
-	/// the transitional `processing` shims below apply this onto `self`.
+	/// the transitional `processing` shims below apply this onto `self`. Gated
+	/// on `VerifiedCommit`, not a raw `AuthenticatedContent`, so it cannot be
+	/// reached with an unauthenticated frame (D17 §2.1, M-1).
 	func validatedDelta(
 		_ provider: any MLS.CipherSuiteProvider,
-		authenticatedContent message: MLS.RFC9420.AuthenticatedContent,
+		commit verified: consuming MLS.RFC9420.VerifiedCommit,
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.PendingCommit {
+		let message = verified.content
 		// D18 guard: the delta installs path keys (`secretKeys`) for the sole
 		// membership (`memberships[0]`) only; at N > 1 the other local
 		// memberships would silently keep stale keys (the M3 silent-loss class).
@@ -677,7 +701,7 @@ extension MLS.RFC9420.Group {
 		// `apply(onto:)` takes them from the live group (D17 §4), which is what
 		// keeps consumption made while the commit was pending from being rolled
 		// back (GER-2413). `pendingUpdates` clearing likewise happens at apply.
-		let (newStore, newExporter) = try makeEpochMessageState(
+		let (newStore, newExporter) = try Self.makeEpochMessageState(
 			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
 			encryptionSecret: newEpoch.encryptionSecret,
 			applicationExportSecret: newEpoch.applicationExportSecret,
@@ -692,6 +716,7 @@ extension MLS.RFC9420.Group {
 					committer: senderIndex)
 			]),
 			base: context,
+			baseMemberships: Set(memberships.map(\.leafIndex)),
 			newContext: newContext, newTree: provisionalTree,
 			newEpoch: MLS.RFC9420.Group.EpochSecrets(retaining: newEpoch),
 			newSecretKeys: newSecretKeys, newInterimTranscriptHash: newInterim,
@@ -730,9 +755,12 @@ extension MLS.RFC9420.Group {
 		guard case .commit(let authenticated) = unprotected.content else {
 			throw MLS.RFC9420.GroupError.notACommit
 		}
+		// `unprotect` has AEAD-opened and signature-checked the frame, so minting
+		// a `VerifiedCommit` here is sound — this is the private-framing mint site.
 		self = try processing(
-			provider, authenticatedContent: authenticated, proposals: proposals,
-			psk: psk)
+			provider,
+			commit: MLS.RFC9420.VerifiedCommit(verified: authenticated),
+			proposals: proposals, psk: psk)
 	}
 
 	/// What `applyProposals` hands back: the provisional tree plus the two
