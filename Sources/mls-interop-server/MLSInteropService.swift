@@ -362,7 +362,8 @@
 		// MARK: - Commit / handle
 
 		private func proposalStore(
-			from proposalBytes: [Data], _ p: any MLS.CipherSuiteProvider
+			from proposalBytes: [Data], in group: MLS.RFC9420.Group,
+			_ p: any MLS.CipherSuiteProvider
 		) throws -> MLS.RFC9420.ProposalStore {
 			var store = MLS.RFC9420.ProposalStore()
 			for bytes in proposalBytes {
@@ -375,10 +376,10 @@
 					throw invalid(
 						"stored proposal is not a public proposal message")
 				}
-				let content = MLS.RFC9420.AuthenticatedContent(
-					wireFormat: .publicMessage, content: message.content,
-					auth: message.auth)
-				try store.insert(content, p)
+				// Authenticate the framing before it enters the store — a
+				// public proposal has no other verification step.
+				let verified = try group.verify(proposal: message, p)
+				try store.insert(verified, p)
 			}
 			return store
 		}
@@ -390,7 +391,8 @@
 			let p = try suiteProvider(UInt32(state.credentials.suite.id))
 
 			var proposals: [MLS.RFC9420.ProposalOrRef] = []
-			let store = try proposalStore(from: request.byReference, p)
+			let store = try proposalStore(
+				from: request.byReference, in: state.group, p)
 			for ref in store.keys { proposals.append(.reference(ref)) }
 			for byValue in request.byValue {
 				proposals.append(
@@ -492,7 +494,8 @@
 		{
 			var state = try requireGroup(request.stateID)
 			let p = try suiteProvider(UInt32(state.credentials.suite.id))
-			let store = try proposalStore(from: request.proposal, p)
+			let store = try proposalStore(
+				from: request.proposal, in: state.group, p)
 			var commitReader = MLS.Reader(request.commit)
 			guard
 				case .publicMessage(let commit) = try MLS.RFC9420.Message(

@@ -129,17 +129,31 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> CommitOutput {
+		// D18 guard: `committing` installs/prunes `secretKeys` and seeds the
+		// pending self-Update on the sole membership (`memberships[0]`) only, and
+		// a private commit also seals on that membership's handshake ratchet
+		// (shared in `GroupCore` until the send-side slice). So N > 1 fails closed
+		// for BOTH framings — public too, despite not touching the ratchet —
+		// because it would silently ignore the other memberships. Removed in the
+		// send-side slice.
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		// Resolve, exactly as the receive side does.
 		var resolved: [MLS.RFC9420.StoredProposal] = []
 		for entry in proposalList {
 			switch entry {
 			case .proposal(let proposal):
+				// Inline (by-value): framed in this commit, so this epoch.
 				resolved.append(
-					.init(proposal: proposal, sender: .member(myLeafIndex)))
+					.init(
+						proposal: proposal, sender: .member(myLeafIndex),
+						epoch: context.epoch, groupID: context.groupID))
 			case .reference(let ref):
 				guard let stored = proposalStore[ref] else {
 					throw MLS.RFC9420.GroupError.unknownProposalReference
 				}
+				try requireCurrentContext(stored)
 				resolved.append(stored)
 			}
 		}
