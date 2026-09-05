@@ -101,6 +101,15 @@ extension MLS.RFC9420 {
 		}
 
 		init(core: GroupCore, memberships: [Membership]) {
+			// A live `Group` always holds at least one local membership (D18): the
+			// sole-membership accessors index `memberships[0]`, and the terminal
+			// apply of an eviction marks the group ended without shrinking to zero.
+			// This is an internal invariant — every caller is in-library — so a
+			// violation is a library bug (a trap), not a wire-reachable input;
+			// format-2 restore rejects an empty `memberships` map with a thrown
+			// `SnapshotError` before it reaches here.
+			precondition(
+				!memberships.isEmpty, "a Group must hold at least one Membership")
 			self.core = core
 			self.memberships = memberships
 		}

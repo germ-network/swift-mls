@@ -185,7 +185,7 @@ struct SafeExportTests {
 		let provider = Self.provider
 		var snapshot = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
 			.makeSnapshot()
-		snapshot.exporterTree = nil
+		snapshot.core.exporterTree = nil
 		var restored = try MLS.RFC9420.Group.restore(from: snapshot, provider)
 		#expect(throws: MLS.RFC9420.GroupError.exporterTreeUnavailable) {
 			try restored.safeExportSecret(provider, componentID: 0xFF01)
