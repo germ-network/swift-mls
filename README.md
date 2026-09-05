@@ -78,6 +78,20 @@ Group policy. Who may join, when to rotate, how many members a group may hold,
 how messages reach their recipients — none of that is here. This is the protocol
 machinery and the wire format; the decisions belong to whatever is built on top.
 
+**This library implements no Authentication Service.** RFC 9420 §5.3.1 defines
+the AS as whichever part of the system validates credentials — that a credential
+legitimately presents its identifiers, that those identifiers are bound to the
+LeafNode's signature key, and that they match the application's reference
+identifiers. Here that part is the application. Credentials are opaque to this
+library: it holds no identity policy, interprets no identifiers, and never calls
+into the application.
+
+Known gap: the library does not yet *report* credential replacements (an Update
+or UpdatePath carrying a new credential for an existing leaf); an application can
+detect them today only by diffing the pre- and post-commit trees itself. The
+two-step handshake API in issue #32 will surface every §5.3.1 event — including
+the old and new credential together — before anything is applied.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
