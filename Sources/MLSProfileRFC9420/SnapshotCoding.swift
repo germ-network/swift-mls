@@ -8,9 +8,12 @@ extension MLS.RFC9420 {
 	/// the persistence boundary's, and a caller restoring a snapshot catches a
 	/// different failure set than one processing a commit.
 	public enum SnapshotError: Error, Sendable, Equatable {
-		/// `format` is neither 2 (what this build encodes and decodes) nor 1 (the
-		/// legacy flat shape, decode-only). spec/snapshot.md §5: an unknown
-		/// `format` is a decode error, never a silent reinterpretation.
+		/// `format` is neither 2 (what this build encodes, and decodes by value or
+		/// from an archive) nor 1 (the legacy flat shape, decoded only from an
+		/// archive via `restore(from archive:)` — the format-2-shaped `Snapshot`
+		/// value cannot represent it, so `restore(from: Snapshot)` throws this for
+		/// a format-1 value). spec/snapshot.md §5: an unknown `format` is a decode
+		/// error, never a silent reinterpretation.
 		case unsupportedFormat(UInt64)
 		/// A `config` section was present. spec/snapshot.md §4.5: format 1
 		/// defines no config keys, so the section MUST be absent — a group is

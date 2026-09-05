@@ -14,8 +14,9 @@ private let generationCeiling: UInt64 = 1 << 32
 extension MLS.RFC9420.Group {
 	// MARK: - Schema (spec/snapshot.md §4)
 
-	/// The persisted state of one `MLS.RFC9420` group — the `Snapshot` of
-	/// spec/snapshot.md, a `Codable` value with secrets carried as
+	/// The persisted state of one `MLS.RFC9420` group — the `Snapshot` archive
+	/// (spec/snapshot.md documents format 1; this is format 2, folded into the
+	/// spec by the migration slice), a `Codable` value with secrets carried as
 	/// `@SecretField`. The API vends this type (design decision D10): a consumer
 	/// either composes it into its own archive or seals the standalone
 	/// `SecretArchive` from `archive()`. Sealing is out of this format's scope
@@ -57,9 +58,10 @@ extension MLS.RFC9420.Group {
 		var resumptionPsks: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
 		var messageSecrets: MLS.RFC9420.IntegerKeyedMap<MessageSecretStoreArchive>
 		var retention: RetentionArchive
-		/// spec/snapshot.md §4.5: no config keys are defined, so this is always
-		/// absent. Modeled as an optional purely so a *present* config section is
-		/// decoded (and then rejected at restore) rather than silently ignored.
+		/// spec/snapshot.md §4.5 defines no config keys for format 1, and format 2
+		/// carries none either, so this is always absent. Modeled as an optional
+		/// purely so a *present* config section is decoded (and then rejected at
+		/// restore) rather than silently ignored.
 		var config: SnapshotConfig?
 		/// draft-ietf-mls-extensions-08 §4.4 Exporter Tree (`spec/snapshot.md`
 		/// §4.6): the current epoch's *consuming* tree persisted as its surviving
@@ -127,9 +129,14 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Reads just the `format` field so `restore(from archive:)` can dispatch to
-	/// the matching decode without first committing to a struct shape — the keyed
-	/// decoder reads only the keys it asks for and ignores the rest
-	/// (spec/snapshot.md §3).
+	/// the matching decode without first committing to a struct shape. This works
+	/// because the current archive decoder matches only the keys a struct asks
+	/// for and does not audit the rest — the same leniency `IntegerKeyedMap`
+	/// relies on, which spec/snapshot.md §3's "any unknown map key is an error"
+	/// strictness (the deferred §8 hostile-decode work) will tighten. When that
+	/// lands, this probe MUST stay exempt (or the format be peeked below the
+	/// struct layer): every real archive carries keys other than `format`, so a
+	/// probe subjected to unknown-key rejection would reject them all.
 	struct FormatProbe: Decodable {
 		var format: UInt64
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
@@ -518,17 +525,17 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	/// Restores a group from a decoded **format 2** `Snapshot` (D18), enforcing
-	/// the cross-consistency MUSTs of spec/snapshot.md §4/§4.3 for the core and
-	/// every membership. Every failure is a thrown `SnapshotError` (or a
-	/// propagated codec/tree error), never a trap.
+	/// Restores a group from a decoded **format 2** `Snapshot` (D18): validates
+	/// the core section (spec/snapshot.md §4.1/§4.3 cross-consistency MUSTs) and
+	/// each membership, then composes them. Every failure is a thrown
+	/// `SnapshotError` (or a propagated codec/tree error), never a trap.
 	public static func restore(
 		from snapshot: Snapshot, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
 		guard snapshot.format == 2 else {
 			throw MLS.RFC9420.SnapshotError.unsupportedFormat(snapshot.format)
 		}
-		let (core, tree) = try restoreCore(snapshot.core, provider)
+		let (core, tree, context) = try restoreCore(snapshot.core, provider)
 
 		// D18: at least one membership (the format-2 schema is written into
 		// spec/snapshot.md by the migration slice). The composite
@@ -538,11 +545,16 @@ extension MLS.RFC9420.Group {
 		guard !snapshot.memberships.entries.isEmpty else {
 			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "memberships")
 		}
+		// Ascending by leaf index: `memberships[0]` (which the sole-membership
+		// accessors and `unprotect`'s own-message check read) MUST be
+		// deterministic, and `Dictionary` iteration order is not.
 		var memberships: [MLS.RFC9420.Membership] = []
-		for (leafKey, membershipArchive) in snapshot.memberships.entries {
+		for leafKey in snapshot.memberships.entries.keys.sorted() {
 			memberships.append(
 				try restoreMembership(
-					leafKey: leafKey, archive: membershipArchive, tree: tree))
+					leafKey: leafKey,
+					archive: snapshot.memberships.entries[leafKey]!,
+					tree: tree, currentEpoch: context.epoch))
 		}
 		return MLS.RFC9420.Group(core: core, memberships: memberships)
 	}
@@ -554,7 +566,7 @@ extension MLS.RFC9420.Group {
 	private static func restoreFormat1(
 		_ snapshot: SnapshotFormat1, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
-		let (core, tree) = try restoreCore(
+		let (core, tree, context) = try restoreCore(
 			CoreArchive(
 				groupContext: snapshot.groupContext,
 				ratchetTree: snapshot.ratchetTree,
@@ -569,16 +581,20 @@ extension MLS.RFC9420.Group {
 			leafKey: UInt64(snapshot.myLeafIndex),
 			archive: MembershipArchive(
 				treeSecretKeys: snapshot.treeSecretKeys, pendingUpdate: nil),
-			tree: tree)
+			tree: tree, currentEpoch: context.epoch)
 		return MLS.RFC9420.Group(core: core, memberships: [membership])
 	}
 
 	/// The client-agnostic restore shared by both formats: validates the core
 	/// section (spec/snapshot.md §4.1/§4.3) and builds the `GroupCore`, returning
-	/// the ratchet tree the per-membership restore validates leaves against.
+	/// the ratchet tree and context the per-membership restore needs (to validate
+	/// leaves, and to check a pending Update names the current epoch).
 	private static func restoreCore(
 		_ core: CoreArchive, _ provider: any MLS.CipherSuiteProvider
-	) throws -> (core: MLS.RFC9420.GroupCore, tree: MLS.TreeKEM.RatchetTree) {
+	) throws -> (
+		core: MLS.RFC9420.GroupCore, tree: MLS.TreeKEM.RatchetTree,
+		context: MLS.RFC9420.GroupContext
+	) {
 		guard core.config == nil else {
 			throw MLS.RFC9420.SnapshotError.unexpectedConfig
 		}
@@ -704,7 +720,7 @@ extension MLS.RFC9420.Group {
 					restoringFrontier: exporterFrontier)
 			]
 		}
-		return (groupCore, tree)
+		return (groupCore, tree, context)
 	}
 
 	/// Restores one membership from its archive (spec/snapshot.md §4.1 keys 4/6,
@@ -713,7 +729,8 @@ extension MLS.RFC9420.Group {
 	/// pending self-Update. `leafKey` is the map key (format 2) or `my_leaf_index`
 	/// (format 1).
 	private static func restoreMembership(
-		leafKey: UInt64, archive: MembershipArchive, tree: MLS.TreeKEM.RatchetTree
+		leafKey: UInt64, archive: MembershipArchive, tree: MLS.TreeKEM.RatchetTree,
+		currentEpoch: UInt64
 	) throws -> MLS.RFC9420.Membership {
 		// A leaf index ≥ leaf_count (or ≥ 2^32) names no leaf. Guard BEFORE
 		// `leaf(at:)`, whose `2 * index` is a trapping UInt32 multiply
@@ -728,23 +745,31 @@ extension MLS.RFC9420.Group {
 		let secretKeys = try restoreTreeSecretKeys(
 			archive.treeSecretKeys, myLeafIndex: leafIndex, tree: tree)
 		let pendingUpdate = try archive.pendingUpdate.map {
-			try restorePendingUpdate($0, leafIndex: leafIndex)
+			try restorePendingUpdate(
+				$0, leafIndex: leafIndex, currentEpoch: currentEpoch)
 		}
 		return MLS.RFC9420.Membership(
 			leafIndex: leafIndex, secretKeys: secretKeys, pendingUpdate: pendingUpdate)
 	}
 
 	/// Rebuilds a membership's pending self-Update from its archive (format 2).
-	/// The `node` MUST be the membership's own leaf node, and the update set is
+	/// The `epoch` MUST be the current epoch (a pending Update is valid only for
+	/// the epoch it names and is cleared on every advance — the live invariant),
+	/// the `node` MUST be the membership's own leaf node, and the update set is
 	/// non-empty; entries are read in ascending index order. The public key is
 	/// opaque wire bytes (not re-derived); the secret is validated non-empty by
 	/// `HpkeSecretKey`.
 	private static func restorePendingUpdate(
-		_ archive: PendingUpdateArchive, leafIndex: MLS.LeafIndex
+		_ archive: PendingUpdateArchive, leafIndex: MLS.LeafIndex, currentEpoch: UInt64
 	) throws -> (
 		epoch: UInt64, node: UInt32,
 		updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
 	) {
+		guard archive.epoch == currentEpoch else {
+			throw MLS.RFC9420.SnapshotError.inconsistentStore(
+				"pending_update epoch \(archive.epoch) is not the current epoch "
+					+ "\(currentEpoch)")
+		}
 		guard archive.node == 2 * leafIndex.value else {
 			throw MLS.RFC9420.SnapshotError.inconsistentStore(
 				"pending_update node \(archive.node) is not the membership's own leaf "
