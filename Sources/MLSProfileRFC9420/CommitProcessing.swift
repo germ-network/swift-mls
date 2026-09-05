@@ -702,7 +702,7 @@ extension MLS.RFC9420.Group {
 		// old-epoch stores and resumption PSKs are deliberately NOT captured —
 		// `apply(onto:)` takes them from the live group (D17 §4), which is what
 		// keeps consumption made while the commit was pending from being rolled
-		// back (GER-2413). `pendingUpdates` clearing likewise happens at apply.
+		// back. `pendingUpdates` clearing likewise happens at apply.
 		let (newStore, newExporter) = try Self.makeEpochMessageState(
 			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
 			encryptionSecret: newEpoch.encryptionSecret,

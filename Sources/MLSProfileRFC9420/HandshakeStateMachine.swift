@@ -7,7 +7,7 @@ import MLSTreeMath
 import SecretBytes
 
 // D17 — the handshake state machine expressed in types. Slice 1: the
-// `Transition`/`PendingCommit` foundation (the H1/GER-2413 fix). The public
+// `Transition`/`PendingCommit` foundation (the interleaved-consumption fix). The public
 // two-step entry point for a public-framed commit is `validating(commit:)`
 // (see `CommitProcessing.swift`); private framing, proposals, the send side,
 // eviction, and the credential effects arrive in later slices.
@@ -43,7 +43,7 @@ extension MLS.RFC9420 {
 	/// One effect a commit had, for the application to adjudicate at the seam
 	/// between validation and apply. Slice 1 emits only `epochAdvanced`; the
 	/// membership and §5.3.1 credential effects (`added`, `credentialReplaced`,
-	/// `updated`, `removed`, `selfRemoved`, …) arrive with GER-2412 in a later
+	/// `updated`, `removed`, `selfRemoved`, …) arrive in a later
 	/// slice.
 	public enum CommitEffect: Sendable, Equatable {
 		/// The epoch advanced from `from` to `to`, committed by `committer`.
@@ -60,7 +60,7 @@ extension MLS.RFC9420 {
 	/// `Group`. `apply(onto:)` composes it onto the *live* group the
 	/// application has kept operating on, taking that group's (more-consumed)
 	/// retained message-secret stores — so consumption made while the commit
-	/// was pending is never rolled back (D17 §4, GER-2413). Non-copyable, and
+	/// was pending is never rolled back (D17 §4). Non-copyable, and
 	/// `apply` is `consuming`: a pending applies at most once, and applying it
 	/// onto a group that has moved past its base throws `staleBase` rather than
 	/// forking.

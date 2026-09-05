@@ -5,7 +5,7 @@ import Testing
 
 @testable import MLSProfileRFC9420
 
-/// D17 slice 1 — the `Transition`/`PendingCommit` foundation (the H1/GER-2413
+/// D17 slice 1 — the `Transition`/`PendingCommit` foundation (the interleaved-consumption
 /// fix). `validating(commit:)` produces an epoch *delta*, and `apply(onto:)`
 /// composes it onto the live group the application kept operating on, so
 /// consumption made while the commit was pending is never rolled back and a
@@ -19,7 +19,7 @@ struct HandshakeStateMachineTests {
 	/// consumption. Bob validates Alice's public commit, then decrypts an
 	/// application message (consuming Alice's epoch-N generation on the live
 	/// store), then applies. Replaying that message must fail — under the
-	/// H1/GER-2413 bug, `apply` would restore the validation-time store and the
+	/// interleaved-consumption bug, `apply` would restore the validation-time store and the
 	/// replay would succeed.
 	@Test(
 		"apply(onto:) preserves consumption made on the live group while the commit was pending"
@@ -55,7 +55,7 @@ struct HandshakeStateMachineTests {
 		// The epoch-N store carried through apply reflects the consumption
 		// *exactly*: generation 0's replay is rejected with the specific
 		// consumed-generation error — not restored to a fresh store, as the
-		// H1/GER-2413 bug would, which would let the replay succeed.
+		// interleaved-consumption bug would, which would let the replay succeed.
 		#expect(
 			throws: MLS.RFC9420.GroupError.generationAlreadyConsumed(generation: 0)
 		) {
