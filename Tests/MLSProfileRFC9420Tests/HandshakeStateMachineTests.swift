@@ -40,20 +40,36 @@ struct HandshakeStateMachineTests {
 		let pending = try bob.validating(
 			provider, commit: pubCommit, proposals: .init(), psk: { _ in nil })
 
-		// Interleaved: Alice sends, Bob decrypts — consuming Alice's epoch-N
-		// application generation on Bob's live store.
-		let message = try alice.protect(
+		// Interleaved: Alice sends two epoch-N messages; Bob decrypts the first
+		// (consuming generation 0 on his live store) before applying.
+		let gen0 = try alice.protect(
 			provider, applicationData: Data("hello".utf8),
 			signingKey: pair.alice.signingKey)
-		_ = try bob.unprotect(provider, message: message)
+		let gen1 = try alice.protect(
+			provider, applicationData: Data("world".utf8),
+			signingKey: pair.alice.signingKey)
+		_ = try bob.unprotect(provider, message: gen0)
 
 		bob = try pending.apply(onto: bob).group
 
-		// The retained epoch-N store still reflects the consumption: a replay of
-		// the same message is rejected.
-		#expect(throws: (any Error).self) {
-			_ = try bob.unprotect(provider, message: message)
+		// The epoch-N store carried through apply reflects the consumption
+		// *exactly*: generation 0's replay is rejected with the specific
+		// consumed-generation error — not restored to a fresh store, as the
+		// H1/GER-2413 bug would, which would let the replay succeed.
+		#expect(
+			throws: MLS.RFC9420.GroupError.generationAlreadyConsumed(generation: 0)
+		) {
+			_ = try bob.unprotect(provider, message: gen0)
 		}
+		// And the store is still *live*, not dead: generation 1, untouched before
+		// apply, decrypts — proving apply preserved the live ratchet, not merely
+		// broke it.
+		let opened = try bob.unprotect(provider, message: gen1)
+		guard case .application(let data) = opened.content else {
+			Issue.record("expected application content")
+			return
+		}
+		#expect(data == Data("world".utf8))
 	}
 
 	/// A pending applied onto a live group that has moved past its base throws
@@ -94,5 +110,96 @@ struct HandshakeStateMachineTests {
 		} catch MLS.RFC9420.GroupError.staleBase {
 			// expected
 		}
+	}
+
+	/// The delta installs per-membership key material keyed by leaf index, so a
+	/// pending applied onto a group whose local-membership *set* has changed
+	/// since validation throws `membershipMismatch` rather than misplacing or
+	/// dropping that material (D17 §4 L-2). Distinct from `staleBase`: the
+	/// GroupContext is untouched, so only the membership check catches it.
+	@Test("apply(onto:) throws membershipMismatch when the live local-membership set changed")
+	func applyThrowsMembershipMismatchWhenLocalSetChanged() throws {
+		let provider = Self.provider
+		let pair = try ConstructedRejectionTests.pair()
+		var bob = pair.groupB
+		let alice = pair.groupA
+
+		let commit = try alice.committing(
+			provider, proposals: [], signingKey: pair.alice.signingKey,
+			randomness: .generate(provider), framing: .publicMessage)
+		guard case .publicMessage(let pub) = commit.commit else {
+			Issue.record("expected a public commit")
+			return
+		}
+		let pending = try bob.validating(
+			provider, commit: pub, proposals: .init(), psk: { _ in nil })
+
+		// A second local membership appears between validate and apply (context
+		// unchanged, so `staleBase` does not fire).
+		bob.memberships.append(
+			MLS.RFC9420.Membership(leafIndex: MLS.LeafIndex(value: 7), secretKeys: [:]))
+		do {
+			_ = try pending.apply(onto: bob)
+			Issue.record("expected membershipMismatch")
+		} catch MLS.RFC9420.GroupError.membershipMismatch {
+			// expected
+		}
+	}
+
+	/// The lazy `Transition.snapshot()` (D17 §2/H2) is the persisted form of the
+	/// state to adopt: it restores to a group one epoch past the base, and is
+	/// byte-identical to snapshotting the adopted group directly.
+	@Test("Transition.snapshot() persists the adopted, epoch-advanced group")
+	func transitionSnapshotPersistsAdvancedGroup() throws {
+		let provider = Self.provider
+		let pair = try ConstructedRejectionTests.pair()
+		let bob = pair.groupB
+		let alice = pair.groupA
+
+		let commit = try alice.committing(
+			provider, proposals: [], signingKey: pair.alice.signingKey,
+			randomness: .generate(provider), framing: .publicMessage)
+		guard case .publicMessage(let pub) = commit.commit else {
+			Issue.record("expected a public commit")
+			return
+		}
+		let baseEpoch = bob.context.epoch
+		let pending = try bob.validating(
+			provider, commit: pub, proposals: .init(), psk: { _ in nil })
+		let transition = try pending.apply(onto: bob)
+
+		let snapshot = try transition.snapshot()
+		let restored = try MLS.RFC9420.Group.restore(from: snapshot, provider)
+		#expect(restored.context.epoch == baseEpoch + 1)
+		#expect(try restored.makeSnapshot() == (try transition.group.makeSnapshot()))
+	}
+
+	/// The two-step lets the application keep operating on the live group while a
+	/// commit is pending — including proposing a self-Update, which stashes a
+	/// pending-update secret. Applying the commit advances the epoch, which
+	/// retires the whole pending-update set (forward secrecy), the interleaved
+	/// proposal included — exercising `apply`'s `pendingUpdates` clearing.
+	@Test("a self-Update proposed between validate and apply is retired by the epoch advance")
+	func proposeUpdateBetweenValidateAndApplyIsCleared() throws {
+		let provider = Self.provider
+		let pair = try ProposalValidationTests.pair()
+		var bob = pair.groupB
+		let alice = pair.groupA
+
+		let commit = try alice.committing(
+			provider, proposals: [], signingKey: pair.alice.signingKey,
+			randomness: .generate(provider), framing: .publicMessage)
+		guard case .publicMessage(let pub) = commit.commit else {
+			Issue.record("expected a public commit")
+			return
+		}
+		let pending = try bob.validating(
+			provider, commit: pub, proposals: .init(), psk: { _ in nil })
+
+		_ = try bob.proposeUpdate(provider, signingKey: pair.bob.signingKey)
+		#expect(bob.pendingUpdates != nil)
+
+		bob = try pending.apply(onto: bob).group
+		#expect(bob.pendingUpdates == nil)
 	}
 }

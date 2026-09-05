@@ -73,6 +73,13 @@ extension MLS.RFC9420 {
 		/// The **entire** `GroupContext` this delta was validated against;
 		/// `apply(onto:)` requires `live.context == base` (D17 §4).
 		public let base: GroupContext
+		/// The local `Membership` leaf indices this delta was validated against.
+		/// `apply(onto:)` requires `live`'s local-membership set to still equal
+		/// this (D17 §4 L-2): the delta installs per-membership key material keyed
+		/// by leaf index, so composing it onto a changed membership set would
+		/// misplace or drop that material. Together with `base`, this is the whole
+		/// of what the pending assumes about the group it applies onto.
+		let baseMemberships: Set<MLS.LeafIndex>
 
 		// The epoch advance, derivable from the commit and `base` alone —
 		// nothing here is read from `base`'s message-secret state (D17 §4's
@@ -95,12 +102,16 @@ extension MLS.RFC9420 {
 		/// stores and resumption PSKs come from `live` (more consumed than at
 		/// validation); `pendingUpdates` is cleared by the epoch advance;
 		/// retention pruning runs on the composed result. Throws `staleBase`
-		/// unless `live.context == base`.
+		/// unless `live.context == base`, and `membershipMismatch` unless `live`'s
+		/// local-membership set still equals `baseMemberships`.
 		public consuming func apply(onto live: Group) throws
 			-> Transition<CommitEffects>
 		{
 			guard live.context == base else {
 				throw MLS.RFC9420.GroupError.staleBase
+			}
+			guard Set(live.memberships.map(\.leafIndex)) == baseMemberships else {
+				throw MLS.RFC9420.GroupError.membershipMismatch
 			}
 			var result = live
 			result.context = newContext
