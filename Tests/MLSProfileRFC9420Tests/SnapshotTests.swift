@@ -498,16 +498,12 @@ struct SnapshotTests {
 				"retention": .plain, "config": .plain, "exporterTree": .plain,
 			])
 
-		// A membership. tree_secret_keys holds secrets directly; pending_update's
-		// secret is in its own per-entry table.
+		// A membership. tree_secret_keys holds secrets directly; pending_update is
+		// the update-set map (a container; its per-entry secret is in the table
+		// below).
 		assertClassification(
 			Group.MembershipArchive(treeSecretKeys: secretMap, pendingUpdate: nil),
 			["treeSecretKeys": .secret, "pendingUpdate": .plain])
-
-		assertClassification(
-			Group.PendingUpdateArchive(
-				epoch: 0, node: 0, updates: MLS.RFC9420.IntegerKeyedMap([:])),
-			["epoch": .plain, "node": .plain, "updates": .plain])
 
 		// A pending-update entry — public_key is opaque wire bytes; secret is the
 		// proposed leaf HPKE private key.
