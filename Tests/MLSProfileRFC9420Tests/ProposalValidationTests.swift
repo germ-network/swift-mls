@@ -119,7 +119,7 @@ struct ProposalValidationTests {
 	}
 
 	/// A genuinely framed (publicly signed and membership-tagged) proposal
-	/// from `group`'s own current member, run through `Group.verify(proposal:)`
+	/// from `group`'s own current member, run through `Group.verifying(proposal:)`
 	/// exactly as a real by-reference proposal is before it enters the store —
 	/// the by-reference half of the technique above. The *framing* is valid; a
 	/// malformed *inner* leaf (the point of several tests below) still passes
@@ -136,7 +136,7 @@ struct ProposalValidationTests {
 			provider, content: content, groupContext: group.context,
 			confirmationTag: nil, signingKey: signingKey,
 			membershipKey: group.epoch.membershipKey)
-		return try group.verify(proposal: message, provider)
+		return try group.verifying(provider, proposal: message)
 	}
 
 	// MARK: §10.1 — the KeyPackage signature reading, settled against vectors
@@ -531,7 +531,7 @@ struct ProposalValidationTests {
 			auth: .init(signature: nil, confirmationTag: nil),
 			membershipTag: nil)
 		#expect(throws: MLS.RFC9420.GroupError.notAProposal) {
-			_ = try p.groupA.verify(proposal: message, Self.provider)
+			_ = try p.groupA.verifying(Self.provider, proposal: message)
 		}
 	}
 
@@ -554,7 +554,7 @@ struct ProposalValidationTests {
 			confirmationTag: nil, signingKey: p.alice.signingKey,
 			membershipKey: p.groupA.epoch.membershipKey)
 		#expect(throws: MLS.CryptoError.self) {
-			_ = try p.groupA.verify(proposal: forged, Self.provider)
+			_ = try p.groupA.verifying(Self.provider, proposal: forged)
 		}
 	}
 
@@ -575,7 +575,7 @@ struct ProposalValidationTests {
 		let untagged = MLS.RFC9420.PublicMessage(
 			content: signed.content, auth: signed.auth, membershipTag: nil)
 		#expect(throws: MLS.FramingError.self) {
-			_ = try p.groupB.verify(proposal: untagged, Self.provider)
+			_ = try p.groupB.verifying(Self.provider, proposal: untagged)
 		}
 	}
 
@@ -595,19 +595,19 @@ struct ProposalValidationTests {
 				membershipTag: nil)
 		}
 		#expect(throws: MLS.RFC9420.GroupError.unsupportedSender) {
-			_ = try p.groupB.verify(
+			_ = try p.groupB.verifying(
+				Self.provider,
 				proposal: message(
-					epoch: p.groupB.context.epoch, sender: .external(0)),
-				Self.provider)
+					epoch: p.groupB.context.epoch, sender: .external(0)))
 		}
 		#expect(
 			throws: MLS.RFC9420.GroupError.wrongEpoch(
 				expected: p.groupB.context.epoch, actual: 999)
 		) {
-			_ = try p.groupB.verify(
+			_ = try p.groupB.verifying(
+				Self.provider,
 				proposal: message(
-					epoch: 999, sender: .member(p.groupB.myLeafIndex)),
-				Self.provider)
+					epoch: 999, sender: .member(p.groupB.myLeafIndex)))
 		}
 	}
 

@@ -34,7 +34,7 @@ extension MLS.RFC9420 {
 	/// `ProposalStore.insert` requires, so an unverified proposal cannot enter
 	/// the store. Minted only two ways, both of which check the framing
 	/// signature (and, for public framing, the membership tag) against the
-	/// sender's current leaf key: `Group.verify(proposal:)` for a
+	/// sender's current leaf key: `Group.verifying(proposal:)` for a
 	/// `PublicMessage`, and `unprotect` for a `PrivateMessage`. The `init` is
 	/// not `public`, so a caller cannot fabricate one from raw bytes — the same
 	/// unrepresentable-by-construction technique `StoredProposal` uses.
@@ -94,7 +94,7 @@ extension MLS.RFC9420 {
 	/// proposal, and never re-verifies a stored `sender` — it does not need
 	/// to, because `insert` accepts only a `VerifiedProposal`, whose framing
 	/// signature was already checked against the sender's current leaf key by
-	/// `Group.verify(proposal:)` or `unprotect`. A `StoredProposal`'s `sender`
+	/// `Group.verifying(proposal:)` or `unprotect`. A `StoredProposal`'s `sender`
 	/// is therefore the authenticated framer, not a claimed one.
 	///
 	/// Two things this boundary deliberately does not cover: epoch freshness
@@ -123,7 +123,7 @@ extension MLS.RFC9420 {
 		public init() {}
 
 		/// Refs and stores an already framing-verified proposal. A
-		/// `VerifiedProposal` (from `Group.verify(proposal:)` or `unprotect`)
+		/// `VerifiedProposal` (from `Group.verifying(proposal:)` or `unprotect`)
 		/// carries `.proposal` content by construction; the guard keeps
 		/// `notAProposal` as a defensive invariant rather than a live path.
 		@discardableResult
@@ -201,9 +201,9 @@ extension MLS.RFC9420.Group {
 	/// credential legitimately binds that signature key (and is a valid
 	/// successor when a credential is replaced) is RFC 9420 §5.3.1's
 	/// Authentication Service: an application responsibility, outside this gate.
-	public func verify(
-		proposal message: MLS.RFC9420.PublicMessage,
-		_ provider: any MLS.CipherSuiteProvider
+	public func verifying(
+		_ provider: any MLS.CipherSuiteProvider,
+		proposal message: MLS.RFC9420.PublicMessage
 	) throws -> MLS.RFC9420.VerifiedProposal {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
@@ -234,6 +234,31 @@ extension MLS.RFC9420.Group {
 			verified: MLS.RFC9420.AuthenticatedContent(
 				wireFormat: .publicMessage, content: message.content,
 				auth: message.auth))
+	}
+
+	/// Framing verification of a `PrivateMessage`-framed proposal (D17): the
+	/// private-framing counterpart of `verifying(proposal: PublicMessage)`.
+	/// Decrypting the message spends the sender's handshake generation (§9.2), so
+	/// this returns a `Transition`: `group` is the post-consumption state to
+	/// **adopt** (the consumption lives only there), the `output` is the
+	/// `VerifiedProposal` ready for `ProposalStore.insert`. Unlike a commit a
+	/// proposal has no deeper validity step here (§12.1 runs at commit time), so
+	/// there is no rejected arm — a non-proposal content type is refused on the
+	/// cleartext header before decrypting, and once the frame opens this never
+	/// throws.
+	public func verifying(
+		_ provider: any MLS.CipherSuiteProvider,
+		proposal message: MLS.RFC9420.PrivateMessage
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.VerifiedProposal> {
+		guard message.contentType == .proposal else {
+			throw MLS.RFC9420.GroupError.wrongContentType(message.contentType)
+		}
+		var group = self
+		let opened = try group.openPrivate(provider, message)
+		group.commitConsumption(opened.pending)
+		return MLS.RFC9420.Transition(
+			group: group,
+			output: MLS.RFC9420.VerifiedProposal(verified: opened.authenticated))
 	}
 
 	/// D17 step 1 (validate) for a `PublicMessage`-framed commit: run RFC 9420
@@ -292,6 +317,52 @@ extension MLS.RFC9420.Group {
 					wireFormat: .publicMessage, content: message.content,
 					auth: message.auth)),
 			proposals: proposals, psk: psk)
+	}
+
+	/// D17 step 1 (validate) for a `PrivateMessage`-framed commit. Decrypting the
+	/// message spends the sender's handshake generation the moment its AEAD opens
+	/// (RFC 9420 §9.2), so this is a `Transition`: `group` is the post-consumption
+	/// live state — **adopt it** (apply onto it or a successor, never onto the
+	/// pre-call group; the consumption lives only here), and the `output` is a
+	/// `CommitValidation`.
+	///
+	/// The entry **throws only when nothing was consumed** — a non-commit content
+	/// type (checked on the cleartext header before decrypting), a failed AEAD or
+	/// signature, a replayed or out-of-window generation. Once the frame opens it
+	/// never throws: a valid commit is `.pending` (adjudicate, then `apply`), an
+	/// authentic-but-invalid one is `.rejected` — either way the consumption is
+	/// kept in `group`, so a replay is rejected and §9.2's delete-once-used MUST
+	/// holds even when the commit itself is rejected.
+	public func validating(
+		_ provider: any MLS.CipherSuiteProvider,
+		commit message: MLS.RFC9420.PrivateMessage,
+		proposals: MLS.RFC9420.ProposalStore,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.CommitValidation> {
+		// Refuse a non-commit before decrypting (content type is in the cleartext
+		// header), so this throws with nothing consumed.
+		guard message.contentType == .commit else {
+			throw MLS.RFC9420.GroupError.wrongContentType(message.contentType)
+		}
+		var group = self
+		let opened = try group.openPrivate(provider, message)
+		// AEAD opened: the generation is spent. Commit it now so it survives every
+		// arm below, and never throw past this point.
+		group.commitConsumption(opened.pending)
+		let output: MLS.RFC9420.CommitValidation
+		do {
+			let pending = try group.validatedDelta(
+				provider,
+				commit: MLS.RFC9420.VerifiedCommit(verified: opened.authenticated),
+				proposals: proposals, psk: psk)
+			output = .pending(pending)
+		} catch {
+			output = .rejected(
+				MLS.RFC9420.CommitRejection(
+					sender: opened.senderLeaf, epoch: opened.epoch,
+					reason: error))
+		}
+		return MLS.RFC9420.Transition(group: group, output: output)
 	}
 
 	/// Transitional shim (removed in the D17 migration slice): `validating`

@@ -378,7 +378,7 @@
 				}
 				// Authenticate the framing before it enters the store — a
 				// public proposal has no other verification step.
-				let verified = try group.verify(proposal: message, p)
+				let verified = try group.verifying(p, proposal: message)
 				try store.insert(verified, p)
 			}
 			return store

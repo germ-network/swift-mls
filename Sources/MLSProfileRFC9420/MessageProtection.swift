@@ -470,15 +470,30 @@ extension MLS.RFC9420.Group {
 		return message
 	}
 
-	/// Receive a `PrivateMessage` — the §9.2-ordered pipeline: route by
-	/// group/epoch/content-type before any ratchet is touched, open the
-	/// sender data, refuse our own leaf, bound the jump, derive, open the
-	/// content AEAD, and only then consume. A failed decrypt leaves every
+	/// What `openPrivate` recovers from a `PrivateMessage`: the authenticated
+	/// frame, the sender's leaf and `epoch`-bound verified key, and the ratchet
+	/// consumption to commit — or discard, for a read-only peek.
+	struct OpenedPrivate {
+		let authenticated: MLS.RFC9420.AuthenticatedContent
+		let senderLeaf: MLS.LeafIndex
+		let epoch: UInt64
+		let senderSignatureKey: MLS.SignaturePublicKey
+		let pending: PendingConsumption
+	}
+
+	/// The shared private-receive core (D17 §1.1): route by
+	/// group/epoch/content-type, open the sender data, refuse our own leaf,
+	/// derive the message key, and open the content AEAD + framing signature —
+	/// **without committing the ratchet consumption**. `mutating` only for the
+	/// one-time per-leaf chain bootstrap (§9's leaf-secret fork into the handshake
+	/// and application ratchets); the generation consumption is
+	/// returned as `pending` for the caller to `commitConsumption` (the
+	/// consuming entries) or discard (`peeking`). A failed decrypt leaves every
 	/// ratchet exactly where it was.
-	public mutating func unprotect(
+	mutating func openPrivate(
 		_ provider: any MLS.CipherSuiteProvider,
-		message: MLS.RFC9420.PrivateMessage
-	) throws -> Unprotected {
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> OpenedPrivate {
 		guard message.groupID == context.groupID else {
 			throw MLS.RFC9420.GroupError.wrongGroup
 		}
@@ -519,23 +534,85 @@ extension MLS.RFC9420.Group {
 			// uses the exact key surfaced on `Unprotected`, so the vouched-for key
 			// and the one that authenticated the frame cannot decouple.
 			verificationKey: { _ in senderSignatureKey })
-		commitConsumption(pending)
+		return OpenedPrivate(
+			authenticated: authenticated, senderLeaf: senderData.leafIndex,
+			epoch: message.epoch, senderSignatureKey: senderSignatureKey,
+			pending: pending)
+	}
 
+	/// Build the `Unprotected` view of an opened frame (D17). `authenticatedData`
+	/// comes from the wire message; the epoch-bound `sender`/`senderSignatureKey`
+	/// come from `opened`.
+	static func makeUnprotected(
+		_ opened: OpenedPrivate, authenticatedData: Data
+	) -> Unprotected {
 		let content: UnprotectedContent
-		switch authenticated.content.content {
+		switch opened.authenticated.content.content {
 		case .application(let data):
 			content = .application(data)
 		case .proposal:
 			content = .proposal(
-				MLS.RFC9420.VerifiedProposal(verified: authenticated))
+				MLS.RFC9420.VerifiedProposal(verified: opened.authenticated))
 		case .commit:
-			content = .commit(authenticated)
+			content = .commit(opened.authenticated)
 		}
 		return Unprotected(
-			sender: senderData.leafIndex,
-			epoch: message.epoch,
-			senderSignatureKey: senderSignatureKey,
-			authenticatedData: message.authenticatedData,
-			content: content)
+			sender: opened.senderLeaf, epoch: opened.epoch,
+			senderSignatureKey: opened.senderSignatureKey,
+			authenticatedData: authenticatedData, content: content)
+	}
+
+	/// Receive a `PrivateMessage` as a transition (D17 §1.1). Decrypting a
+	/// private message advances a ratchet — a consumption §9.2 requires be
+	/// deleted — so this is a `Transition`: the `group` is the post-consumption
+	/// live state to adopt (and persist), the `output` is the decrypted
+	/// `Unprotected`. For a commit or proposal, route to `validating(commit:)` /
+	/// `verifying(proposal:)` to also get the delta / `VerifiedProposal`; this
+	/// entry decrypts every content type but hands the commit back as inspection
+	/// data (M5 — `.commit` is not applicable). A failed decrypt returns nothing
+	/// and consumes nothing.
+	public func unprotecting(
+		_ provider: any MLS.CipherSuiteProvider,
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> MLS.RFC9420.Transition<Unprotected> {
+		var group = self
+		let opened = try group.openPrivate(provider, message)
+		group.commitConsumption(opened.pending)
+		return MLS.RFC9420.Transition(
+			group: group,
+			output: Self.makeUnprotected(
+				opened, authenticatedData: message.authenticatedData))
+	}
+
+	/// Read-only decrypt (#31): recover a `PrivateMessage`'s content **without**
+	/// advancing any ratchet — nothing to adopt, so it returns a plain
+	/// `Unprotected`, never a `Transition`. Application content only: a handshake
+	/// is refused (`wrongContentType`), so a peek can never yield an applicable
+	/// commit (M5). The consumption the decrypt would make is discarded, so the
+	/// same generation still opens for real via `unprotecting` afterward.
+	public func peeking(
+		_ provider: any MLS.CipherSuiteProvider,
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> Unprotected {
+		guard message.contentType == .application else {
+			throw MLS.RFC9420.GroupError.wrongContentType(message.contentType)
+		}
+		var group = self  // consumption + bootstrap land here and are discarded
+		let opened = try group.openPrivate(provider, message)
+		return Self.makeUnprotected(
+			opened, authenticatedData: message.authenticatedData)
+	}
+
+	/// Transitional mutating shim over `unprotecting` (removed in the migration
+	/// slice): adopts the transition's post-consumption `group` into `self` and
+	/// returns the decrypted content. Prefer `unprotecting`.
+	@discardableResult
+	public mutating func unprotect(
+		_ provider: any MLS.CipherSuiteProvider,
+		message: MLS.RFC9420.PrivateMessage
+	) throws -> Unprotected {
+		let transition = try unprotecting(provider, message)
+		self = transition.group
+		return transition.output
 	}
 }

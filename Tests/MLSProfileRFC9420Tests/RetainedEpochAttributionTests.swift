@@ -64,7 +64,10 @@ struct RetainedEpochAttributionTests {
 			signingKey: mallory.signingKey)
 		#expect(message.epoch == epochN)
 
-		let opened = try aliceGroup.unprotect(provider, message: message)
+		// Through the transition API: `unprotecting` hands back the epoch-bound
+		// attribution on `output`, and a `group` to adopt — this test only reads
+		// the attribution, so it never adopts.
+		let opened = try aliceGroup.unprotecting(provider, message).output
 		guard case .application(let data) = opened.content else {
 			Issue.record("expected application content")
 			return

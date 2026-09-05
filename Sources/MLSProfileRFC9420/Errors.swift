@@ -85,7 +85,7 @@ extension MLS.RFC9420 {
 		/// A `PublicMessage` that isn't a commit was handed to commit
 		/// processing.
 		case notACommit
-		/// `Group.verify(proposal:)` was given a message whose framed content
+		/// `Group.verifying(proposal:)` was given a message whose framed content
 		/// isn't a proposal (also `ProposalStore.insert`'s defensive guard,
 		/// though a `VerifiedProposal` cannot carry non-proposal content).
 		case notAProposal

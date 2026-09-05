@@ -22,6 +22,13 @@ extension MLS.RFC9420 {
 	///
 	/// `~Copyable` when `Output` is (a `PendingCommit` output makes the whole
 	/// transition linear); an ordinary value when `Output` is copyable.
+	///
+	/// Read `group` first (it is `Copyable`); `takeOutput()` then consumes the
+	/// transition to hand back the `output` — a transition is consumed exactly
+	/// once. That accessor, not `@frozen`, is how a `~Copyable` `output` (e.g. a
+	/// `PendingCommit`) crosses a module boundary: a non-frozen public type's
+	/// stored property cannot be partially consumed by another module, and this
+	/// type deliberately makes no `@frozen` layout promise.
 	public struct Transition<Output: ~Copyable & Sendable>: ~Copyable, Sendable {
 		/// The state to adopt. Adopting it and persisting `snapshot()` together
 		/// is a MUST-level contract (D17 §3) — the type cannot force it.
@@ -37,6 +44,16 @@ extension MLS.RFC9420 {
 		/// adopting `group`.
 		public func snapshot() throws -> Group.Snapshot {
 			try group.makeSnapshot()
+		}
+
+		/// Consume the transition and hand back its `output` — the supported way
+		/// to move a `~Copyable` `Output` (e.g. `PendingCommit` / `CommitValidation`)
+		/// out to act on it, since a non-frozen public type's stored property
+		/// cannot be partially consumed across a module boundary. Read `group`
+		/// first; this consumes the transition, so it is called exactly once. For
+		/// a `Copyable` `Output`, reading `.output` directly is equivalent.
+		public consuming func takeOutput() -> Output {
+			output
 		}
 	}
 
@@ -54,6 +71,36 @@ extension MLS.RFC9420 {
 	public struct CommitEffects: Sendable, Equatable {
 		public let events: [CommitEffect]
 		init(_ events: [CommitEffect]) { self.events = events }
+	}
+
+	/// The outcome of `validating(commit: PrivateMessage)` (D17 §1.1). Decrypting
+	/// the frame spends the sender's handshake generation the moment its AEAD
+	/// opens (RFC 9420 §9.2), so **both** arms carry that consumption in the
+	/// enclosing `Transition.group` — the entry never throws after a successful
+	/// open, and adopting `group` keeps the generation spent whichever arm
+	/// results. `~Copyable` because `.pending` is.
+	public enum CommitValidation: ~Copyable, Sendable {
+		/// Authentic **and** valid: adjudicate `effects`, then `apply(onto:)` the
+		/// group you adopted.
+		case pending(PendingCommit)
+		/// Authentic (framing AEAD + signature) but **not** a valid commit — bad
+		/// confirmation tag, an invalid proposal list, and so on. There is nothing
+		/// to apply, but the consumption is kept (a replay is rejected). Unlike a
+		/// commit the app *declines* to apply, a rejection is not the app's choice;
+		/// it is committer misbehaviour the application (RFC 9420 §5.3.1's
+		/// Authentication Service) may act on.
+		case rejected(CommitRejection)
+	}
+
+	/// An authentically framed but invalid private commit (D17 §1.1). `sender` is
+	/// a leaf in `epoch`'s roster (not the current tree — the same epoch-bound
+	/// attribution `Unprotected` carries); `reason` is the validation error that
+	/// rejected it — the thrown error itself (a `GroupError`, `FramingError`, …),
+	/// so an app can pattern-match known cases (`Error` refines `Sendable`).
+	public struct CommitRejection: Sendable {
+		public let sender: MLS.LeafIndex
+		public let epoch: UInt64
+		public let reason: any Error
 	}
 
 	/// Step 2 of a handshake: a validated epoch **delta**, never a successor
