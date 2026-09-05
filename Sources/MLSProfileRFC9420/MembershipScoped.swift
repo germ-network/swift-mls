@@ -23,9 +23,35 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	/// Commit as the local membership occupying `leaf` (D18). See this file's
-	/// note; slice 3 gives it the D17 `Transition<SentCommit>` shape.
+	/// Commit as the local membership occupying `leaf` (D18), in the D17
+	/// `Transition<SentCommit>` shape. See this file's note; the per-leaf ratchet
+	/// move that makes N > 1 send correct is slice 3b.
 	public func committing(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
+		try requireLocalMembership(leaf)
+		return try committing(
+			provider, proposals: proposalList, proposalStore: proposalStore,
+			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension,
+			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
+			psk: psk)
+	}
+
+	/// The eager convenience of `committing(as:)` — see `commit(_:proposals:…)`.
+	@discardableResult
+	public mutating func commit(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
@@ -40,7 +66,7 @@ extension MLS.RFC9420.Group {
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> CommitOutput {
 		try requireLocalMembership(leaf)
-		return try committing(
+		return try commit(
 			provider, proposals: proposalList, proposalStore: proposalStore,
 			signingKey: signingKey, randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,

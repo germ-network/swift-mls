@@ -106,7 +106,7 @@ struct SnapshotTests {
 			signingKey: duo.alice.signingKey)
 		_ = try duo.groupB.unprotect(Self.provider, message: old)
 
-		let commit = try duo.groupA.committing(
+		let commit = try duo.groupA.commit(
 			Self.provider, proposals: [], signingKey: duo.alice.signingKey,
 			randomness: .generate(Self.provider))
 		duo.groupA = commit.group
@@ -374,7 +374,7 @@ struct SnapshotTests {
 	func interiorTreeSecretKeysRoundTrip() throws {
 		var duo = try ApplicationMessageTests.duo()
 		let carol = try SelfInteropTests.member("carol")
-		let add = try duo.groupA.committing(
+		let add = try duo.groupA.commit(
 			Self.provider, proposals: [.proposal(.add(carol.keyPackage))],
 			signingKey: duo.alice.signingKey, randomness: .generate(Self.provider))
 		duo.groupA = add.group
@@ -387,7 +387,7 @@ struct SnapshotTests {
 
 		// An empty commit forces a full UpdatePath, so the committer holds its
 		// whole direct path — including a strictly-interior (non-root) parent.
-		let empty = try duo.groupA.committing(
+		let empty = try duo.groupA.commit(
 			Self.provider, proposals: [], signingKey: duo.alice.signingKey,
 			randomness: .generate(Self.provider))
 		duo.groupA = empty.group
@@ -412,7 +412,7 @@ struct SnapshotTests {
 			Self.provider, applicationData: Data("old".utf8),
 			signingKey: duo.alice.signingKey)
 		_ = try duo.groupB.unprotect(Self.provider, message: old)
-		let commit = try duo.groupA.committing(
+		let commit = try duo.groupA.commit(
 			Self.provider, proposals: [], signingKey: duo.alice.signingKey,
 			randomness: .generate(Self.provider))
 		duo.groupA = commit.group

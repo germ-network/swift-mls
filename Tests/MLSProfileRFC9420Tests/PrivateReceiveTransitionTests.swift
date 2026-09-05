@@ -29,7 +29,7 @@ struct PrivateReceiveTransitionTests {
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .privateMessage)
-		guard case .privateMessage(let privateCommit) = commitOut.commit else {
+		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
 		}
@@ -61,7 +61,7 @@ struct PrivateReceiveTransitionTests {
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .privateMessage)
-		guard case .privateMessage(let privateCommit) = commitOut.commit else {
+		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
 		}
@@ -106,7 +106,7 @@ struct PrivateReceiveTransitionTests {
 			provider, proposals: [.reference(ref)], proposalStore: aliceStore,
 			signingKey: pair.alice.signingKey, randomness: .generate(provider),
 			framing: .privateMessage)
-		guard case .privateMessage(let privateCommit) = commitOut.commit else {
+		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
 		}
@@ -180,7 +180,7 @@ struct PrivateReceiveTransitionTests {
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .privateMessage)
-		guard case .privateMessage(let privateCommit) = commitOut.commit else {
+		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
 		}
@@ -250,7 +250,7 @@ struct PrivateReceiveTransitionTests {
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .privateMessage)
-		guard case .privateMessage(let privateCommit) = commitOut.commit else {
+		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
 		}

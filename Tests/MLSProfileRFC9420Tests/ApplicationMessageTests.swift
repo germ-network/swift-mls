@@ -28,7 +28,7 @@ struct ApplicationMessageTests {
 		let alice = try SelfInteropTests.member("alice")
 		let bob = try SelfInteropTests.member("bob")
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -86,7 +86,7 @@ struct ApplicationMessageTests {
 			Self.provider, applicationData: Data("from the old epoch".utf8),
 			signingKey: d.alice.signingKey)
 		// Advance an epoch before B ever sees the message.
-		let pcs = try d.groupA.committing(
+		let pcs = try d.groupA.commit(
 			Self.provider, proposals: [], signingKey: d.alice.signingKey,
 			randomness: .generate(Self.provider))
 		d.groupA = pcs.group
@@ -124,7 +124,7 @@ struct ApplicationMessageTests {
 			Self.provider, applicationData: Data("too old".utf8),
 			signingKey: d.alice.signingKey)
 		for _ in 0..<2 {  // depth is 1: two commits retire the epoch
-			let pcs = try d.groupA.committing(
+			let pcs = try d.groupA.commit(
 				Self.provider, proposals: [], signingKey: d.alice.signingKey,
 				randomness: .generate(Self.provider))
 			d.groupA = pcs.group

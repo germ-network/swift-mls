@@ -114,8 +114,13 @@ extension MLS.RFC9420.Group {
 	/// `pathRequired` when the list does not permit omission (empty
 	/// commits and path-required proposal types MUST carry one).
 	///
-	/// Never mutates `self` — same contract as `processing`, and for the
-	/// same reason.
+	/// Never mutates `self` (D17): it returns a `Transition<SentCommit>` — the
+	/// `group` is the OLD epoch with the committer's own handshake generation
+	/// consumed (a private commit spends it at seal, §12.4.1), which the caller
+	/// **adopts and persists before transmitting** `SentCommit.message`, and the
+	/// epoch advance is `SentCommit.pending`, applied once the Delivery Service
+	/// affirms the commit. The eager `commit(...)` shim does both steps for
+	/// callers that adopt immediately.
 	public func committing(
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
@@ -128,7 +133,7 @@ extension MLS.RFC9420.Group {
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
-	) throws -> CommitOutput {
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		// D18 guard: `committing` installs/prunes `secretKeys` and seeds the
 		// pending self-Update on the sole membership (`memberships[0]`) only, and
 		// a private commit also seals on that membership's handshake ratchet
@@ -336,25 +341,32 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
-		var updated = self
-		updated.context = newContext
-		updated.tree = newTree
-		updated.epoch = EpochSecrets(retaining: newEpoch)
-		updated.secretKeys = newSecretKeys
-		updated.interimTranscriptHash = try MLS.Framing.interimTranscriptHash(
+		// Build the epoch DELTA (D17 §2/§4) — the send-side twin of
+		// `validatedDelta`, never a successor group. The new-epoch message store
+		// and exporter are built standalone; the old-epoch stores are NOT captured
+		// (they come from the group at `apply`, which is what preserves any
+		// consumption made while the commit is pending).
+		let newInterim = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
-		// `pendingUpdates` is valid only for the epoch it names --
-		// committing an epoch of our own retires the whole set exactly
-		// as processing someone else's does.
-		updated.pendingUpdates = nil
-		updated.resumptionPsks[newContext.epoch] = newEpoch.resumptionPsk
-		updated.pruneResumptionPsks(currentEpoch: newContext.epoch)
-		try updated.installMessageSecrets(
+		let (newStore, newExporter) = try Self.makeEpochMessageState(
 			context: newContext, senderDataSecret: newEpoch.senderDataSecret,
 			encryptionSecret: newEpoch.encryptionSecret,
-			applicationExportSecret: newEpoch.applicationExportSecret, tree: newTree,
-			provider)
+			applicationExportSecret: newEpoch.applicationExportSecret,
+			tree: newTree, provider)
+		let pending = MLS.RFC9420.PendingCommit(
+			effects: MLS.RFC9420.CommitEffects([
+				.epochAdvanced(
+					from: context.epoch, to: newContext.epoch,
+					committer: myLeafIndex)
+			]),
+			base: context,
+			baseMemberships: Set(memberships.map(\.leafIndex)),
+			newContext: newContext, newTree: newTree,
+			newEpoch: EpochSecrets(retaining: newEpoch),
+			newSecretKeys: newSecretKeys, newInterimTranscriptHash: newInterim,
+			newMessageStore: newStore, newExporterTree: newExporter,
+			newResumptionPsk: newEpoch.resumptionPsk)
 
 		let welcome = try makeWelcome(
 			provider, resolved: resolved, applied: applied, stage: stage,
@@ -363,9 +375,13 @@ extension MLS.RFC9420.Group {
 			pskIDs: pskIDs, signingKey: signingKey,
 			includeRatchetTreeExtension: includeRatchetTreeExtension)
 
-		// Sealed last, once `updated`'s message secrets (installed above)
-		// exist to seal a private commit against -- and, for a public one,
-		// with the OLD epoch's membership key (§12.4.1).
+		// Seal in the OLD epoch. A private commit spends the committer's own next
+		// handshake generation there (§12.4.1); that consumption is recorded on
+		// `sealed` — a copy of the pre-commit group — which is the state the
+		// caller adopts and persists BEFORE transmitting, so a crash-and-resend
+		// cannot reuse the generation. A public commit consumes nothing
+		// (OLD membership key, §12.4.1), so `sealed` is unchanged.
+		var sealed = self
 		let message: MLS.RFC9420.Message
 		switch framing {
 		case .publicMessage:
@@ -376,7 +392,7 @@ extension MLS.RFC9420.Group {
 					membershipKey: epoch.membershipKey))
 		case .privateMessage:
 			message = .privateMessage(
-				try updated.sealHandshakeCommit(
+				try sealed.sealHandshakeCommit(
 					provider, epoch: context.epoch, framed: framed,
 					signature: signature, confirmationTag: confirmationTag,
 					reuseGuard: reuseGuard
@@ -384,7 +400,49 @@ extension MLS.RFC9420.Group {
 					paddingLength: paddingLength))
 		}
 
-		return CommitOutput(group: updated, commit: message, welcome: welcome)
+		return MLS.RFC9420.Transition(
+			group: sealed,
+			output: MLS.RFC9420.SentCommit(
+				message: message, welcome: welcome, pending: pending))
+	}
+
+	/// Eager convenience over `committing`: adopts the committer's consumption
+	/// AND applies the epoch advance immediately, without waiting for
+	/// Delivery-Service affirmation — a harness/test convenience (the send twin
+	/// of the `process` receive shim). Safe from generation reuse because it
+	/// adopts the consumption before anything else can send from `self`; a caller
+	/// that follows the pending model MUST use `committing` and adopt/persist
+	/// before transmitting.
+	///
+	/// `CommitOutput.group` equals `self` after the call — retained only so the
+	/// pre-transition call sites compile unchanged, not part of the design.
+	/// `commit` and `CommitOutput` both retire in the migration slice.
+	@discardableResult
+	public mutating func commit(
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+	) throws -> CommitOutput {
+		let transition = try committing(
+			provider, proposals: proposalList, proposalStore: proposalStore,
+			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension,
+			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
+			psk: psk)
+		self = transition.group
+		let sent = transition.takeOutput()
+		let message = sent.message
+		let welcome = sent.welcome
+		self = try sent.takePending().apply(onto: self).group
+		return CommitOutput(group: self, commit: message, welcome: welcome)
 	}
 
 	/// §12.4.1's Welcome tail: GroupInfo (signed, then sealed under the

@@ -115,9 +115,9 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Install the new epoch's message state into `self` and prune to the
-	/// retention window. The transitional non-delta path (`create`,
-	/// `committing`, and the transitional `processing` shim) still installs
-	/// directly; the D17 delta composes via `apply(onto:)` instead.
+	/// retention window. Only `create` and `join` install directly (they build a
+	/// group, not a delta); every commit — receive and send alike — composes the
+	/// new epoch via the D17 delta's `apply(onto:)` instead.
 	mutating func installMessageSecrets(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
@@ -425,9 +425,9 @@ extension MLS.RFC9420.Group {
 	/// `wireFormat: .privateMessage` (see `signPrivate`) — as a
 	/// `PrivateMessage`, advancing the committer's own handshake ratchet
 	/// exactly as `protectContent` advances it for a proposal. Takes
-	/// `oldEpoch` explicitly: a commit is sent in the epoch it closes, not
-	/// the one `committing` has already installed into `self` by the time
-	/// this runs.
+	/// `oldEpoch` explicitly: a commit is sent in the epoch it closes, and
+	/// `committing` seals on a copy of the pre-commit group whose current epoch
+	/// IS `oldEpoch` (the successor is a not-yet-applied delta).
 	mutating func sealHandshakeCommit(
 		_ provider: any MLS.CipherSuiteProvider,
 		epoch oldEpoch: UInt64,

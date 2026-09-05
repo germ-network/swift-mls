@@ -103,6 +103,39 @@ extension MLS.RFC9420 {
 		public let reason: any Error
 	}
 
+	/// Sending a commit (D17 §1.1, table row 33). The committer seals the commit
+	/// in the OLD epoch — a private commit spends the next generation of its own
+	/// handshake ratchet there (RFC 9420 §12.4.1 + §9.1) — so this is the output
+	/// of a `Transition` whose `group` is the old epoch with that generation
+	/// consumed: **adopt and persist it before transmitting `message`**, so a
+	/// crash-and-resend cannot reuse the generation. The epoch advance is
+	/// `pending`, applied only once the Delivery Service affirms this commit over
+	/// any competitor — exactly as a receiver applies one (`staleBase` if a
+	/// competing commit landed first). `welcome` is transmitted to the added
+	/// members at that same moment.
+	///
+	/// Scope: `pending` is held in memory, not persisted with `group` (a
+	/// persisted pending slot is a later change — the interop server carries the
+	/// only such slot today). So adopting `group` makes the spent generation
+	/// reuse-safe across a crash, but recovering the *epoch advance* across a
+	/// crash between transmit and affirmation still needs that slot — a crash
+	/// there leaves the committer at the old epoch with no in-hand `pending`.
+	public struct SentCommit: ~Copyable, Sendable {
+		public let message: MLS.RFC9420.Message
+		/// Present iff the commit added members — sent to them once the commit is
+		/// affirmed and `pending` is applied.
+		public let welcome: MLS.RFC9420.Welcome?
+		public let pending: PendingCommit
+
+		/// Consume the `SentCommit` and hand back its `pending` epoch advance —
+		/// the supported way to move the `~Copyable` `PendingCommit` out to
+		/// `apply` it across a module boundary. Read `message` / `welcome` (both
+		/// `Copyable`) first; this consumes the value.
+		public consuming func takePending() -> PendingCommit {
+			pending
+		}
+	}
+
 	/// Step 2 of a handshake: a validated epoch **delta**, never a successor
 	/// `Group`. `apply(onto:)` composes it onto the *live* group the
 	/// application has kept operating on, taking that group's (more-consumed)
@@ -113,8 +146,8 @@ extension MLS.RFC9420 {
 	/// forking.
 	///
 	/// The delta fields are `internal`: a `PendingCommit` is produced only by
-	/// the library's `validating`/`processing` paths, never constructed by a
-	/// caller.
+	/// the library's receive (`validating`/`processing`) and send (`committing`)
+	/// paths, never constructed by a caller.
 	public struct PendingCommit: ~Copyable, Sendable {
 		public let effects: CommitEffects
 		/// The **entire** `GroupContext` this delta was validated against;
@@ -142,7 +175,8 @@ extension MLS.RFC9420 {
 
 		// The memberwise initializer stays `internal` (the delta fields are
 		// internal), so a `PendingCommit` is produced only by the library's
-		// `validating`/`processing` paths — never constructed by a caller.
+		// receive (`validating`/`processing`) and send (`committing`) paths —
+		// never constructed by a caller.
 
 		/// Compose the epoch advance onto `live` (D17 §4). The new-epoch state
 		/// comes from the delta; the retained **old**-epoch message-secret

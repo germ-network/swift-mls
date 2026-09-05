@@ -27,7 +27,7 @@ struct RetainedEpochAttributionTests {
 
 		// Alice + Mallory converged; Mallory joins at the leftmost blank leaf.
 		var aliceGroup = try SelfInteropTests.createGroup(alice)
-		let add = try aliceGroup.committing(
+		let add = try aliceGroup.commit(
 			provider, proposals: [.proposal(.add(mallory.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		aliceGroup = add.group
@@ -41,7 +41,7 @@ struct RetainedEpochAttributionTests {
 		// commit. Update→Remove→Add order (RFC §12.3) blanks Mallory's leaf, then
 		// Add fills the leftmost empty leaf (RFC §12.1.1) — so Xavier
 		// deterministically takes Mallory's just-vacated leaf.
-		let commit = try aliceGroup.committing(
+		let commit = try aliceGroup.commit(
 			provider,
 			proposals: [
 				.proposal(.remove(malloryLeaf)),

@@ -49,7 +49,7 @@ struct ProposalValidationTests {
 		let alice = try SelfInteropTests.member("pv-alice")
 		let bob = try SelfInteropTests.member("pv-bob")
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -75,7 +75,7 @@ struct ProposalValidationTests {
 		let bob = try SelfInteropTests.member("pv-bob3")
 		let carol = try SelfInteropTests.member("pv-carol3")
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider,
 			proposals: [
 				.proposal(.add(bob.keyPackage)), .proposal(.add(carol.keyPackage)),
@@ -626,10 +626,10 @@ struct ProposalValidationTests {
 		let ref = try store.insert(verified, Self.provider)
 
 		// Alice advances a full epoch (an empty commit carries a path).
-		let advanced = try p.groupA.committing(
+		var advanced = p.groupA
+		_ = try advanced.commit(
 			Self.provider, proposals: [], signingKey: p.alice.signingKey,
-			randomness: .generate(Self.provider)
-		).group
+			randomness: .generate(Self.provider))
 
 		#expect(
 			throws: MLS.RFC9420.GroupError.referencedProposalWrongEpoch(

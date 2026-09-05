@@ -42,7 +42,11 @@
 		private struct ClientState {
 			var group: MLS.RFC9420.Group
 			var credentials: Credentials
-			var pending: MLS.RFC9420.Group.CommitOutput?
+			// The pre-computed successor group, adopted on HandlePendingCommit. The
+			// runner drives PUBLIC handshakes, which consume no key, so the
+			// old-epoch group needs no separate adoption before then; the D17
+			// PendingCommit reference slot (M2) is a later interop change.
+			var pending: MLS.RFC9420.Group?
 		}
 
 		private var entries: [UInt32: Entry] = [:]
@@ -421,7 +425,7 @@
 					case .add, .preSharedKey, .reInit: false
 					}
 				}
-			let output = try state.group.committing(
+			let transition = try state.group.committing(
 				p, proposals: proposals, proposalStore: store,
 				signingKey: state.credentials.signingKey,
 				randomness: .generate(p),
@@ -437,17 +441,24 @@
 					guard case .external(let pskID, _) = id else { return nil }
 					return externalPsks[pskID]
 				})
-			state.pending = output
+			// Public framing: the transition's group is the old epoch unchanged, so
+			// pre-compute the successor and stash it as the pending commit.
+			let base = transition.group
+			let sent = transition.takeOutput()
+			let commitMessage = sent.message
+			let welcome = sent.welcome
+			let successor = try sent.takePending().apply(onto: base).group
+			state.pending = successor
 			entries[request.stateID] = .group(state)
 
 			var r = MlsClient_CommitResponse()
-			r.commit = try encoded(output.commit)
-			if let welcome = output.welcome {
+			r.commit = try encoded(commitMessage)
+			if let welcome {
 				r.welcome = try encoded(.welcome(welcome))
 			}
 			if request.externalTree {
 				var writer = MLS.Writer()
-				try writer.encodeVector(output.group.tree.nodes)
+				try writer.encodeVector(successor.tree.nodes)
 				r.ratchetTree = Data(writer.bytes)
 			}
 			return r
@@ -522,7 +533,7 @@
 			guard let pending = state.pending else {
 				throw invalid("no pending commit for state \(request.stateID)")
 			}
-			state.group = pending.group
+			state.group = pending
 			state.pending = nil
 			entries[request.stateID] = .group(state)
 			var r = MlsClient_HandleCommitResponse()
