@@ -253,7 +253,9 @@ struct SnapshotTests {
 		_ = try group.proposeUpdate(Self.provider, signingKey: solo.signingKey)
 		#expect(group.pendingUpdates != nil)
 
-		let restored = try Group.restore(from: try group.makeSnapshot(), Self.provider)
+		// Through `archive()` (CBOR), so the pending-update encode/decode is
+		// exercised at the byte level, not only value-to-value.
+		let restored = try Group.restore(from: try group.archive(), Self.provider)
 		#expect(restored.pendingUpdates != nil)
 		#expect(try restored.makeSnapshot() == (try group.makeSnapshot()))
 	}
@@ -512,6 +514,31 @@ struct SnapshotTests {
 		assertClassification(
 			Group.PendingUpdateEntryArchive(publicKey: Data([0]), secret: secret),
 			["publicKey": .plain, "secret": .secret])
+
+		// Format 1 (decode-only migration shape) still carries secret maps
+		// directly; pin them so a retype to plain Data on the migration decode
+		// path is caught.
+		assertClassification(
+			Group.SnapshotFormat1(
+				format: 1, groupContext: Data([0]), ratchetTree: Data([0]),
+				interimTranscriptHash: Data([0]), myLeafIndex: 0,
+				epochSecrets: Group.EpochSecretsArchive(
+					initSecret: secret, exporterSecret: secret,
+					epochAuthenticator: Data([0]), membershipKey: secret),
+				treeSecretKeys: secretMap, resumptionPsks: secretMap,
+				messageSecrets: MLS.RFC9420.IntegerKeyedMap([:]),
+				retention: Group.RetentionArchive(
+					resumptionPskDepth: 0, messageSecretsDepth: 0,
+					maxForwardJump: 0,
+					maxSkippedKeysPerSender: 0),
+				config: nil, exporterTree: nil),
+			[
+				"format": .plain, "groupContext": .plain, "ratchetTree": .plain,
+				"interimTranscriptHash": .plain, "myLeafIndex": .plain,
+				"epochSecrets": .plain, "treeSecretKeys": .secret,
+				"resumptionPsks": .secret, "messageSecrets": .plain,
+				"retention": .plain, "config": .plain, "exporterTree": .plain,
+			])
 
 		// §4.2 — epoch_authenticator is public (RFC 9420 §8.7).
 		assertClassification(
