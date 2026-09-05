@@ -308,6 +308,14 @@ extension MLS.RFC9420.Group {
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> (message: MLS.RFC9420.PrivateMessage, signature: MLS.Signature) {
+		// D18 send guard: this seals on the sender's own leaf ratchet
+		// (`ownNextGeneration`), shared in `GroupCore` until the send-side slice
+		// moves per-leaf ratchets onto each `Membership`, so N > 1 send fails
+		// closed. Removed there. (Covers application `protect` and
+		// `proposeUpdate`, which both seal here.)
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		let epochNumber = context.epoch
 		guard var secrets = messageSecrets[epochNumber] else {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(
@@ -374,6 +382,11 @@ extension MLS.RFC9420.Group {
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> MLS.RFC9420.PrivateMessage {
+		// D18 send guard (see `protectContent`): a private commit seals on the
+		// committer's own handshake ratchet, shared until the send-side slice.
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		guard var secrets = messageSecrets[oldEpoch] else {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(epoch: oldEpoch)
 		}

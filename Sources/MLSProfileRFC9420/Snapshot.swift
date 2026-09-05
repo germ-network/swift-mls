@@ -197,6 +197,13 @@ extension MLS.RFC9420.Group {
 	/// cannot snapshot in format 1 — a documented v1 limitation, not a silent
 	/// drop.
 	public func makeSnapshot() throws -> Snapshot {
+		// Format 1 persists a single membership (it reads the sole membership's
+		// leaf/keys/pending update below). N > 1 fails closed rather than
+		// silently dropping the other memberships; format 2 (the schema slice)
+		// persists `memberships[]`.
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		guard pendingUpdates == nil else {
 			throw MLS.RFC9420.SnapshotError.pendingUpdatesUnsupported
 		}

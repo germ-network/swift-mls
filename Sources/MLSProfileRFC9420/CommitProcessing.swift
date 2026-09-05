@@ -286,6 +286,16 @@ extension MLS.RFC9420.Group {
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
+		// D18 guard: commit-receive installs path keys (`secretKeys`) for the
+		// sole membership (`memberships[0]`) only; at N > 1 the other local
+		// memberships would silently keep stale keys (the M3 silent-loss class).
+		// Fails closed until 1b's per-membership installs. Unreachable via public
+		// API today (no public constructor yields N > 1), but kept uniform with
+		// the send and snapshot guards. Application receive (`unprotect`, which
+		// touches only `core`) is correct at N > 1 and is not guarded.
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
 				expected: context.epoch, actual: message.content.epoch)

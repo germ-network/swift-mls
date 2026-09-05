@@ -112,6 +112,19 @@ extension MLS.RFC9420 {
 		case referencedProposalWrongEpoch(expected: UInt64, actual: UInt64)
 		/// S18: RFC 9420 §12.4 requires a path for this proposal list.
 		case pathRequired
+		/// An operation that is not yet N > 1-capable was invoked on a `Group`
+		/// holding more than one local `Membership` (D18): a send path
+		/// (`protect`, `committing`, `proposeUpdate` — each local membership
+		/// sends on its own ratchet, shared in `GroupCore` until the send-side
+		/// slice), or a format-1 snapshot (`makeSnapshot`, which persists a
+		/// single membership until the format-2 slice). Fails closed rather than
+		/// sharing positions or silently dropping memberships. **A staging
+		/// limit, removed in those slices — not a policy one.**
+		case multipleMembershipsUnsupported
+		/// A sole-membership convenience was used on a `Group` that does not hold
+		/// exactly one local `Membership` (D18). Use the membership-scoped API
+		/// (`committing(as:)`, `proposingUpdate(as:)`) to name the membership.
+		case ambiguousMembership(count: Int)
 		/// A commit carried a ReInit proposal. RFC 9420 §12.4.2: such a
 		/// client "MUST NOT use the group to send messages anymore" and
 		/// must wait for a §11.2 Welcome — a transition this project

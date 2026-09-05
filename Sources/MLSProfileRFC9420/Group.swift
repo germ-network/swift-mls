@@ -13,84 +13,124 @@ extension MLS.RFC9420 {
 	/// or Commit. Value type, no actors or shared mutable state — the app
 	/// owns storage, this owns nothing but its own fields.
 	public struct Group: Sendable {
-		// `internal(set)`, not `private(set)`: Swift scopes `private` to the
-		// file, and commit processing lives in `CommitProcessing.swift`.
-		// Publicly these stay read-only -- a caller mutates a `Group` only
-		// through `join`/`process`.
-		public internal(set) var context: GroupContext
-		public internal(set) var tree: MLS.TreeKEM.RatchetTree
-		public internal(set) var interimTranscriptHash: Data
-		public internal(set) var myLeafIndex: MLS.LeafIndex
-		public internal(set) var epoch: EpochSecrets
+		/// The client-agnostic group state (context, tree, transcript, epoch
+		/// secrets, PSKs, receive-side message-secret state, exporter tree) —
+		/// shared by every local membership (D18).
+		public internal(set) var core: GroupCore
 
-		/// See `RetentionPolicy`. Lowering it prunes immediately, not at
-		/// the next commit — a group that never processes another commit
-		/// must still be able to shed history.
-		public var retention: RetentionPolicy = RetentionPolicy() {
-			didSet { pruneResumptionPsks(currentEpoch: context.epoch) }
+		/// The local memberships — one per client this device occupies in the
+		/// group. The common case is exactly one. At N > 1 the client-agnostic
+		/// `core` and application receive (`unprotect`, which touches only
+		/// `core`) are correct; everything else **fails closed**, never silently:
+		/// *send* paths (`protect`/`committing`/`proposeUpdate`), *commit* receive
+		/// (`processing`, which would install path keys for `memberships[0]`
+		/// alone), and the format-1 snapshot all throw
+		/// `multipleMembershipsUnsupported` at N > 1. Later slices lift those
+		/// guards as they make send, per-membership commit-receive, and
+		/// multi-membership persistence N > 1-correct. So N > 1 is representable
+		/// and application receive works today; the rest is staged and loud.
+		public internal(set) var memberships: [Membership]
+
+		/// The sole local membership, when there is exactly one (the common
+		/// case). `nil` at N != 1 — use the membership-scoped API there.
+		public var soleMembership: Membership? {
+			memberships.count == 1 ? memberships[0] : nil
 		}
 
-		/// Every HPKE secret key this member currently holds, keyed by
-		/// *node* index — its own leaf (`2 * myLeafIndex`) plus whatever
-		/// direct-path ancestors the last Welcome or Commit installed.
-		/// `MLSTreeKEM`'s `heldSecretKeys`/`DecapResult` parameters made
-		/// stateful.
-		var secretKeys: [UInt32: MLS.HpkeSecretKey]
+		// The pre-D18 flat surface, preserved by delegation so every existing
+		// method body, caller, and test is unchanged (D18/1a). Group-agnostic
+		// fields read/write `core`; the per-client fields read/write the sole
+		// membership — a documented N = 1 precondition, the scoped API being the
+		// N > 1 path.
+		public internal(set) var context: GroupContext {
+			get { core.context }
+			set { core.context = newValue }
+		}
+		public internal(set) var tree: MLS.TreeKEM.RatchetTree {
+			get { core.tree }
+			set { core.tree = newValue }
+		}
+		public internal(set) var interimTranscriptHash: Data {
+			get { core.interimTranscriptHash }
+			set { core.interimTranscriptHash = newValue }
+		}
+		public internal(set) var epoch: EpochSecrets {
+			get { core.epoch }
+			set { core.epoch = newValue }
+		}
+		/// See `RetentionPolicy`. Lowering it prunes immediately (via `core`'s
+		/// own `didSet`), not at the next commit.
+		public var retention: RetentionPolicy {
+			get { core.retention }
+			set { core.retention = newValue }
+		}
+		var resumptionPsks: [UInt64: SecretBytes] {
+			get { core.resumptionPsks }
+			set { core.resumptionPsks = newValue }
+		}
+		var messageSecrets: [UInt64: MessageSecrets] {
+			get { core.messageSecrets }
+			set { core.messageSecrets = newValue }
+		}
+		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] {
+			get { core.exporterTrees }
+			set { core.exporterTrees = newValue }
+		}
 
-		/// `resumption_psk` for recent epochs, keyed by epoch — bounded by
-		/// `retention.resumptionPskDepth`, enforced after every processed
-		/// commit and on policy change. Held in zeroizing storage: this is
-		/// the single retained representation of each epoch's resumption PSK,
-		/// and the longest-lived of them.
-		var resumptionPsks: [UInt64: SecretBytes]
-
-		/// Per-epoch application-message state (secret tree, ratchets,
-		/// epoch snapshots) — the §9.2 consuming store, bounded by
-		/// `retention.messageSecretsDepth`. See `MessageProtection.swift`.
-		var messageSecrets: [UInt64: MessageSecrets] = [:]
-
-		/// The current epoch's draft §4.4 Exporter Tree — the *consuming* tree,
-		/// built at epoch install from `application_export_secret` and mutated as
-		/// components are consumed. The raw root is **not** kept (it goes into the
-		/// tree and is deleted on the first split), so a consumed component cannot
-		/// be re-derived — the forward secrecy RFC 9420 §9.2 requires. Keyed by
-		/// epoch and reset to the current epoch on every install
-		/// (`installMessageSecrets`) so a past epoch's tree never outlives it. The
-		/// snapshot persists this tree's surviving *frontier*, not the root, so FS
-		/// holds across an archive round-trip too (`Snapshot.swift`,
-		/// `safeExportSecret`).
-		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
-
-		/// Self-proposed Updates awaiting a commit, seeded by `proposeUpdate`
-		/// and consumed by `processing` when a landing commit applies one —
-		/// `secretKeys` only ever tracks keys a *commit* this member saw
-		/// installed, never a key a *proposal* generated, so without this the
-		/// new leaf secret a self-Update creates has nowhere to live between
-		/// being proposed and being committed.
-		///
-		/// A *set* of secrets, not a single slot, because the committer — not
-		/// the proposer — is the authority on which Update lands: a member may
-		/// propose several in an epoch, and different commits may reference
-		/// different ones. `processing` seeds the one whose public key the
-		/// tree actually installed; `updates.last` is the most recent, the
-		/// natural handle for authoring. Valid only for the epoch it names;
-		/// the whole set is cleared on every epoch advance, in both
-		/// `processing` and `committing`. A future snapshot migration is
-		/// expected to persist this under `pending_updates`; that wiring is
-		/// out of scope here.
+		/// This client's leaf. A sole-membership convenience (N = 1 precondition).
+		public internal(set) var myLeafIndex: MLS.LeafIndex {
+			get { memberships[0].leafIndex }
+			set { memberships[0].leafIndex = newValue }
+		}
+		var secretKeys: [UInt32: MLS.HpkeSecretKey] {
+			get { memberships[0].secretKeys }
+			set { memberships[0].secretKeys = newValue }
+		}
 		var pendingUpdates:
 			(
 				epoch: UInt64, node: UInt32,
 				updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
-			)? = nil
+			)?
+		{
+			get { memberships[0].pendingUpdate }
+			set { memberships[0].pendingUpdate = newValue }
+		}
 
 		mutating func pruneResumptionPsks(currentEpoch: UInt64) {
-			// Saturating: at epochs below the depth, everything survives.
-			// (An unchecked subtraction here traps -- the fixture epochs
-			// are 2-4, below the default depth.)
-			let depth = UInt64(retention.resumptionPskDepth)
-			let floor = currentEpoch >= depth ? currentEpoch - depth : 0
-			resumptionPsks = resumptionPsks.filter { $0.key >= floor }
+			core.pruneResumptionPsks(currentEpoch: currentEpoch)
+		}
+
+		init(core: GroupCore, memberships: [Membership]) {
+			self.core = core
+			self.memberships = memberships
+		}
+
+		/// Compatibility memberwise initializer (the pre-D18 shape) — builds a
+		/// `core` and a single `Membership`, so `create`/`join`/`restore` need no
+		/// change.
+		init(
+			context: GroupContext, tree: MLS.TreeKEM.RatchetTree,
+			interimTranscriptHash: Data, myLeafIndex: MLS.LeafIndex,
+			epoch: EpochSecrets, retention: RetentionPolicy = RetentionPolicy(),
+			secretKeys: [UInt32: MLS.HpkeSecretKey],
+			resumptionPsks: [UInt64: SecretBytes],
+			messageSecrets: [UInt64: MessageSecrets] = [:],
+			exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:],
+			pendingUpdates: (
+				epoch: UInt64, node: UInt32,
+				updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
+			)? = nil
+		) {
+			self.core = GroupCore(
+				context: context, tree: tree,
+				interimTranscriptHash: interimTranscriptHash, epoch: epoch,
+				retention: retention, resumptionPsks: resumptionPsks,
+				messageSecrets: messageSecrets, exporterTrees: exporterTrees)
+			self.memberships = [
+				Membership(
+					leafIndex: myLeafIndex, secretKeys: secretKeys,
+					pendingUpdate: pendingUpdates)
+			]
 		}
 	}
 }

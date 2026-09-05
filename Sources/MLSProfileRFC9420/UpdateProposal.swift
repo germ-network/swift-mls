@@ -26,6 +26,13 @@ extension MLS.RFC9420.Group {
 		signingKey: MLS.SignatureSecretKey,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
+		// D18 send guard, at the top: a public-framed proposal seals via
+		// `sealPublic` and never reaches `protectContent`'s guard, and this
+		// mutates the sole membership's `pendingUpdate`. N > 1 fails closed until
+		// the send-side slice.
+		guard memberships.count <= 1 else {
+			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
+		}
 		guard let currentRecord = tree.leaf(at: myLeafIndex) else {
 			throw MLS.RFC9420.GroupError.ownLeafNotFound
 		}
