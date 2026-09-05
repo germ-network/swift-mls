@@ -50,15 +50,13 @@ extension MLS.RFC9420 {
 		public var wireFormat: MLS.WireFormat
 		public var content: FramedContent
 		public var auth: MLS.FramedContentAuthData
-
-		public init(
-			wireFormat: MLS.WireFormat, content: FramedContent,
-			auth: MLS.FramedContentAuthData
-		) {
-			self.wireFormat = wireFormat
-			self.content = content
-			self.auth = auth
-		}
+		// The memberwise initializer is deliberately left `internal`, not made
+		// `public` (M5 / D17 §2.1): an `AuthenticatedContent` names a frame
+		// whose signature the library trusts, so letting an *external* caller
+		// wrap arbitrary bytes in one would let it apply an unauthenticated
+		// commit. Module-internal construction — the framing verifiers building
+		// a value they have just checked — is the intended use. Do NOT add a
+		// `public init`.
 	}
 }
 

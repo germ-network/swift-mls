@@ -68,13 +68,18 @@ extension MLS.RFC9420.Group {
 	/// epoch, and prunes retired epochs to
 	/// `retention.messageSecretsDepth`. Called by every epoch-entering
 	/// path (`create`, `join`, `processing`, `committing`).
-	mutating func installMessageSecrets(
+	/// Build — without installing — the new epoch's message-secret store and
+	/// Exporter Tree from the new epoch's secrets and the new tree. Pure over
+	/// its inputs (it reads no `self` state), which is what lets the D17 delta
+	/// (`PendingCommit`) hold these standalone and `apply(onto:)` compose them
+	/// onto a live group (D17 §4).
+	func makeEpochMessageState(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
 		applicationExportSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
-	) throws {
+	) throws -> (store: MessageSecrets, exporter: MLS.KeySchedule.ExporterTree) {
 		var signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey] = [:]
 		// Two decodes per touched leaf: commit processing already decoded the
 		// added/updated/committer LeafNodes for validation, and this decodes
@@ -88,7 +93,7 @@ extension MLS.RFC9420.Group {
 			signatureKeys[leafIndex] =
 				try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded).signatureKey
 		}
-		messageSecrets[context.epoch] = try MessageSecrets(
+		let store = try MessageSecrets(
 			groupContext: context,
 			// Held zeroizing for the epoch's life: `senderDataSecret` seeds
 			// every message's sender-data key, so it is retained the whole
@@ -97,22 +102,40 @@ extension MLS.RFC9420.Group {
 			signatureKeys: signatureKeys,
 			tree: MLS.KeySchedule.ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))
-		let depth = UInt64(retention.messageSecretsDepth)
-		let floor = context.epoch >= depth ? context.epoch - depth : 0
-		messageSecrets = messageSecrets.filter { $0.key >= floor }
-
 		// draft-ietf-mls-extensions-08 §4.4: build this epoch's Exporter Tree from
 		// application_export_secret and hold the *consuming tree* — never the raw
 		// root. The first export splits and deletes the root, and each export
 		// deletes its component's root-to-leaf path (RFC 9420 §9.2, which §4.4
 		// invokes); retaining the root would re-derive consumed components and
-		// defeat forward secrecy. Single-epoch (past epochs' seeds aren't
-		// retained), so this assignment also drops any prior epoch's tree. Matches
-		// the deployed fork, which holds `ExporterTree(SecretTree)`, not the root.
-		exporterTrees = [
-			context.epoch: try MLS.KeySchedule.ExporterTree(
-				applicationExportSecret: applicationExportSecret)
-		]
+		// defeat forward secrecy. Matches the deployed fork, which holds
+		// `ExporterTree(SecretTree)`, not the root.
+		let exporter = try MLS.KeySchedule.ExporterTree(
+			applicationExportSecret: applicationExportSecret)
+		return (store, exporter)
+	}
+
+	/// Install the new epoch's message state into `self` and prune to the
+	/// retention window. The transitional non-delta path (`create`,
+	/// `committing`, and the transitional `processing` shim) still installs
+	/// directly; the D17 delta composes via `apply(onto:)` instead.
+	mutating func installMessageSecrets(
+		context: MLS.RFC9420.GroupContext,
+		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
+		applicationExportSecret: some ContiguousBytes,
+		tree: MLS.TreeKEM.RatchetTree,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws {
+		let (store, exporter) = try makeEpochMessageState(
+			context: context, senderDataSecret: senderDataSecret,
+			encryptionSecret: encryptionSecret,
+			applicationExportSecret: applicationExportSecret, tree: tree, provider)
+		messageSecrets[context.epoch] = store
+		let depth = UInt64(retention.messageSecretsDepth)
+		let floor = context.epoch >= depth ? context.epoch - depth : 0
+		messageSecrets = messageSecrets.filter { $0.key >= floor }
+		// Single-epoch (past epochs' seeds aren't retained), so this drops any
+		// prior epoch's tree.
+		exporterTrees = [context.epoch: exporter]
 	}
 
 	/// Key/nonce for `(leaf, generation, kind)` in `epoch`, plus the
