@@ -44,15 +44,16 @@ struct GroupMembershipTests {
 		}
 	}
 
-	@Test("every send path and the format-1 snapshot fail closed at N > 1")
+	@Test("every send path fails closed at N > 1")
 	func multipleMembershipsFailClosed() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
 		var group = pair.groupA
 		// A second local membership on a DISTINCT leaf (identity is the leaf
 		// index). This is the shape the send-side slice makes correct; until
-		// then every send path — and the single-membership snapshot — must fail
-		// closed rather than share positions or silently drop a membership.
+		// then every send path must fail closed rather than share positions or
+		// silently drop a membership. (The format-2 snapshot no longer guards
+		// here — it persists every membership; see `SnapshotTests`.)
 		group.memberships.append(
 			MLS.RFC9420.Membership(
 				leafIndex: MLS.LeafIndex(value: 1), secretKeys: [:]))
@@ -78,10 +79,6 @@ struct GroupMembershipTests {
 					provider, signingKey: pair.alice.signingKey,
 					framing: framing)
 			}
-		}
-		// Format-1 snapshot persists one membership; N > 1 must throw, not drop.
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
-			_ = try group.makeSnapshot()
 		}
 	}
 

@@ -11,12 +11,13 @@ import Testing
 @testable import MLSProfileRFC9420
 
 /// Round-trip coverage for `Group.archive()/restore()` (spec/snapshot.md,
-/// format 1). The §8 golden-vector and hostile-decode suites, and the peer
-/// differential test, are separately gated; these are the round-trip
-/// obligations of the archive/restore PR, with the fatal cases —
-/// frontier + chains, retired chains, the on-wire retirement bound —
-/// mutation-verified.
-@Suite("Snapshot archive/restore (spec/snapshot.md format 1)")
+/// format 2 — the client-aware `core` + `memberships` shape; format 1 stays
+/// decode-only, exercised by `MlsRsMigrationTests`). The §8 golden-vector and
+/// hostile-decode suites, and the peer differential test, are separately gated;
+/// these are the round-trip obligations of the archive/restore PR, with the
+/// fatal cases — frontier + chains, retired chains, the on-wire retirement
+/// bound — mutation-verified.
+@Suite("Snapshot archive/restore (spec/snapshot.md format 2)")
 struct SnapshotTests {
 	static let provider = SelfInteropTests.provider
 
@@ -50,7 +51,7 @@ struct SnapshotTests {
 			restoringNodeSecrets: [:], leafCount: group.tree.leafCount)
 		let snapshot = try group.makeSnapshot()
 		#expect(
-			snapshot.messageSecrets.entries[epoch]!.secretTree.nodeSecrets.entries
+			snapshot.core.messageSecrets.entries[epoch]!.secretTree.nodeSecrets.entries
 				.isEmpty)
 		let decoded = try SecretArchive(encoding: snapshot).decode(Group.Snapshot.self)
 		#expect(decoded == snapshot)
@@ -155,7 +156,7 @@ struct SnapshotTests {
 		let snapshot = try group.makeSnapshot()
 		let packed = (UInt64(0) << 1) | 1  // leaf 0, application kind bit
 		let chainArchive = try #require(
-			snapshot.messageSecrets.entries[epoch]!.chains.entries[packed])
+			snapshot.core.messageSecrets.entries[epoch]!.chains.entries[packed])
 		// L5: retirement encodes head_generation = 2^32 with head_secret absent.
 		#expect(chainArchive.headGeneration == (1 << 32))
 		#expect(chainArchive.headSecret == nil)
@@ -178,8 +179,9 @@ struct SnapshotTests {
 		var snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
-		snapshot.format = 2
-		#expect(throws: MLS.RFC9420.SnapshotError.unsupportedFormat(2)) {
+		// makeSnapshot emits format 2; 3 is unknown to this build.
+		snapshot.format = 3
+		#expect(throws: MLS.RFC9420.SnapshotError.unsupportedFormat(3)) {
 			_ = try Group.restore(from: snapshot, Self.provider)
 		}
 	}
@@ -189,7 +191,7 @@ struct SnapshotTests {
 		var snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
-		snapshot.config = Group.SnapshotConfig()
+		snapshot.core.config = Group.SnapshotConfig()
 		#expect(throws: MLS.RFC9420.SnapshotError.unexpectedConfig) {
 			_ = try Group.restore(from: snapshot, Self.provider)
 		}
@@ -211,7 +213,9 @@ struct SnapshotTests {
 		var snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
-		snapshot.treeSecretKeys = MLS.RFC9420.IntegerKeyedMap([:])
+		// Format 2: tree_secret_keys is per-membership; the solo group's creator
+		// is leaf 0, the membership map key.
+		snapshot.memberships.entries[0]!.treeSecretKeys = MLS.RFC9420.IntegerKeyedMap([:])
 		#expect(
 			throws: MLS.RFC9420.SnapshotError.unexpectedlyEmpty(
 				field: "tree_secret_keys")
@@ -231,24 +235,61 @@ struct SnapshotTests {
 		let epoch = duo.groupB.context.epoch
 		let packed = (UInt64(0) << 1) | 1
 		// head_secret present but head_generation forced to the retired sentinel.
-		snapshot.messageSecrets.entries[epoch]!.chains.entries[packed]!.headGeneration =
+		snapshot.core.messageSecrets.entries[epoch]!.chains.entries[packed]!
+			.headGeneration =
 			1 << 32
 		#expect(throws: MLS.RFC9420.SnapshotError.self) {
 			_ = try Group.restore(from: snapshot, Self.provider)
 		}
 	}
 
-	@Test("archiving a group with a pending self-Update is refused")
-	func rejectsPendingUpdate() throws {
+	@Test("a pending self-Update round-trips (format 2 persists it per membership)")
+	func roundTripsPendingUpdate() throws {
+		let solo = try SelfInteropTests.member("solo")
+		var group = try SelfInteropTests.createGroup(solo)
+		// A real self-Update stashes a pending-update secret on the membership.
+		// Format 1 could not persist it (and refused); format 2 carries it, so the
+		// group archives and restores with the pending Update intact.
+		_ = try group.proposeUpdate(Self.provider, signingKey: solo.signingKey)
+		#expect(group.pendingUpdates != nil)
+
+		// Through `archive()` (CBOR), so the pending-update encode/decode is
+		// exercised at the byte level, not only value-to-value.
+		let restored = try Group.restore(from: try group.archive(), Self.provider)
+		#expect(restored.pendingUpdates != nil)
+		#expect(try restored.makeSnapshot() == (try group.makeSnapshot()))
+	}
+
+	@Test("makeSnapshot emits format 2 with one entry per local membership")
+	func makeSnapshotEmitsFormat2() throws {
 		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
-		// A snapshot cannot capture the pending self-Update's leaf secret in
-		// format 1, so makeSnapshot refuses rather than silently drop it.
-		group.pendingUpdates = (
-			epoch: group.context.epoch, node: 0,
-			updates: []
-		)
-		#expect(throws: MLS.RFC9420.SnapshotError.pendingUpdatesUnsupported) {
-			_ = try group.makeSnapshot()
+		let solo = try group.makeSnapshot()
+		#expect(solo.format == 2)
+		#expect(solo.memberships.entries.count == 1)
+
+		// The format-2 snapshot no longer fails closed at N > 1 — it persists
+		// every membership (the send-side slice makes N > 1 send-correct
+		// separately). A second membership on a distinct leaf is enough to show
+		// makeSnapshot encodes both rather than throwing.
+		group.memberships.append(
+			MLS.RFC9420.Membership(leafIndex: MLS.LeafIndex(value: 1), secretKeys: [:]))
+		let multi = try group.makeSnapshot()
+		#expect(multi.memberships.entries.count == 2)
+	}
+
+	@Test("format 2 restore rejects an empty memberships map (N = 0)")
+	func rejectsEmptyMemberships() throws {
+		var snapshot = try SelfInteropTests.createGroup(
+			try SelfInteropTests.member("solo")
+		).makeSnapshot()
+		// A group with no local membership is not a client-held state; restore
+		// throws rather than building one (the composite `init` traps on it, but
+		// that guards a library invariant, not a wire-reachable input).
+		snapshot.memberships = MLS.RFC9420.IntegerKeyedMap([:])
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "memberships")
+		) {
+			_ = try Group.restore(from: snapshot, Self.provider)
 		}
 	}
 
@@ -266,7 +307,7 @@ struct SnapshotTests {
 		var snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
-		snapshot.config = Group.SnapshotConfig()
+		snapshot.core.config = Group.SnapshotConfig()
 		// Round-trip through a real SecretArchive so key 10 (an empty CBOR map)
 		// is actually encoded and decoded — exercising the decodeIfPresent path,
 		// not just the in-memory guard.
@@ -281,9 +322,11 @@ struct SnapshotTests {
 		var snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
-		// In [2^31, 2^32): `leaf(at:)`'s `2 * index` would trap (abort the
-		// process) without the pre-guard. It must throw instead.
-		snapshot.myLeafIndex = 0x8000_0000
+		// Format 2: the leaf index is the membership map key. Re-key the sole
+		// membership into [2^31, 2^32), where `leaf(at:)`'s `2 * index` would trap
+		// (abort the process) without the pre-guard. It must throw instead.
+		let solo = snapshot.memberships.entries[0]!
+		snapshot.memberships.entries = [0x8000_0000: solo]
 		#expect(throws: MLS.RFC9420.SnapshotError.myLeafIndexBlank(0x8000_0000)) {
 			_ = try Group.restore(from: snapshot, Self.provider)
 		}
@@ -422,14 +465,69 @@ struct SnapshotTests {
 		])
 		let publicMap = MLS.RFC9420.IntegerKeyedMap([UInt64(0): Data([0])])
 
-		// §4.1 top level. treeSecretKeys/resumptionPsks hold secrets directly;
-		// the container fields (epoch_secrets, message_secrets, retention) carry
-		// their own secrets, classified in the per-struct tables below.
+		// §4 top level (format 2). `core` and `memberships` are struct/container
+		// fields; their own secrets are classified in the per-struct tables below.
 		let snapshot = try SelfInteropTests.createGroup(
 			try SelfInteropTests.member("solo")
 		).makeSnapshot()
 		assertClassification(
 			snapshot,
+			["format": .plain, "core": .plain, "memberships": .plain])
+
+		// The client-agnostic core. resumption_psks holds secrets directly; the
+		// container fields (epoch_secrets, message_secrets, retention) carry their
+		// own secrets, classified in the per-struct tables below.
+		assertClassification(
+			Group.CoreArchive(
+				groupContext: Data([0]), ratchetTree: Data([0]),
+				interimTranscriptHash: Data([0]),
+				epochSecrets: Group.EpochSecretsArchive(
+					initSecret: secret, exporterSecret: secret,
+					epochAuthenticator: Data([0]), membershipKey: secret),
+				resumptionPsks: secretMap,
+				messageSecrets: MLS.RFC9420.IntegerKeyedMap([:]),
+				retention: Group.RetentionArchive(
+					resumptionPskDepth: 0, messageSecretsDepth: 0,
+					maxForwardJump: 0,
+					maxSkippedKeysPerSender: 0),
+				config: nil, exporterTree: nil),
+			[
+				"groupContext": .plain, "ratchetTree": .plain,
+				"interimTranscriptHash": .plain, "epochSecrets": .plain,
+				"resumptionPsks": .secret, "messageSecrets": .plain,
+				"retention": .plain, "config": .plain, "exporterTree": .plain,
+			])
+
+		// A membership. tree_secret_keys holds secrets directly; pending_update is
+		// the update-set map (a container; its per-entry secret is in the table
+		// below).
+		assertClassification(
+			Group.MembershipArchive(treeSecretKeys: secretMap, pendingUpdate: nil),
+			["treeSecretKeys": .secret, "pendingUpdate": .plain])
+
+		// A pending-update entry — public_key is opaque wire bytes; secret is the
+		// proposed leaf HPKE private key.
+		assertClassification(
+			Group.PendingUpdateEntryArchive(publicKey: Data([0]), secret: secret),
+			["publicKey": .plain, "secret": .secret])
+
+		// Format 1 (decode-only migration shape) still carries secret maps
+		// directly; pin them so a retype to plain Data on the migration decode
+		// path is caught.
+		assertClassification(
+			Group.SnapshotFormat1(
+				format: 1, groupContext: Data([0]), ratchetTree: Data([0]),
+				interimTranscriptHash: Data([0]), myLeafIndex: 0,
+				epochSecrets: Group.EpochSecretsArchive(
+					initSecret: secret, exporterSecret: secret,
+					epochAuthenticator: Data([0]), membershipKey: secret),
+				treeSecretKeys: secretMap, resumptionPsks: secretMap,
+				messageSecrets: MLS.RFC9420.IntegerKeyedMap([:]),
+				retention: Group.RetentionArchive(
+					resumptionPskDepth: 0, messageSecretsDepth: 0,
+					maxForwardJump: 0,
+					maxSkippedKeysPerSender: 0),
+				config: nil, exporterTree: nil),
 			[
 				"format": .plain, "groupContext": .plain, "ratchetTree": .plain,
 				"interimTranscriptHash": .plain, "myLeafIndex": .plain,
