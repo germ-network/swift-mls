@@ -236,12 +236,12 @@ extension MLS.RFC9420.Group {
 				auth: message.auth))
 	}
 
-	/// RFC 9420 §12.4.2 step 1 for a `PublicMessage`-framed commit (D17): the
-	/// two-step entry. Authenticate the framing (membership MAC + framing
-	/// signature) and derive the epoch DELTA WITHOUT advancing — public framing
-	/// consumes no key, so nothing is persisted at validation (D17 §1.1).
-	/// Adjudicate `pending.effects`, then `pending.apply(onto:)` the group you
-	/// kept operating on.
+	/// D17 step 1 (validate) for a `PublicMessage`-framed commit: run RFC 9420
+	/// §12.4.2's first framing checks — epoch match, then the membership MAC and
+	/// FramedContent signature (§12.4.2's first three bullets) — and derive the
+	/// epoch DELTA WITHOUT advancing. Public framing consumes no key, so nothing
+	/// is persisted at validation (D17 §1.1). Adjudicate `pending.effects`, then
+	/// `pending.apply(onto:)` the group you kept operating on.
 	///
 	/// **Never mutates `self`** — it returns a `PendingCommit`, and every state
 	/// change is deferred to `apply(onto:)`, so a failure anywhere below leaves
@@ -325,7 +325,9 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// The commit-processing core, on an *already authenticated* frame —
-	/// §12.4.2 from step 3 on — producing the D17 epoch **delta**
+	/// §12.4.2 from the proposal-validation bullet onward (the framing signature,
+	/// its preceding bullet, is already checked by the caller) — producing the
+	/// D17 epoch **delta**
 	/// (`PendingCommit`) rather than a successor `Group`: it validates and
 	/// derives the successor epoch, reading no message-secret state, so
 	/// `apply(onto:)` can compose it onto a live group that kept operating
@@ -695,7 +697,7 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.confirmationTagMismatch
 		}
 
-		// 16-18: build the epoch DELTA (D17 §2). The new-epoch message store and
+		// Build the epoch DELTA (D17 §2). The new-epoch message store and
 		// exporter tree are built standalone from the NEW epoch's inputs; the
 		// old-epoch stores and resumption PSKs are deliberately NOT captured —
 		// `apply(onto:)` takes them from the live group (D17 §4), which is what

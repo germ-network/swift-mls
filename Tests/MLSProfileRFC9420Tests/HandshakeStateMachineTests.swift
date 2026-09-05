@@ -72,6 +72,37 @@ struct HandshakeStateMachineTests {
 		#expect(data == Data("world".utf8))
 	}
 
+	/// The other half of the §4 invariant: apply installs the NEW epoch's
+	/// resumption PSK and replaces the exporter tree with only the new epoch's
+	/// fresh one (single-epoch, draft-ietf-mls-extensions §4.4 forward secrecy),
+	/// so a stale export or resumption secret cannot be resurrected across the
+	/// advance.
+	@Test(
+		"apply(onto:) installs the new epoch's resumption PSK and a single fresh exporter tree"
+	)
+	func applyComposesResumptionPskAndExporterTree() throws {
+		let provider = Self.provider
+		let pair = try ConstructedRejectionTests.pair()
+		var bob = pair.groupB
+		let alice = pair.groupA
+
+		let commit = try alice.committing(
+			provider, proposals: [], signingKey: pair.alice.signingKey,
+			randomness: .generate(provider), framing: .publicMessage)
+		guard case .publicMessage(let pub) = commit.commit else {
+			Issue.record("expected a public commit")
+			return
+		}
+		let newEpoch = bob.context.epoch + 1
+		let pending = try bob.validating(
+			provider, commit: pub, proposals: .init(), psk: { _ in nil })
+		bob = try pending.apply(onto: bob).group
+
+		#expect(bob.context.epoch == newEpoch)
+		#expect(bob.resumptionPsks[newEpoch] != nil)
+		#expect(Array(bob.exporterTrees.keys) == [newEpoch])
+	}
+
 	/// A pending applied onto a live group that has moved past its base throws
 	/// `staleBase` rather than forking — the check that turns "applying a
 	/// superseded pending" (D-then-A) into an error.

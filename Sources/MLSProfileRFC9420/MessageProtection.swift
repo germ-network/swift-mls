@@ -71,7 +71,8 @@ extension MLS.RFC9420.Group {
 	/// (more-consumed) message-secret state, which is exactly the §4 invariant
 	/// that lets a `PendingCommit` hold these standalone and `apply(onto:)`
 	/// compose them onto a live group. Callers that install directly
-	/// (`installMessageSecrets`) prune afterwards; the delta path does not.
+	/// (`installMessageSecrets`) prune afterwards; the delta path prunes at
+	/// `apply(onto:)` instead.
 	static func makeEpochMessageState(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
@@ -267,8 +268,14 @@ extension MLS.RFC9420.Group {
 		/// ref binds the framed content, which `insert` derives now rather than
 		/// this call computing it up front.
 		case proposal(MLS.RFC9420.VerifiedProposal)
-		/// A commit needs the full processing pipeline; hand back the
-		/// authenticated frame for `processing` to take over.
+		/// A commit needs the full processing pipeline. This hands back the
+		/// authenticated frame for inspection only: the processing core is gated
+		/// on a `VerifiedCommit` minted internally (D17 §2.1, M-1), so a raw
+		/// `AuthenticatedContent` cannot be re-applied through the public API, and
+		/// a bare `unprotect` has already consumed the ratchet. To *apply* a
+		/// private-framed commit, route by `wireFormat`/`contentType` and call
+		/// `process(privateCommit:)` on the `PrivateMessage` instead of
+		/// `unprotect`.
 		case commit(MLS.RFC9420.AuthenticatedContent)
 	}
 
