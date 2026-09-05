@@ -8,9 +8,12 @@ extension MLS.RFC9420 {
 	/// the persistence boundary's, and a caller restoring a snapshot catches a
 	/// different failure set than one processing a commit.
 	public enum SnapshotError: Error, Sendable, Equatable {
-		/// `format` is not 1 — the only version this build encodes or decodes.
-		/// spec/snapshot.md §5: an unknown `format` is a decode error, never a
-		/// silent reinterpretation.
+		/// `format` is neither 2 (what this build encodes, and decodes by value or
+		/// from an archive) nor 1 (the legacy flat shape, decoded only from an
+		/// archive via `restore(from archive:)` — the format-2-shaped `Snapshot`
+		/// value cannot represent it, so `restore(from: Snapshot)` throws this for
+		/// a format-1 value). spec/snapshot.md §5: an unknown `format` is a decode
+		/// error, never a silent reinterpretation.
 		case unsupportedFormat(UInt64)
 		/// A `config` section was present. spec/snapshot.md §4.5: format 1
 		/// defines no config keys, so the section MUST be absent — a group is
@@ -55,10 +58,12 @@ extension MLS.RFC9420 {
 		/// `my_leaf_index` did not name a non-blank leaf (spec/snapshot.md §4.1
 		/// key 4 / ratchet_tree).
 		case myLeafIndexBlank(UInt32)
-		/// `makeSnapshot()` was called on a `Group` holding an uncommitted
-		/// self-proposed Update. Format 1 has no `pending_updates` field, so
-		/// archiving would silently drop the Update's leaf secret — refused
-		/// rather than lost. See the limitation note on `makeSnapshot()`.
+		/// Retained for compatibility, no longer thrown: format 1 had no
+		/// `pending_updates` field, so `makeSnapshot()` refused a `Group` holding
+		/// an uncommitted self-proposed Update rather than silently dropping its
+		/// leaf secret. Format 2 persists pending Updates per membership (and is
+		/// what `makeSnapshot()` now emits), so this case is unreachable; format 1
+		/// is decode-only and never encoded.
 		case pendingUpdatesUnsupported
 	}
 }

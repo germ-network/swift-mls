@@ -19,16 +19,17 @@ extension MLS.RFC9420 {
 		public internal(set) var core: GroupCore
 
 		/// The local memberships — one per client this device occupies in the
-		/// group. The common case is exactly one. At N > 1 the client-agnostic
-		/// `core` and application receive (`unprotect`, which touches only
-		/// `core`) are correct; everything else **fails closed**, never silently:
-		/// *send* paths (`protect`/`committing`/`proposeUpdate`), *commit* receive
-		/// (`processing`, which would install path keys for `memberships[0]`
-		/// alone), and the format-1 snapshot all throw
-		/// `multipleMembershipsUnsupported` at N > 1. Later slices lift those
-		/// guards as they make send, per-membership commit-receive, and
-		/// multi-membership persistence N > 1-correct. So N > 1 is representable
-		/// and application receive works today; the rest is staged and loud.
+		/// group, at least one (see `init(core:memberships:)`), ordered ascending
+		/// by leaf index on restore. The common case is exactly one. At N > 1 the
+		/// client-agnostic `core`, application receive (`unprotect`, which touches
+		/// only `core`), and format-2 persistence (which stores every membership)
+		/// are correct; the paths that are not yet N > 1-capable **fail closed**,
+		/// never silently: *send* (`protect`/`committing`/`proposeUpdate`) throws
+		/// until the send-side slice, and *commit* receive (`validatedDelta`, which
+		/// would install path keys for `memberships[0]` alone) throws until the
+		/// per-membership receive slice — both `multipleMembershipsUnsupported`. So
+		/// N > 1 is representable, persists, and receives application traffic
+		/// today; the rest is staged and loud.
 		public internal(set) var memberships: [Membership]
 
 		/// The sole local membership, when there is exactly one (the common
@@ -101,6 +102,15 @@ extension MLS.RFC9420 {
 		}
 
 		init(core: GroupCore, memberships: [Membership]) {
+			// A live `Group` always holds at least one local membership (D18): the
+			// sole-membership accessors index `memberships[0]`, and the terminal
+			// apply of an eviction marks the group ended without shrinking to zero.
+			// This is an internal invariant — every caller is in-library — so a
+			// violation is a library bug (a trap), not a wire-reachable input;
+			// format-2 restore rejects an empty `memberships` map with a thrown
+			// `SnapshotError` before it reaches here.
+			precondition(
+				!memberships.isEmpty, "a Group must hold at least one Membership")
 			self.core = core
 			self.memberships = memberships
 		}
