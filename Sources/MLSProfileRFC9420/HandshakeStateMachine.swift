@@ -22,6 +22,13 @@ extension MLS.RFC9420 {
 	///
 	/// `~Copyable` when `Output` is (a `PendingCommit` output makes the whole
 	/// transition linear); an ordinary value when `Output` is copyable.
+	///
+	/// Read `group` first (it is `Copyable`); `takeOutput()` then consumes the
+	/// transition to hand back the `output` — a transition is consumed exactly
+	/// once. That accessor, not `@frozen`, is how a `~Copyable` `output` (e.g. a
+	/// `PendingCommit`) crosses a module boundary: a non-frozen public type's
+	/// stored property cannot be partially consumed by another module, and this
+	/// type deliberately makes no `@frozen` layout promise.
 	public struct Transition<Output: ~Copyable & Sendable>: ~Copyable, Sendable {
 		/// The state to adopt. Adopting it and persisting `snapshot()` together
 		/// is a MUST-level contract (D17 §3) — the type cannot force it.
@@ -37,6 +44,16 @@ extension MLS.RFC9420 {
 		/// adopting `group`.
 		public func snapshot() throws -> Group.Snapshot {
 			try group.makeSnapshot()
+		}
+
+		/// Consume the transition and hand back its `output` — the supported way
+		/// to move a `~Copyable` `Output` (e.g. `PendingCommit` / `CommitValidation`)
+		/// out to act on it, since a non-frozen public type's stored property
+		/// cannot be partially consumed across a module boundary. Read `group`
+		/// first; this consumes the transition, so it is called exactly once. For
+		/// a `Copyable` `Output`, reading `.output` directly is equivalent.
+		public consuming func takeOutput() -> Output {
+			output
 		}
 	}
 
@@ -56,6 +73,69 @@ extension MLS.RFC9420 {
 		init(_ events: [CommitEffect]) { self.events = events }
 	}
 
+	/// The outcome of `validating(commit: PrivateMessage)` (D17 §1.1). Decrypting
+	/// the frame spends the sender's handshake generation the moment its AEAD
+	/// opens (RFC 9420 §9.2), so **both** arms carry that consumption in the
+	/// enclosing `Transition.group` — the entry never throws after a successful
+	/// open, and adopting `group` keeps the generation spent whichever arm
+	/// results. `~Copyable` because `.pending` is.
+	public enum CommitValidation: ~Copyable, Sendable {
+		/// Authentic **and** valid: adjudicate `effects`, then `apply(onto:)` the
+		/// group you adopted.
+		case pending(PendingCommit)
+		/// Authentic (framing AEAD + signature) but **not** a valid commit — bad
+		/// confirmation tag, an invalid proposal list, and so on. There is nothing
+		/// to apply, but the consumption is kept (a replay is rejected). Unlike a
+		/// commit the app *declines* to apply, a rejection is not the app's choice;
+		/// it is committer misbehaviour the application (RFC 9420 §5.3.1's
+		/// Authentication Service) may act on.
+		case rejected(CommitRejection)
+	}
+
+	/// An authentically framed but invalid private commit (D17 §1.1). `sender` is
+	/// a leaf in `epoch`'s roster (not the current tree — the same epoch-bound
+	/// attribution `Unprotected` carries); `reason` is the validation error that
+	/// rejected it — the thrown error itself (a `GroupError`, `FramingError`, …),
+	/// so an app can pattern-match known cases (`Error` refines `Sendable`).
+	public struct CommitRejection: Sendable {
+		public let sender: MLS.LeafIndex
+		public let epoch: UInt64
+		public let reason: any Error
+	}
+
+	/// Sending a commit (D17 §1.1, table row 33). The committer seals the commit
+	/// in the OLD epoch — a private commit spends the next generation of its own
+	/// handshake ratchet there (RFC 9420 §12.4.1 + §9.1) — so this is the output
+	/// of a `Transition` whose `group` is the old epoch with that generation
+	/// consumed: **adopt and persist it before transmitting `message`**, so a
+	/// crash-and-resend cannot reuse the generation. The epoch advance is
+	/// `pending`, applied only once the Delivery Service affirms this commit over
+	/// any competitor — exactly as a receiver applies one (`staleBase` if a
+	/// competing commit landed first). `welcome` is transmitted to the added
+	/// members at that same moment.
+	///
+	/// Scope: `pending` is held in memory, not persisted with `group` (a
+	/// persisted pending slot is a later change — the interop server carries the
+	/// only such slot today). So adopting `group` makes the spent generation
+	/// reuse-safe across a crash, but recovering the *epoch advance* across a
+	/// crash between transmit and affirmation still needs that slot — a crash
+	/// there leaves the committer at the old epoch with no in-hand `pending`.
+	public struct SentCommit: ~Copyable, Sendable {
+		public let message: MLS.RFC9420.Message
+		/// Present iff the commit added members — sent to them once the commit is
+		/// affirmed and `pending` is applied.
+		public let welcome: MLS.RFC9420.Welcome?
+		public let pending: PendingCommit
+
+		/// Consume the `SentCommit` and hand back its `pending` epoch advance —
+		/// the supported way to move the `~Copyable` `PendingCommit` out to
+		/// `apply` it across a module boundary. Read `message` / `welcome` (both
+		/// `Copyable`) first; this consumes the value.
+		public consuming func takePending() -> PendingCommit {
+			pending
+		}
+	}
+
 	/// Step 2 of a handshake: a validated epoch **delta**, never a successor
 	/// `Group`. `apply(onto:)` composes it onto the *live* group the
 	/// application has kept operating on, taking that group's (more-consumed)
@@ -66,8 +146,8 @@ extension MLS.RFC9420 {
 	/// forking.
 	///
 	/// The delta fields are `internal`: a `PendingCommit` is produced only by
-	/// the library's `validating`/`processing` paths, never constructed by a
-	/// caller.
+	/// the library's receive (`validating`/`processing`) and send (`committing`)
+	/// paths, never constructed by a caller.
 	public struct PendingCommit: ~Copyable, Sendable {
 		public let effects: CommitEffects
 		/// The **entire** `GroupContext` this delta was validated against;
@@ -95,7 +175,8 @@ extension MLS.RFC9420 {
 
 		// The memberwise initializer stays `internal` (the delta fields are
 		// internal), so a `PendingCommit` is produced only by the library's
-		// `validating`/`processing` paths — never constructed by a caller.
+		// receive (`validating`/`processing`) and send (`committing`) paths —
+		// never constructed by a caller.
 
 		/// Compose the epoch advance onto `live` (D17 §4). The new-epoch state
 		/// comes from the delta; the retained **old**-epoch message-secret

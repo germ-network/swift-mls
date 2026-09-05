@@ -29,12 +29,12 @@ struct BaselineBenchmarkTests {
 		let alice = try SelfInteropTests.member("alice")
 		let bob = try SelfInteropTests.member("bob")
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider),
 			framing: .publicMessage)
 		groupA = add.group
-		let rotation = try groupA.committing(
+		let rotation = try groupA.commit(
 			provider, proposals: [], signingKey: alice.signingKey,
 			randomness: .generate(provider), framing: .publicMessage)
 

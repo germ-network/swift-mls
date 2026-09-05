@@ -79,7 +79,7 @@ struct SafeExportTests {
 		let e0 = try groupA.safeExportSecret(provider, componentID: 1)
 
 		// commit-construct + join (epoch 1)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -92,7 +92,7 @@ struct SafeExportTests {
 		#expect(e1a != e0)
 
 		// process (epoch 2)
-		let pcs = try groupB.committing(
+		let pcs = try groupB.commit(
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))
 		groupB = pcs.group
@@ -116,7 +116,7 @@ struct SafeExportTests {
 		#expect(groupA.exporterTrees[0] != nil)  // built at create's install
 		_ = try groupA.safeExportSecret(provider, componentID: 3)
 
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -151,7 +151,7 @@ struct SafeExportTests {
 		let bob = try SelfInteropTests.member("bob")
 
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group

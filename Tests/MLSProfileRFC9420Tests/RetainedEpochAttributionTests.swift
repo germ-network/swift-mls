@@ -27,7 +27,7 @@ struct RetainedEpochAttributionTests {
 
 		// Alice + Mallory converged; Mallory joins at the leftmost blank leaf.
 		var aliceGroup = try SelfInteropTests.createGroup(alice)
-		let add = try aliceGroup.committing(
+		let add = try aliceGroup.commit(
 			provider, proposals: [.proposal(.add(mallory.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		aliceGroup = add.group
@@ -41,7 +41,7 @@ struct RetainedEpochAttributionTests {
 		// commit. Update→Remove→Add order (RFC §12.3) blanks Mallory's leaf, then
 		// Add fills the leftmost empty leaf (RFC §12.1.1) — so Xavier
 		// deterministically takes Mallory's just-vacated leaf.
-		let commit = try aliceGroup.committing(
+		let commit = try aliceGroup.commit(
 			provider,
 			proposals: [
 				.proposal(.remove(malloryLeaf)),
@@ -64,7 +64,10 @@ struct RetainedEpochAttributionTests {
 			signingKey: mallory.signingKey)
 		#expect(message.epoch == epochN)
 
-		let opened = try aliceGroup.unprotect(provider, message: message)
+		// Through the transition API: `unprotecting` hands back the epoch-bound
+		// attribution on `output`, and a `group` to adopt — this test only reads
+		// the attribution, so it never adopts.
+		let opened = try aliceGroup.unprotecting(provider, message).output
 		guard case .application(let data) = opened.content else {
 			Issue.record("expected application content")
 			return

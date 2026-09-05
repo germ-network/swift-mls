@@ -45,7 +45,7 @@ struct HostileWelcomeTests {
 		let bob = try SelfInteropTests.member("bob")
 
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider,
 			proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey,
@@ -95,7 +95,7 @@ struct HostileWelcomeTests {
 		let bob = try SelfInteropTests.member("bob")
 
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -111,7 +111,7 @@ struct HostileWelcomeTests {
 			guard case .external(let id, _) = id, id == pskID else { return nil }
 			return realSecret
 		}
-		let pskCommit = try groupA.committing(
+		let pskCommit = try groupA.commit(
 			provider,
 			proposals: [
 				.proposal(

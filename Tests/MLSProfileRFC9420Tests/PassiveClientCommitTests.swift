@@ -91,7 +91,7 @@ enum PassiveClientRunner {
 				// `verify`, as a live receiver does, before the store accepts
 				// them.
 				try store.insert(
-					try group.verify(proposal: message, provider), provider)
+					try group.verifying(provider, proposal: message), provider)
 			}
 
 			var commitReader = MLS.Reader(epoch.commit.bytes)

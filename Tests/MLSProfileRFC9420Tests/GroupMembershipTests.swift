@@ -26,10 +26,11 @@ struct GroupMembershipTests {
 	func committingAsSoleMembership() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
-		let output = try pair.groupA.committing(
-			as: pair.groupA.myLeafIndex, provider, proposals: [],
+		var group = pair.groupA
+		let output = try group.commit(
+			as: group.myLeafIndex, provider, proposals: [],
 			signingKey: pair.alice.signingKey, randomness: .generate(provider))
-		// Advanced the epoch exactly as the plain `committing` would.
+		// Advanced the epoch exactly as the plain `commit` would.
 		#expect(output.group.context.epoch == pair.groupA.context.epoch + 1)
 	}
 
@@ -64,7 +65,7 @@ struct GroupMembershipTests {
 				signingKey: pair.alice.signingKey)
 		}
 		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
-			_ = try group.committing(
+			_ = try group.commit(
 				provider, proposals: [], signingKey: pair.alice.signingKey,
 				randomness: .generate(provider))
 		}
@@ -90,7 +91,7 @@ struct GroupMembershipTests {
 		let commitOut = try pair.groupA.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .publicMessage)
-		guard case .publicMessage(let publicCommit) = commitOut.commit else {
+		guard case .publicMessage(let publicCommit) = commitOut.output.message else {
 			Issue.record("expected a public commit")
 			return
 		}

@@ -125,7 +125,7 @@ struct SelfInteropTests {
 
 		// Epoch 0 -> 1: Alice adds Bob, full commit, Welcome.
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider,
 			proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey,
@@ -137,7 +137,7 @@ struct SelfInteropTests {
 		Self.assertConverged(groupA, groupB)
 
 		// Epoch 1 -> 2: Bob answers with an empty commit (pure PCS).
-		let pcs = try groupB.committing(
+		let pcs = try groupB.commit(
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))
 		groupB = pcs.group
@@ -146,7 +146,7 @@ struct SelfInteropTests {
 		Self.assertConverged(groupA, groupB)
 
 		// Epoch 2 -> 3: Alice adds Carol *pathlessly* (§12.4's MAY).
-		let addCarol = try groupA.committing(
+		let addCarol = try groupA.commit(
 			provider,
 			proposals: [.proposal(.add(carol.keyPackage))],
 			signingKey: alice.signingKey,
@@ -167,7 +167,7 @@ struct SelfInteropTests {
 			guard case .external(let id, _) = id, id == pskID else { return nil }
 			return pskSecret
 		}
-		let psk = try groupB.committing(
+		let psk = try groupB.commit(
 			provider,
 			proposals: [
 				.proposal(
@@ -188,7 +188,7 @@ struct SelfInteropTests {
 		Self.assertConverged(groupB, groupC)
 
 		// Epoch 4 -> 5: Alice removes Carol; Carol learns she is out.
-		let remove = try groupA.committing(
+		let remove = try groupA.commit(
 			provider,
 			proposals: [.proposal(.remove(groupC.myLeafIndex))],
 			signingKey: alice.signingKey,
@@ -217,7 +217,7 @@ struct SelfInteropTests {
 		let carol = try Self.member("carol")
 
 		var groupA = try Self.createGroup(alice)
-		let addBoth = try groupA.committing(
+		let addBoth = try groupA.commit(
 			provider,
 			proposals: [
 				.proposal(.add(bob.keyPackage)), .proposal(.add(carol.keyPackage)),
@@ -237,7 +237,7 @@ struct SelfInteropTests {
 		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
 			secret
 		}
-		let pathless = try groupA.committing(
+		let pathless = try groupA.commit(
 			provider,
 			proposals: [
 				.proposal(
@@ -255,7 +255,7 @@ struct SelfInteropTests {
 
 		// Carol answers with a full-path commit; Alice must still be able
 		// to decap it.
-		let full = try groupC.committing(
+		let full = try groupC.commit(
 			provider, proposals: [], signingKey: carol.signingKey,
 			randomness: .generate(provider))
 		groupC = full.group
@@ -279,7 +279,7 @@ struct SelfInteropTests {
 		let bob = try Self.member("bob")  // does NOT support 99
 
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -295,13 +295,13 @@ struct SelfInteropTests {
 
 		// Bob is a member and cannot satisfy it: construction refuses.
 		#expect(throws: MLS.RFC9420.GroupError.requiredCapabilitiesNotMet) {
-			_ = try groupA.committing(
+			_ = try groupA.commit(
 				provider, proposals: [.proposal(gce)],
 				signingKey: alice.signingKey, randomness: .generate(provider))
 		}
 
 		// Removing Bob in the same commit lifts the objection, end to end.
-		let removeAndRequire = try groupA.committing(
+		let removeAndRequire = try groupA.commit(
 			provider,
 			proposals: [.proposal(gce), .proposal(.remove(groupB.myLeafIndex))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
@@ -327,7 +327,7 @@ struct SelfInteropTests {
 		let carol = try Self.member("carol")
 
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -354,7 +354,7 @@ struct SelfInteropTests {
 
 		// Alice commits it by reference; both existing members converge,
 		// and Carol joins from the Welcome.
-		let commit = try groupA.committing(
+		let commit = try groupA.commit(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = commit.group
@@ -378,7 +378,7 @@ struct SelfInteropTests {
 		let bob = try Self.member("bob")
 
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -410,7 +410,7 @@ struct SelfInteropTests {
 		#expect(insertedRef == ref)
 
 		// Alice commits it by reference.
-		let commit = try groupA.committing(
+		let commit = try groupA.commit(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = commit.group
@@ -418,7 +418,7 @@ struct SelfInteropTests {
 		Self.assertConverged(groupA, groupB)
 
 		// Both sides keep working: Bob commits the next epoch.
-		let next = try groupB.committing(
+		let next = try groupB.commit(
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))
 		groupB = next.group
@@ -441,7 +441,7 @@ struct SelfInteropTests {
 		let bob = try Self.member("bob")
 
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -452,7 +452,7 @@ struct SelfInteropTests {
 		// Bob proposes, but never gets to reference it: Alice commits an
 		// unrelated, pathful, proposal-less PCS in the same epoch.
 		_ = try groupB.proposeUpdate(provider, signingKey: bob.signingKey)
-		let other = try groupA.committing(
+		let other = try groupA.commit(
 			provider, proposals: [], signingKey: alice.signingKey,
 			randomness: .generate(provider))
 		groupA = other.group
@@ -474,7 +474,7 @@ struct SelfInteropTests {
 		let bob = try Self.member("bob")
 
 		var groupA = try Self.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -502,7 +502,7 @@ struct SelfInteropTests {
 		let insertedRef = try store.insert(framedContent, provider)
 		#expect(insertedRef == refA)
 
-		let commit = try groupA.committing(
+		let commit = try groupA.commit(
 			provider, proposals: [.reference(refA)], proposalStore: store,
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = commit.group
@@ -513,7 +513,7 @@ struct SelfInteropTests {
 		#expect(groupB.pendingUpdates == nil)
 
 		// State stays consistent: Bob commits the next epoch.
-		let next = try groupB.committing(
+		let next = try groupB.commit(
 			provider, proposals: [], signingKey: bob.signingKey,
 			randomness: .generate(provider))
 		groupB = next.group

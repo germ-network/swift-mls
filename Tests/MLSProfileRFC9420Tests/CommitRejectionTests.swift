@@ -81,7 +81,7 @@ struct CommitRejectionTests {
 			// These are real vector proposals; `verify` authenticates the
 			// framing (as a live receiver does) before the store accepts it.
 			try store.insert(
-				try group.verify(proposal: message, provider), provider)
+				try group.verifying(provider, proposal: message), provider)
 		}
 		return store
 	}
@@ -406,8 +406,8 @@ struct CommitRejectionTests {
 			membershipTag: nil)
 
 		#expect(throws: MLS.RFC9420.GroupError.blankSenderLeaf) {
-			_ = try pair.groupB.verify(
-				proposal: forged, ConstructedRejectionTests.provider)
+			_ = try pair.groupB.verifying(
+				ConstructedRejectionTests.provider, proposal: forged)
 		}
 	}
 
