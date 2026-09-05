@@ -280,7 +280,33 @@ extension MLS.RFC9420.Group {
 	}
 
 	public struct Unprotected: Sendable {
+		/// The leaf that framed this message — **a leaf in `epoch`'s roster, not
+		/// necessarily the current one.** A `PrivateMessage` may come from any
+		/// epoch still within the retention window, and a leaf index is not stable
+		/// across epochs: removing a member blanks its leaf, and the next Add fills
+		/// the leftmost empty leaf (RFC 9420 §12.1.1), so a later member can come to
+		/// occupy the same index. Resolving `sender` against the *current* `tree`
+		/// would then bind a retained-epoch message to whoever holds that leaf now,
+		/// not the member who framed it.
+		///
+		/// **MUST**: resolve `sender` to an identity only within `epoch`'s roster.
+		/// `senderSignatureKey` is that epoch's verified signing key for this leaf —
+		/// the key the framing signature was actually checked against — so key
+		/// identity off it directly, or compare it to the identity you expect,
+		/// rather than reading the current tree. The library does not retain
+		/// past-epoch credentials, so an application that needs the credential (not
+		/// just the key) must keep its own epoch → roster history.
 		public let sender: MLS.LeafIndex
+		/// The epoch this message was framed in and decrypted against — the epoch
+		/// whose roster `sender` indexes. Also readable before `unprotect` as
+		/// `PrivateMessage.epoch`; surfaced here so attribution is epoch-bound
+		/// without a second lookup.
+		public let epoch: UInt64
+		/// The signing key the framing signature was verified against: `epoch`'s
+		/// frozen `signature_key` for `sender`'s leaf. Epoch-bound identity — two
+		/// members occupying one leaf index in different epochs have different keys
+		/// here, so this distinguishes them where the bare leaf index cannot.
+		public let senderSignatureKey: MLS.SignaturePublicKey
 		public let authenticatedData: Data
 		public let content: UnprotectedContent
 	}
@@ -471,21 +497,28 @@ extension MLS.RFC9420.Group {
 		guard senderData.leafIndex != myLeafIndex else {
 			throw MLS.RFC9420.GroupError.cannotDecryptOwnMessage
 		}
+		// `epoch`'s frozen signing key for the sender's leaf: the key the framing
+		// signature is verified against below, and the epoch-bound identity
+		// surfaced on `Unprotected`. Checked BEFORE deriving any message key — a
+		// leaf blank in the framing epoch can never authenticate, so a forged
+		// `sender_data` naming a blank leaf must not make the receiver bootstrap
+		// and walk that leaf's ratchet.
+		guard let senderSignatureKey = secrets.signatureKeys[senderData.leafIndex]
+		else {
+			throw MLS.RFC9420.GroupError.blankSenderLeaf
+		}
 		let (key, nonce, pending) = try deriveMessageKey(
 			epoch: message.epoch, leaf: senderData.leafIndex,
 			generation: senderData.generation,
 			isHandshake: message.contentType != .application, provider)
 
-		let signatureKeys = secrets.signatureKeys
 		let authenticated = try MLS.RFC9420.openPrivateContent(
 			provider, message: message, senderData: senderData, key: key,
 			nonce: nonce, groupContext: secrets.groupContext,
-			verificationKey: { leaf in
-				guard let key = signatureKeys[leaf] else {
-					throw MLS.RFC9420.GroupError.blankSenderLeaf
-				}
-				return key
-			})
+			// The verified key IS the returned key, by construction: verification
+			// uses the exact key surfaced on `Unprotected`, so the vouched-for key
+			// and the one that authenticated the frame cannot decouple.
+			verificationKey: { _ in senderSignatureKey })
 		commitConsumption(pending)
 
 		let content: UnprotectedContent
@@ -500,6 +533,8 @@ extension MLS.RFC9420.Group {
 		}
 		return Unprotected(
 			sender: senderData.leafIndex,
+			epoch: message.epoch,
+			senderSignatureKey: senderSignatureKey,
 			authenticatedData: message.authenticatedData,
 			content: content)
 	}
