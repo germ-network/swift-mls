@@ -154,7 +154,7 @@ extension MLS.RFC9420.Group {
 			!resolved.contains(where: {
 				if case .externalInit = $0.proposal { true } else { false }
 			})
-		else { throw MLS.RFC9420.GroupError.unsupportedSender }
+		else { throw MLS.RFC9420.GroupError.externalInitInRegularCommit }
 
 		var provisionalExtensions = context.extensions
 		for stored in resolved {

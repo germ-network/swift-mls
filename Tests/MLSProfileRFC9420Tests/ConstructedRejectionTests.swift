@@ -90,6 +90,39 @@ struct ConstructedRejectionTests {
 			throws: .unsupportedReInit)
 	}
 
+	/// §12.2: a regular commit is invalid if it contains an ExternalInit. The
+	/// commit is validly signed and membership-tagged by a real member (Alice);
+	/// only the ExternalInit is malformed. `validateProposalList` runs before the
+	/// path-required and confirmation-tag checks, so this reaches the §12.2 gate
+	/// — a malicious committer would otherwise compute a matching tag, since the
+	/// receiver derives the epoch from the ordinary `init_secret`.
+	@Test("§12.2: an ExternalInit in a regular commit is rejected, not accepted")
+	func externalInitInRegularCommit() throws {
+		let pair = try Self.pair()
+		let externalInit = MLS.RFC9420.Proposal.externalInit(
+			.init(kemOutput: Data(repeating: 0x01, count: 32)))
+		Self.expectRejected(
+			pair,
+			try Self.craftedCommit(
+				pair, proposals: [.proposal(externalInit)], path: nil),
+			throws: .externalInitInRegularCommit)
+	}
+
+	/// The construct side refuses the same list with the same error — §12.2
+	/// binds "a group member creating a Commit" as well as one processing it.
+	@Test("§12.2: constructing a regular commit with an ExternalInit is refused")
+	func externalInitConstructRefused() throws {
+		let pair = try Self.pair()
+		let externalInit = MLS.RFC9420.Proposal.externalInit(
+			.init(kemOutput: Data(repeating: 0x01, count: 32)))
+		#expect(throws: MLS.RFC9420.GroupError.externalInitInRegularCommit) {
+			_ = try pair.groupA.committing(
+				Self.provider, proposals: [.proposal(externalInit)],
+				signingKey: pair.alice.signingKey,
+				randomness: .generate(Self.provider))
+		}
+	}
+
 	@Test("a Remove naming a blank leaf is rejected")
 	func removeOfNonMember() throws {
 		let pair = try Self.pair()

@@ -112,7 +112,7 @@ that a caller gets an error, not a plausible-looking result.
 | ReInit | `GroupError.unsupportedReInit` — rejected rather than applied, because ReInit uniquely does not perturb the key schedule, so applying it would *succeed* and hand back a live-looking `Group` the caller must not send from |
 | Branching, resumption PSKs with `reinit`/`branch` usage | `GroupError.unsupportedResumptionUsage` |
 | X.509 credentials | Credentials stay opaque on the wire; interpretation is the application's |
-| External commits and external senders | Deferred project-wide; a regular commit refuses to construct or apply either |
+| ExternalInit proposal in a regular commit | `GroupError.externalInitInRegularCommit` — §12.2 list-validity, rejected on both construct and process. Not left to "fail closed": the receiver derives the epoch from the ordinary retained `init_secret`, so a malicious committer's confirmation tag verifies just as the receiver's does |
 
 §7.3 leaf validation runs in full — the authenticity half (every leaf's own
 signature) and the policy half (capability/extension consistency, mutual

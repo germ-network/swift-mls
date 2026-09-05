@@ -273,14 +273,15 @@ extension MLS.RFC9420.Group {
 		// project-wide, so there is no state to transition into and no
 		// Welcome path to wait on.
 		//
-		// Every other unhandled proposal type fails closed on its own --
-		// an ExternalInit in a regular commit diverges the key schedule
-		// and dies at the confirmation tag. ReInit does not touch the key
-		// schedule at all, so processing it silently returns a
-		// live-looking `Group` that the caller must not send from. That is
-		// the one case where "unimplemented" and "succeeded" are
-		// indistinguishable to a caller, which is why it gets an explicit
-		// rejection instead.
+		// This rejection lives here, not in `validateProposalList`,
+		// because ReInit is the one deferred type that does not perturb
+		// the key schedule: processing it would silently return a
+		// live-looking `Group` the caller must not send from -- the one
+		// case where "unimplemented" and "succeeded" are indistinguishable
+		// to a caller. Every §12.2 list-validity rule that CAN be caught
+		// in `validateProposalList` is (ExternalInit included -- it is
+		// rejected there, not left to "die at the confirmation tag", which
+		// a malicious committer computes just as the receiver does).
 		if resolved.contains(where: {
 			if case .reInit = $0.proposal { true } else { false }
 		}) {
@@ -808,12 +809,24 @@ extension MLS.RFC9420.Group {
 				// nothing to add.
 				break
 			case .externalInit:
-				// §12.2 forbids ExternalInit in a regular commit. No
-				// explicit rejection here by prior decision: it fails
-				// closed -- an unapplied ExternalInit diverges the key
-				// schedule and dies at the confirmation tag, which the
-				// vector gate exercises. Documented rather than doubled.
-				break
+				// §12.2: a regular commit's proposal list "is invalid if
+				// … It contains an ExternalInit proposal", and an invalid
+				// list MUST be rejected. This is the §12.2 gate for both
+				// construct and process. It is NOT redundant with the
+				// confirmation tag: this project derives the new epoch from
+				// the ordinary retained `init_secret` -- the §8.3 external
+				// initialization step (reached only by §12.4.3.2's external
+				// commit path) is not wired, and nothing consumes
+				// `kemOutput` -- so a *malicious* committer computes a
+				// matching tag exactly as the receiver does and the commit
+				// would be accepted. "Dies at the confirmation tag" holds
+				// only against an honest committer, who computes the tag.
+				//
+				// Unconditional because this project processes only regular
+				// commits. If external commits are ever supported, this
+				// needs the sender's commit type: §12.2's *external* rules
+				// require exactly one ExternalInit rather than forbidding it.
+				throw MLS.RFC9420.GroupError.externalInitInRegularCommit
 			}
 		}
 

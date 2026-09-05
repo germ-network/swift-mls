@@ -112,6 +112,16 @@ extension MLS.RFC9420 {
 		/// it would *succeed* and hand back a live-looking `Group` the
 		/// caller must not send from.
 		case unsupportedReInit
+		/// RFC 9420 §12.2: for a regular (non-external) Commit "the list is
+		/// invalid if … It contains an ExternalInit proposal", and an invalid
+		/// list means "the Commit message MUST be rejected as invalid". A
+		/// *regular member's* commit that carries one — distinct from an
+		/// external commit, whose external sender is refused as
+		/// `unsupportedSender`. Rejected on both construct and process: the
+		/// receiver derives the epoch from the ordinary retained `init_secret`,
+		/// so a malicious committer computes a matching confirmation tag and the
+		/// commit would otherwise be *accepted* (it does not "fail closed").
+		case externalInitInRegularCommit
 		/// A Remove naming a leaf that is already blank. The
 		/// tree's own mutation primitives stay unconditional by design;
 		/// "is this leaf currently a member" is context only commit
