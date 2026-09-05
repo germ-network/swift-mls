@@ -87,12 +87,20 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// One local membership's per-client state (D18 / `Membership`): its HPKE
-	/// secret keys along its own direct path, and its pending self-Update (absent
-	/// when none is outstanding). The leaf index is the map key in
-	/// `Snapshot.memberships`, so it is not repeated here.
+	/// secret keys along its own direct path, and its pending self-Update. The
+	/// leaf index is the map key in `Snapshot.memberships`, so it is not repeated
+	/// here.
+	///
+	/// `pendingUpdate` is the set of proposed new leaf key pairs directly (a set —
+	/// the committer, not the proposer, picks which lands), keyed by dense index
+	/// `0..<count`. The epoch and own-leaf node the live tuple also carries are
+	/// NOT stored: both are derivable at restore — the epoch is the current epoch
+	/// (a pending Update is cleared on every advance, so it is only ever valid for
+	/// `group_context.epoch`), and the node is `2 · leaf`. Absent when none is
+	/// outstanding; never empty when present.
 	struct MembershipArchive: Codable, Sendable, Equatable {
 		var treeSecretKeys: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
-		var pendingUpdate: PendingUpdateArchive?
+		var pendingUpdate: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>?
 
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case treeSecretKeys = 0
@@ -100,24 +108,9 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	/// A membership's uncommitted self-proposed Update(s): the epoch they are
-	/// valid for, the own-leaf node index, and the proposed new leaf key pairs
-	/// (a set — the committer, not the proposer, picks which lands). `updates` is
-	/// index-keyed (`IntegerKeyedMap`) rather than a plain array, matching how
-	/// every other collection in this format rides the integer-keyed funnel.
-	struct PendingUpdateArchive: Codable, Sendable, Equatable {
-		var epoch: UInt64
-		var node: UInt32
-		var updates: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>
-
-		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
-			case epoch = 0
-			case node = 1
-			case updates = 2
-		}
-	}
-
-	/// One proposed new leaf key pair in a `PendingUpdateArchive`.
+	/// One proposed new leaf key pair in a membership's pending self-Update. The
+	/// public key is opaque wire bytes; the secret is the proposed leaf HPKE
+	/// private key.
 	struct PendingUpdateEntryArchive: Codable, Sendable, Equatable {
 		var publicKey: Data
 		@SecretField var secret: SecretBytes
@@ -129,14 +122,15 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Reads just the `format` field so `restore(from archive:)` can dispatch to
-	/// the matching decode without first committing to a struct shape. This works
-	/// because the current archive decoder matches only the keys a struct asks
-	/// for and does not audit the rest — the same leniency `IntegerKeyedMap`
-	/// relies on, which spec/snapshot.md §3's "any unknown map key is an error"
-	/// strictness (the deferred §8 hostile-decode work) will tighten. When that
-	/// lands, this probe MUST stay exempt (or the format be peeked below the
-	/// struct layer): every real archive carries keys other than `format`, so a
-	/// probe subjected to unknown-key rejection would reject them all.
+	/// the matching decode without first committing to a struct shape. `format`
+	/// is key 0, so under spec/snapshot.md §3's strictly-increasing-keys rule it
+	/// is always the FIRST entry of the top-level map: the §5 dispatch is "read
+	/// the first entry, select the schema, then decode the whole item strictly
+	/// under it." This probe is the "read the first entry" step. When §8's
+	/// hostile-decode strictness lands (which makes any unknown map key an
+	/// error), this becomes a below-struct peek of that first entry rather than a
+	/// struct decode — no exemption from the strictness, because it never decodes
+	/// the rest of the map.
 	struct FormatProbe: Decodable {
 		var format: UInt64
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
@@ -385,10 +379,15 @@ extension MLS.RFC9420.Group {
 				uniqueKeysWithValues: membership.secretKeys.map {
 					(UInt64($0.key), SecretField(wrappedValue: $0.value.data))
 				}))
-		let pendingArchive = membership.pendingUpdate.map { pending in
-			PendingUpdateArchive(
-				epoch: pending.epoch, node: pending.node,
-				updates: MLS.RFC9420.IntegerKeyedMap(
+		// The proposed key pairs directly, keyed by dense index. epoch and node
+		// are not stored (derived at restore). An empty set is emitted as absent,
+		// not an empty map (never-empty-when-present); the library never produces
+		// one anyway (`proposeUpdate` only appends).
+		let pendingArchive = membership.pendingUpdate.flatMap {
+			pending -> MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>? in
+			pending.updates.isEmpty
+				? nil
+				: MLS.RFC9420.IntegerKeyedMap(
 					Dictionary(
 						uniqueKeysWithValues: pending.updates.enumerated()
 							.map {
@@ -403,7 +402,7 @@ extension MLS.RFC9420.Group {
 											.secret.data
 									)
 								)
-							})))
+							}))
 		}
 		return MembershipArchive(
 			treeSecretKeys: treeSecretKeysMap, pendingUpdate: pendingArchive)
@@ -752,43 +751,38 @@ extension MLS.RFC9420.Group {
 			leafIndex: leafIndex, secretKeys: secretKeys, pendingUpdate: pendingUpdate)
 	}
 
-	/// Rebuilds a membership's pending self-Update from its archive (format 2).
-	/// The `epoch` MUST be the current epoch (a pending Update is valid only for
-	/// the epoch it names and is cleared on every advance — the live invariant),
-	/// the `node` MUST be the membership's own leaf node, and the update set is
-	/// non-empty; entries are read in ascending index order. The public key is
-	/// opaque wire bytes (not re-derived); the secret is validated non-empty by
-	/// `HpkeSecretKey`.
+	/// Rebuilds a membership's pending self-Update from its persisted update set
+	/// (format 2). The set MUST be non-empty and its keys dense `0..<count` (the
+	/// one-wire-form MUST — index is positional, so a sparse or out-of-range key
+	/// is malformed). The epoch and own-leaf node are not stored: they are the
+	/// current epoch (a pending Update is cleared on every advance, so it is only
+	/// valid for `group_context.epoch`) and `2 · leaf`. The public key is opaque
+	/// wire bytes; the secret is validated non-empty by `HpkeSecretKey`.
 	private static func restorePendingUpdate(
-		_ archive: PendingUpdateArchive, leafIndex: MLS.LeafIndex, currentEpoch: UInt64
+		_ map: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>,
+		leafIndex: MLS.LeafIndex, currentEpoch: UInt64
 	) throws -> (
 		epoch: UInt64, node: UInt32,
 		updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
 	) {
-		guard archive.epoch == currentEpoch else {
-			throw MLS.RFC9420.SnapshotError.inconsistentStore(
-				"pending_update epoch \(archive.epoch) is not the current epoch "
-					+ "\(currentEpoch)")
-		}
-		guard archive.node == 2 * leafIndex.value else {
-			throw MLS.RFC9420.SnapshotError.inconsistentStore(
-				"pending_update node \(archive.node) is not the membership's own leaf "
-					+ "node \(2 * leafIndex.value)")
-		}
-		guard !archive.updates.entries.isEmpty else {
-			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(
-				field: "pending_update.updates")
+		guard !map.entries.isEmpty else {
+			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "pending_update")
 		}
 		var updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)] = []
-		for index in archive.updates.entries.keys.sorted() {
-			let entry = archive.updates.entries[index]!
+		for index in map.entries.keys.sorted() {
+			guard index == UInt64(updates.count) else {
+				throw MLS.RFC9420.SnapshotError.inconsistentStore(
+					"pending_update keys are not dense 0..<count (index \(index))"
+				)
+			}
+			let entry = map.entries[index]!
 			updates.append(
 				(
 					publicKey: MLS.HpkePublicKey(entry.publicKey),
 					secret: try MLS.HpkeSecretKey(entry.secret)
 				))
 		}
-		return (epoch: archive.epoch, node: archive.node, updates: updates)
+		return (epoch: currentEpoch, node: 2 * leafIndex.value, updates: updates)
 	}
 
 	private static func requireLength(_ actual: Int, _ expected: Int, _ field: String) throws {
