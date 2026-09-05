@@ -14,38 +14,82 @@ extension MLS.RFC9420 {
 	///
 	/// The synthesized memberwise init is not `public` (Swift never
 	/// promotes it to the type's own access level automatically), and
-	/// that is deliberate here, not incidental: the only way to produce a
-	/// `StoredProposal` from outside this module is `ProposalStore.insert`,
-	/// which derives proposal, sender, and the ref that keys it all from
-	/// one framed `AuthenticatedContent` — see that type's own doc comment.
+	/// that is deliberate: the only way to produce a `StoredProposal` from
+	/// outside this module is `ProposalStore.insert`, which derives
+	/// proposal, sender, and the ref that keys them from one
+	/// `VerifiedProposal` — see that type's doc comment.
 	public struct StoredProposal: Sendable {
 		public var proposal: Proposal
 		public var sender: MLS.Sender
+		/// The epoch and group the proposal was framed in. Checked against the
+		/// committing/processing context at by-reference resolution, so a
+		/// stale-epoch (or foreign-group) reference cannot be applied — the
+		/// `sender` leaf index only names the right member within `epoch`, and a
+		/// later epoch may have reused it.
+		public var epoch: UInt64
+		public var groupID: Data
+	}
+
+	/// A proposal whose framing has been authenticated — the capability
+	/// `ProposalStore.insert` requires, so an unverified proposal cannot enter
+	/// the store. Minted only two ways, both of which check the framing
+	/// signature (and, for public framing, the membership tag) against the
+	/// sender's current leaf key: `Group.verify(proposal:)` for a
+	/// `PublicMessage`, and `unprotect` for a `PrivateMessage`. The `init` is
+	/// not `public`, so a caller cannot fabricate one from raw bytes — the same
+	/// unrepresentable-by-construction technique `StoredProposal` uses.
+	public struct VerifiedProposal: Sendable {
+		/// The authenticated frame. Deliberately not `public`: exposing the raw
+		/// `AuthenticatedContent` would let a caller extract and re-wrap it, and
+		/// the read-only accessors below give an app everything it needs to
+		/// apply policy. **Do not make this type (or `StoredProposal`)
+		/// `Decodable`/`MLSCodable`** — a synthesized `init(from:)` is a public,
+		/// byte-level constructor with no verification, which reopens the gate.
+		/// To persist a pending proposal, keep the raw `PublicMessage` bytes and
+		/// re-run `verify` on restore.
+		let content: AuthenticatedContent
+		init(verified content: AuthenticatedContent) { self.content = content }
+
+		/// The proposal, for an app inspecting it before it is committed.
+		public var proposal: MLS.RFC9420.Proposal? {
+			guard case .proposal(let proposal) = content.content.content else {
+				return nil
+			}
+			return proposal
+		}
+		/// The authenticated framer (a member of the group at `epoch`).
+		public var sender: MLS.Sender { content.content.sender }
+		/// The epoch whose roster `sender` indexes, and whose key authenticated
+		/// the framing — the two are only consistent within this epoch.
+		public var epoch: UInt64 { content.content.epoch }
+		/// The group the proposal was framed in.
+		public var groupID: Data { content.content.groupID }
 	}
 
 	/// By-reference proposals, keyed by `ProposalRef`.
 	///
-	/// **The store is a trust boundary, and this is what holds without
-	/// it.** `processing` never recomputes a `ProposalRef` against its
-	/// stored proposal, and never re-verifies a stored `sender` against
-	/// the framing the proposal originally arrived in — the caller built
-	/// the store from messages it already verified. What defends against
-	/// a corrupted store: an Update's leaf signature is checked against
-	/// the claimed sender's `(group_id, leaf_index)`, so a forged Update
-	/// attribution fails; substituted *content* diverges the provisional
-	/// `GroupContext` and dies at the confirmation tag; and every
-	/// §12.1/§12.2 rule runs on what the store supplies. What does not
-	/// fail closed is the epoch-level rejection a caller skips by storing
-	/// a stale proposal as fresh — retention is the caller's job.
+	/// **The store is a trust boundary, and `insert` is its gate.**
+	/// `processing` never recomputes a `ProposalRef` against its stored
+	/// proposal, and never re-verifies a stored `sender` — it does not need
+	/// to, because `insert` accepts only a `VerifiedProposal`, whose framing
+	/// signature was already checked against the sender's current leaf key by
+	/// `Group.verify(proposal:)` or `unprotect`. A `StoredProposal`'s `sender`
+	/// is therefore the authenticated framer, not a claimed one.
+	///
+	/// Two things this boundary deliberately does not cover: epoch freshness
+	/// (a caller must not store a stale proposal as fresh — retention is the
+	/// caller's job), and §5.3.1 credential/identity validation (that a
+	/// sender's credential legitimately binds its signature key) — RFC 9420's
+	/// Authentication Service, an application responsibility, not the store's.
 	///
 	/// A `struct` wrapping the dictionary rather than a plain
-	/// `[HashReference: StoredProposal]` typealias: `insert` is the only
-	/// way in, and it derives the ref, the proposal, and the sender from
-	/// the SAME framed `AuthenticatedContent` — so a ref that doesn't
-	/// match the proposal stored under it, or a sender that doesn't match
-	/// how the proposal was actually framed, is unrepresentable. The old
-	/// typealias let a caller assemble those three independently, which
-	/// is exactly what made a mismatched substitution constructible.
+	/// `[HashReference: StoredProposal]` typealias: `insert` is the only way
+	/// in, and it derives the ref, the proposal, and the sender from the SAME
+	/// `VerifiedProposal` — so a ref that doesn't match the proposal stored
+	/// under it, or a sender that doesn't match how the proposal was framed,
+	/// is unrepresentable. The old typealias let a caller assemble those three
+	/// independently, which is what made a mismatched (or unverified)
+	/// substitution constructible.
 	public struct ProposalStore: Sendable {
 		private var entries: [MLS.HashReference: StoredProposal] = [:]
 
@@ -57,20 +101,22 @@ extension MLS.RFC9420 {
 		// while still letting `insert` be the sole way to populate a store.
 		public init() {}
 
-		/// Frames, refs, and stores in one step. `content.content.content`
-		/// must be `.proposal` — a commit or application message has no
-		/// business in a proposal store, and `notAProposal` says so rather
-		/// than silently discarding it.
+		/// Refs and stores an already framing-verified proposal. A
+		/// `VerifiedProposal` (from `Group.verify(proposal:)` or `unprotect`)
+		/// carries `.proposal` content by construction; the guard keeps
+		/// `notAProposal` as a defensive invariant rather than a live path.
 		@discardableResult
 		public mutating func insert(
-			_ content: AuthenticatedContent, _ provider: any MLS.CipherSuiteProvider
+			_ verified: VerifiedProposal, _ provider: any MLS.CipherSuiteProvider
 		) throws -> MLS.HashReference {
+			let content = verified.content
 			guard case .proposal(let proposal) = content.content.content else {
 				throw MLS.RFC9420.GroupError.notAProposal
 			}
 			let ref = try proposalRef(provider, content)
 			entries[ref] = StoredProposal(
-				proposal: proposal, sender: content.content.sender)
+				proposal: proposal, sender: content.content.sender,
+				epoch: content.content.epoch, groupID: content.content.groupID)
 			return ref
 		}
 
@@ -100,6 +146,75 @@ extension MLS.RFC9420 {
 }
 
 extension MLS.RFC9420.Group {
+	/// A by-reference proposal must have been framed in the group and epoch of
+	/// the commit referencing it. Proposals are epoch-scoped (RFC 9420 §12.4:
+	/// a proposal resent in a later epoch is updated to reflect it), and a
+	/// `StoredProposal`'s `sender` leaf index only names the right member within
+	/// its own epoch — a later epoch may have reused that leaf. Checked at
+	/// resolution so a stale (or foreign-group) reference can't be applied even
+	/// from a store a caller carried across epochs.
+	func requireCurrentContext(_ stored: MLS.RFC9420.StoredProposal) throws {
+		guard stored.groupID == context.groupID else {
+			throw MLS.RFC9420.GroupError.wrongGroup
+		}
+		guard stored.epoch == context.epoch else {
+			throw MLS.RFC9420.GroupError.referencedProposalWrongEpoch(
+				expected: context.epoch, actual: stored.epoch)
+		}
+	}
+
+	/// Authenticate a `PublicMessage`-framed **proposal** before it enters a
+	/// `ProposalStore` — the proposal-side counterpart to
+	/// `processing(commit:)`, which was `verifyPublic`'s only caller. RFC 9420
+	/// §6.1: "Recipients of an MLSMessage MUST verify the signature"; §6.2: a
+	/// `PublicMessage` recipient "MUST check membership_tag and MUST check that
+	/// the FramedContentAuthData is valid." Mirrors the commit path's framing
+	/// checks — current epoch, group id, a `.member` sender at a non-blank
+	/// leaf, and the framing signature + membership tag under that leaf's
+	/// `signature_key`. A private-framed proposal is authenticated by
+	/// `unprotect` instead; both mint the `VerifiedProposal` the store
+	/// requires, so an unverified proposal can never reach `insert`.
+	///
+	/// This authenticates the *framing* only — that the message was signed by
+	/// the current occupant of the sender's leaf. Validating that the sender's
+	/// credential legitimately binds that signature key (and is a valid
+	/// successor when a credential is replaced) is RFC 9420 §5.3.1's
+	/// Authentication Service: an application responsibility, outside this gate.
+	public func verify(
+		proposal message: MLS.RFC9420.PublicMessage,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws -> MLS.RFC9420.VerifiedProposal {
+		guard message.content.epoch == context.epoch else {
+			throw MLS.RFC9420.GroupError.wrongEpoch(
+				expected: context.epoch, actual: message.content.epoch)
+		}
+		guard message.content.groupID == context.groupID else {
+			throw MLS.RFC9420.GroupError.wrongGroup
+		}
+		guard case .proposal = message.content.content else {
+			throw MLS.RFC9420.GroupError.notAProposal
+		}
+		guard case .member(let senderIndex) = message.content.sender else {
+			throw MLS.RFC9420.GroupError.unsupportedSender
+		}
+		guard let senderLeafRecord = tree.leaf(at: senderIndex) else {
+			throw MLS.RFC9420.GroupError.blankSenderLeaf
+		}
+		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderLeafRecord.encoded)
+		guard
+			try MLS.RFC9420.verifyPublic(
+				provider, message: message, groupContext: context,
+				verificationKey: senderLeaf.signatureKey,
+				membershipKey: epoch.membershipKey)
+		else {
+			throw MLS.CryptoError.signatureVerificationFailed
+		}
+		return MLS.RFC9420.VerifiedProposal(
+			verified: MLS.RFC9420.AuthenticatedContent(
+				wireFormat: .publicMessage, content: message.content,
+				auth: message.auth))
+	}
+
 	/// RFC 9420 §12.4.2, for a `PublicMessage`-framed commit.
 	///
 	/// **Never mutates `self`.** Swift does not roll back partial mutation
@@ -196,12 +311,16 @@ extension MLS.RFC9420.Group {
 		for entry in commit.proposals {
 			switch entry {
 			case .proposal(let proposal):
+				// Inline (by-value): framed in this commit, so this epoch.
 				resolved.append(
-					.init(proposal: proposal, sender: message.content.sender))
+					.init(
+						proposal: proposal, sender: message.content.sender,
+						epoch: context.epoch, groupID: context.groupID))
 			case .reference(let ref):
 				guard let stored = proposals[ref] else {
 					throw MLS.RFC9420.GroupError.unknownProposalReference
 				}
+				try requireCurrentContext(stored)
 				resolved.append(stored)
 			}
 		}

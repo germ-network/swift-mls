@@ -64,7 +64,8 @@ struct CommitRejectionTests {
 
 	/// Every loose proposal in one epoch, keyed by its own `ProposalRef`.
 	static func storeFor(
-		_ epoch: PassiveClientVector.Epoch, _ provider: any MLS.CipherSuiteProvider
+		_ epoch: PassiveClientVector.Epoch, in group: MLS.RFC9420.Group,
+		_ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.ProposalStore {
 		var store = MLS.RFC9420.ProposalStore()
 		for proposalBytes in epoch.proposals {
@@ -77,10 +78,10 @@ struct CommitRejectionTests {
 			guard case .proposal = message.content.content else {
 				throw Failure.shape
 			}
-			let content = MLS.RFC9420.AuthenticatedContent(
-				wireFormat: .publicMessage, content: message.content,
-				auth: message.auth)
-			try store.insert(content, provider)
+			// These are real vector proposals; `verify` authenticates the
+			// framing (as a live receiver does) before the store accepts it.
+			try store.insert(
+				try group.verify(proposal: message, provider), provider)
 		}
 		return store
 	}
@@ -217,11 +218,12 @@ struct CommitRejectionTests {
 			try reader.finish()
 			try group.process(
 				provider, commit: message,
-				proposals: try storeFor(earlier, provider), psk: resolve)
+				proposals: try storeFor(earlier, in: group, provider),
+				psk: resolve)
 		}
 
 		let epoch = record.epochs[epochIndex]
-		let store = try storeFor(epoch, provider)
+		let store = try storeFor(epoch, in: group, provider)
 
 		var commitReader = MLS.Reader(epoch.commit.bytes)
 		guard case .publicMessage(let commit) = try MLS.RFC9420.Message(from: &commitReader)
@@ -382,14 +384,15 @@ struct CommitRejectionTests {
 		_ pair: ConstructedRejectionTests.Pair, from leafIndex: UInt32
 	) throws {
 		// A well-formed Update body — the committer's own current leaf —
-		// framed under a sender that occupies no leaf. Only the sender is
-		// fabricated; `insert` neither checks nor cares, which is the
-		// point: that check is `validateProposalList`'s job, and this is
-		// what tests it.
+		// framed under a sender that occupies no leaf. The store gate now
+		// rejects it at `verify`: the sender leaf is blank, so a forged
+		// non-member proposal can never enter the store. (Before the gate,
+		// `insert` took it unchecked and only `validateProposalList`'s
+		// `updateFromNonMember` caught it downstream — which is now
+		// unreachable via the store and stands as defense in depth.)
 		let ownLeaf = try #require(pair.groupA.tree.leaf(at: pair.groupA.myLeafIndex))
 		let sender = MLS.LeafIndex(value: leafIndex)
-		let framedProposal = MLS.RFC9420.AuthenticatedContent(
-			wireFormat: .publicMessage,
+		let forged = MLS.RFC9420.PublicMessage(
 			content: .init(
 				groupID: pair.groupA.context.groupID,
 				epoch: pair.groupA.context.epoch, sender: .member(sender),
@@ -399,17 +402,12 @@ struct CommitRejectionTests {
 						try MLS.RFC9420.LeafNode(
 							mlsEncoded: ownLeaf.encoded)))
 			),
-			auth: .init(signature: MLS.Signature(Data()), confirmationTag: nil))
-		var store = MLS.RFC9420.ProposalStore()
-		let ref = try store.insert(framedProposal, ConstructedRejectionTests.provider)
-		let commit = try ConstructedRejectionTests.craftedCommit(
-			pair, proposals: [.reference(ref)], path: nil)
+			auth: .init(signature: MLS.Signature(Data()), confirmationTag: nil),
+			membershipTag: nil)
 
-		#expect(throws: MLS.RFC9420.GroupError.updateFromNonMember(leaf: sender)) {
-			_ = try pair.groupB.processing(
-				ConstructedRejectionTests.provider, commit: commit,
-				proposals: store,
-				psk: { _ in nil })
+		#expect(throws: MLS.RFC9420.GroupError.blankSenderLeaf) {
+			_ = try pair.groupB.verify(
+				proposal: forged, ConstructedRejectionTests.provider)
 		}
 	}
 

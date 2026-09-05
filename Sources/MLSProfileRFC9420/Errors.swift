@@ -85,8 +85,9 @@ extension MLS.RFC9420 {
 		/// A `PublicMessage` that isn't a commit was handed to commit
 		/// processing.
 		case notACommit
-		/// `ProposalStore.insert` was handed an `AuthenticatedContent`
-		/// whose framed content isn't a proposal.
+		/// `Group.verify(proposal:)` was given a message whose framed content
+		/// isn't a proposal (also `ProposalStore.insert`'s defensive guard,
+		/// though a `VerifiedProposal` cannot carry non-proposal content).
 		case notAProposal
 		/// External commits and external senders are deferred
 		/// project-wide, so a non-member sender is rejected rather than
@@ -102,6 +103,13 @@ extension MLS.RFC9420 {
 		/// store doesn't hold. An error, never a skip — applying a shorter
 		/// proposal list than the sender used diverges state silently.
 		case unknownProposalReference
+		/// A by-reference proposal resolved to a `StoredProposal` framed in a
+		/// different epoch than the commit referencing it. RFC 9420 §12.4
+		/// proposals are epoch-scoped (a proposal resent in a later epoch is
+		/// updated to reflect it); rejecting a stale reference stops a
+		/// verified-but-stale proposal from being re-attributed after its
+		/// sender's leaf index is reused in a later epoch.
+		case referencedProposalWrongEpoch(expected: UInt64, actual: UInt64)
 		/// S18: RFC 9420 §12.4 requires a path for this proposal list.
 		case pathRequired
 		/// A commit carried a ReInit proposal. RFC 9420 §12.4.2: such a

@@ -119,13 +119,15 @@ struct ProposalValidationTests {
 	}
 
 	/// A genuinely framed (publicly signed and membership-tagged) proposal
-	/// from `group`'s own current member — the by-reference half of the
-	/// technique above. `insert` ties ref, proposal, and sender to this one
-	/// framed unit, exactly as a real by-reference proposal would arrive.
-	static func framedProposal(
-		_ proposal: MLS.RFC9420.Proposal, from group: MLS.RFC9420.Group,
+	/// from `group`'s own current member, run through `Group.verify(proposal:)`
+	/// exactly as a real by-reference proposal is before it enters the store —
+	/// the by-reference half of the technique above. The *framing* is valid; a
+	/// malformed *inner* leaf (the point of several tests below) still passes
+	/// `verify` and is caught later by `processing`.
+	static func verifiedProposal(
+		_ proposal: MLS.RFC9420.Proposal, framedBy group: MLS.RFC9420.Group,
 		signingKey: MLS.SignatureSecretKey
-	) throws -> MLS.RFC9420.AuthenticatedContent {
+	) throws -> MLS.RFC9420.VerifiedProposal {
 		let content = MLS.RFC9420.FramedContent(
 			groupID: group.context.groupID, epoch: group.context.epoch,
 			sender: .member(group.myLeafIndex), authenticatedData: Data(),
@@ -134,8 +136,7 @@ struct ProposalValidationTests {
 			provider, content: content, groupContext: group.context,
 			confirmationTag: nil, signingKey: signingKey,
 			membershipKey: group.epoch.membershipKey)
-		return .init(
-			wireFormat: .publicMessage, content: message.content, auth: message.auth)
+		return try group.verify(proposal: message, provider)
 	}
 
 	// MARK: §10.1 — the KeyPackage signature reading, settled against vectors
@@ -295,11 +296,11 @@ struct ProposalValidationTests {
 	@Test("an Update carrying a key_package-sourced leaf is rejected, not verified unbound")
 	func updateSourceChecked() throws {
 		let p = try Self.pair()
-		let framed = try Self.framedProposal(
-			.update(p.bob.keyPackage.leafNode), from: p.groupB,
+		let verified = try Self.verifiedProposal(
+			.update(p.bob.keyPackage.leafNode), framedBy: p.groupB,
 			signingKey: p.bob.signingKey)
 		var store = MLS.RFC9420.ProposalStore()
-		let ref = try store.insert(framed, Self.provider)
+		let ref = try store.insert(verified, Self.provider)
 		let commit = try Self.craftedCommit(
 			group: p.groupA, signingKey: p.alice.signingKey,
 			proposals: [.reference(ref)])
@@ -333,10 +334,10 @@ struct ProposalValidationTests {
 					groupID: p.groupB.context.groupID,
 					leafIndex: p.groupB.myLeafIndex)))
 
-		let framed = try Self.framedProposal(
-			.update(leaf), from: p.groupB, signingKey: p.bob.signingKey)
+		let verified = try Self.verifiedProposal(
+			.update(leaf), framedBy: p.groupB, signingKey: p.bob.signingKey)
 		var store = MLS.RFC9420.ProposalStore()
-		let ref = try store.insert(framed, Self.provider)
+		let ref = try store.insert(verified, Self.provider)
 		let commit = try Self.craftedCommit(
 			group: p.groupA, signingKey: p.alice.signingKey,
 			proposals: [.reference(ref)])
@@ -360,10 +361,10 @@ struct ProposalValidationTests {
 				versions: [.mls10], cipherSuites: [.curve25519Aes128],
 				extensions: [], proposals: [], credentials: [.init(.basic)]),
 			source: .update, extensions: [], signature: Data("garbage".utf8))
-		let framed = try Self.framedProposal(
-			.update(leaf), from: p.groupB, signingKey: p.bob.signingKey)
+		let verified = try Self.verifiedProposal(
+			.update(leaf), framedBy: p.groupB, signingKey: p.bob.signingKey)
 		var store = MLS.RFC9420.ProposalStore()
-		let ref = try store.insert(framed, Self.provider)
+		let ref = try store.insert(verified, Self.provider)
 		let commit = try Self.craftedCommit(
 			group: p.groupA, signingKey: p.alice.signingKey,
 			proposals: [.reference(ref)])
@@ -514,21 +515,130 @@ struct ProposalValidationTests {
 
 	// MARK: the structural invariant itself
 
-	/// `insert`'s own guard: a `commit`- or `application`-content
-	/// `AuthenticatedContent` has no business in a proposal store.
-	@Test("insert refuses a non-proposal AuthenticatedContent")
-	func insertRejectsNonProposal() throws {
+	/// The store gate refuses non-proposal content at `verify`: a
+	/// `commit`- or `application`-content message has no business in a
+	/// proposal store. (The private path never wraps one — `unprotect`
+	/// returns `.application`/`.commit`, never a `VerifiedProposal` — and
+	/// `insert`'s own `notAProposal` guard survives as a defensive invariant.)
+	@Test("verify refuses a non-proposal (application) message")
+	func verifyRejectsNonProposal() throws {
 		let p = try Self.pair()
-		let content = MLS.RFC9420.AuthenticatedContent(
-			wireFormat: .privateMessage,
+		let message = MLS.RFC9420.PublicMessage(
 			content: .init(
 				groupID: p.groupA.context.groupID, epoch: p.groupA.context.epoch,
 				sender: .member(p.groupA.myLeafIndex), authenticatedData: Data(),
 				content: .application(Data("hi".utf8))),
-			auth: .init(signature: nil, confirmationTag: nil))
-		var store = MLS.RFC9420.ProposalStore()
+			auth: .init(signature: nil, confirmationTag: nil),
+			membershipTag: nil)
 		#expect(throws: MLS.RFC9420.GroupError.notAProposal) {
-			try store.insert(content, Self.provider)
+			_ = try p.groupA.verify(proposal: message, Self.provider)
+		}
+	}
+
+	/// The impersonation the store gate closes: a member (Alice) frames a
+	/// public Update claiming another member (Bob) as `sender`, signing with
+	/// her own key. `verify` checks the framing signature under Bob's *current*
+	/// leaf key — which Alice cannot produce — so the forged attribution is
+	/// rejected before it can enter the store. The membership key is
+	/// group-shared, so its tag would verify; only the per-sender framing
+	/// signature does not, and that is checked first.
+	@Test("verify rejects a public proposal forged under another member's leaf")
+	func verifyRejectsForgedSenderAttribution() throws {
+		let p = try Self.pair()
+		let content = MLS.RFC9420.FramedContent(
+			groupID: p.groupA.context.groupID, epoch: p.groupA.context.epoch,
+			sender: .member(p.groupB.myLeafIndex), authenticatedData: Data(),
+			content: .proposal(.update(p.bob.keyPackage.leafNode)))
+		let forged = try MLS.RFC9420.protectPublic(
+			Self.provider, content: content, groupContext: p.groupA.context,
+			confirmationTag: nil, signingKey: p.alice.signingKey,
+			membershipKey: p.groupA.epoch.membershipKey)
+		#expect(throws: MLS.CryptoError.self) {
+			_ = try p.groupA.verify(proposal: forged, Self.provider)
+		}
+	}
+
+	/// §6.2 makes the membership tag a MUST for member senders — a valid
+	/// framing signature with the tag stripped (an attacker holding the leaf
+	/// signing key but no group secrets) must still be rejected.
+	@Test("verify rejects a member proposal whose membership tag is missing")
+	func verifyRejectsMissingMembershipTag() throws {
+		let p = try Self.pair()
+		let content = MLS.RFC9420.FramedContent(
+			groupID: p.groupB.context.groupID, epoch: p.groupB.context.epoch,
+			sender: .member(p.groupB.myLeafIndex), authenticatedData: Data(),
+			content: .proposal(.update(p.bob.keyPackage.leafNode)))
+		let signed = try MLS.RFC9420.protectPublic(
+			Self.provider, content: content, groupContext: p.groupB.context,
+			confirmationTag: nil, signingKey: p.bob.signingKey,
+			membershipKey: p.groupB.epoch.membershipKey)
+		let untagged = MLS.RFC9420.PublicMessage(
+			content: signed.content, auth: signed.auth, membershipTag: nil)
+		#expect(throws: MLS.FramingError.self) {
+			_ = try p.groupB.verify(proposal: untagged, Self.provider)
+		}
+	}
+
+	/// `verify`'s pre-signature guards: an external sender is rejected
+	/// (`unsupportedSender`, external senders are descoped) and a wrong epoch is
+	/// rejected before any crypto.
+	@Test("verify rejects an external-sender proposal and a wrong-epoch proposal")
+	func verifyRejectsExternalSenderAndWrongEpoch() throws {
+		let p = try Self.pair()
+		func message(epoch: UInt64, sender: MLS.Sender) -> MLS.RFC9420.PublicMessage {
+			MLS.RFC9420.PublicMessage(
+				content: .init(
+					groupID: p.groupB.context.groupID, epoch: epoch,
+					sender: sender, authenticatedData: Data(),
+					content: .proposal(.update(p.bob.keyPackage.leafNode))),
+				auth: .init(signature: MLS.Signature(Data()), confirmationTag: nil),
+				membershipTag: nil)
+		}
+		#expect(throws: MLS.RFC9420.GroupError.unsupportedSender) {
+			_ = try p.groupB.verify(
+				proposal: message(
+					epoch: p.groupB.context.epoch, sender: .external(0)),
+				Self.provider)
+		}
+		#expect(
+			throws: MLS.RFC9420.GroupError.wrongEpoch(
+				expected: p.groupB.context.epoch, actual: 999)
+		) {
+			_ = try p.groupB.verify(
+				proposal: message(
+					epoch: 999, sender: .member(p.groupB.myLeafIndex)),
+				Self.provider)
+		}
+	}
+
+	/// A proposal verified in one epoch must not be applied by reference in a
+	/// later one — its `sender` leaf index may name a different member after a
+	/// Remove+Add reuses the leaf. The store binds each entry to its framing
+	/// epoch and re-checks at resolution, so carrying a stale entry across an
+	/// epoch is rejected even though the proposal was genuinely verified.
+	@Test("a by-reference proposal from a stale epoch is rejected at resolution")
+	func staleEpochReferenceRejected() throws {
+		let p = try Self.pair()
+		let verified = try Self.verifiedProposal(
+			.update(p.bob.keyPackage.leafNode), framedBy: p.groupB,
+			signingKey: p.bob.signingKey)
+		var store = MLS.RFC9420.ProposalStore()
+		let ref = try store.insert(verified, Self.provider)
+
+		// Alice advances a full epoch (an empty commit carries a path).
+		let advanced = try p.groupA.committing(
+			Self.provider, proposals: [], signingKey: p.alice.signingKey,
+			randomness: .generate(Self.provider)
+		).group
+
+		#expect(
+			throws: MLS.RFC9420.GroupError.referencedProposalWrongEpoch(
+				expected: advanced.context.epoch, actual: p.groupB.context.epoch)
+		) {
+			_ = try advanced.committing(
+				Self.provider, proposals: [.reference(ref)], proposalStore: store,
+				signingKey: p.alice.signingKey,
+				randomness: .generate(Self.provider))
 		}
 	}
 

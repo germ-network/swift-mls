@@ -87,10 +87,11 @@ enum PassiveClientRunner {
 					Issue.record("epoch \(index): expected proposal content")
 					return
 				}
-				let content = MLS.RFC9420.AuthenticatedContent(
-					wireFormat: .publicMessage, content: message.content,
-					auth: message.auth)
-				try store.insert(content, provider)
+				// Real vector proposals — authenticate the framing through
+				// `verify`, as a live receiver does, before the store accepts
+				// them.
+				try store.insert(
+					try group.verify(proposal: message, provider), provider)
 			}
 
 			var commitReader = MLS.Reader(epoch.commit.bytes)

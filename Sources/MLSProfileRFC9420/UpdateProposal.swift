@@ -16,10 +16,11 @@ extension MLS.RFC9420.Group {
 	/// most recent.
 	///
 	/// Returns the framed proposal and its `ProposalRef` — the same ref a
-	/// receiver's `unprotect` + `ProposalStore.insert` (or, for a
-	/// `publicMessage`, a direct `insert` of the returned message) would
-	/// compute over the identical bytes, so a caller that is also the
-	/// eventual committer needs nothing else to reference it by.
+	/// receiver would compute over the identical bytes after authenticating
+	/// the proposal (`unprotect` for a `privateMessage`, or
+	/// `Group.verify(proposal:)` for a `publicMessage`) and feeding the
+	/// resulting `VerifiedProposal` to `ProposalStore.insert`. A caller that
+	/// is also the eventual committer needs nothing else to reference it by.
 	public mutating func proposeUpdate(
 		_ provider: any MLS.CipherSuiteProvider,
 		signingKey: MLS.SignatureSecretKey,

@@ -239,11 +239,12 @@ extension MLS.RFC9420.Group {
 extension MLS.RFC9420.Group {
 	public enum UnprotectedContent: Sendable {
 		case application(Data)
-		/// The framed proposal, ready for `ProposalStore.insert` — the
-		/// ref binds the framed `AuthenticatedContent`, which unprotecting
-		/// is the last moment anyone holds it, so `insert` is what derives
-		/// it now rather than this call computing it up front.
-		case proposal(MLS.RFC9420.AuthenticatedContent)
+		/// The authenticated proposal, ready for `ProposalStore.insert`.
+		/// `unprotect` has already checked its AEAD and signature, so it is a
+		/// `VerifiedProposal` — the store's non-fabricable capability — and the
+		/// ref binds the framed content, which `insert` derives now rather than
+		/// this call computing it up front.
+		case proposal(MLS.RFC9420.VerifiedProposal)
 		/// A commit needs the full processing pipeline; hand back the
 		/// authenticated frame for `processing` to take over.
 		case commit(MLS.RFC9420.AuthenticatedContent)
@@ -450,7 +451,8 @@ extension MLS.RFC9420.Group {
 		case .application(let data):
 			content = .application(data)
 		case .proposal:
-			content = .proposal(authenticated)
+			content = .proposal(
+				MLS.RFC9420.VerifiedProposal(verified: authenticated))
 		case .commit:
 			content = .commit(authenticated)
 		}

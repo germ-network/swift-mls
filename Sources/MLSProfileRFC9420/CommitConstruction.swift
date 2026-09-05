@@ -134,12 +134,16 @@ extension MLS.RFC9420.Group {
 		for entry in proposalList {
 			switch entry {
 			case .proposal(let proposal):
+				// Inline (by-value): framed in this commit, so this epoch.
 				resolved.append(
-					.init(proposal: proposal, sender: .member(myLeafIndex)))
+					.init(
+						proposal: proposal, sender: .member(myLeafIndex),
+						epoch: context.epoch, groupID: context.groupID))
 			case .reference(let ref):
 				guard let stored = proposalStore[ref] else {
 					throw MLS.RFC9420.GroupError.unknownProposalReference
 				}
+				try requireCurrentContext(stored)
 				resolved.append(stored)
 			}
 		}
