@@ -101,4 +101,45 @@ struct SentCommitTests {
 			// expected
 		}
 	}
+
+	/// A private commit is sealed in the OLD epoch, so its store must survive
+	/// until seal — even at `messageSecretsDepth == 0`, where nothing is retained
+	/// past the current epoch. The seal now runs before the retention prune (the
+	/// prune moved to `apply`), so a private commit succeeds at depth 0 where it
+	/// previously threw; the old-epoch store, with the committer's generation
+	/// consumed, lives on the adopted group and is dropped only at `apply`.
+	@Test(
+		"a private commit at messageSecretsDepth 0 succeeds; the old-epoch store is dropped only at apply"
+	)
+	func privateCommitAtZeroRetentionDepth() throws {
+		let provider = Self.provider
+		let pair = try ConstructedRejectionTests.pair()
+		var alice = pair.groupA
+		alice.retention = .init(messageSecretsDepth: 0)
+		let baseEpoch = alice.context.epoch
+
+		let transition = try alice.committing(
+			provider, proposals: [], signingKey: pair.alice.signingKey,
+			randomness: .generate(provider), framing: .privateMessage)
+		guard case .privateMessage(let commitMessage) = transition.output.message
+		else {
+			Issue.record("expected a privateMessage-framed commit")
+			return
+		}
+		// The adopted (old-epoch) group still holds the old-epoch store.
+		let adopted = transition.group
+		#expect(adopted.messageSecrets[baseEpoch] != nil)
+
+		// Applying the advance prunes to depth 0 — the old-epoch store is gone.
+		var advanced = try transition.takeOutput().takePending().apply(onto: adopted)
+			.group
+		#expect(advanced.context.epoch == baseEpoch + 1)
+		#expect(advanced.messageSecrets[baseEpoch] == nil)
+		// So the applied group can no longer open anything framed in the old epoch.
+		#expect(
+			throws: MLS.RFC9420.GroupError.messageFromUnretainedEpoch(epoch: baseEpoch)
+		) {
+			_ = try advanced.unprotect(provider, message: commitMessage)
+		}
+	}
 }
