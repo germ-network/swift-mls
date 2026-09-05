@@ -110,7 +110,15 @@ extension MLS.RFC9420 {
 			guard live.context == base else {
 				throw MLS.RFC9420.GroupError.staleBase
 			}
-			guard Set(live.memberships.map(\.leafIndex)) == baseMemberships else {
+			// The count check makes the comparison insensitive to nothing: a `Set`
+			// alone would let a live group with a *duplicated* leaf index match a
+			// base that names it once, and the positional install below would then
+			// leave the duplicate membership with stale keys — the silent-loss the
+			// guard exists to exclude.
+			let liveLeaves = live.memberships.map(\.leafIndex)
+			guard liveLeaves.count == baseMemberships.count,
+				Set(liveLeaves) == baseMemberships
+			else {
 				throw MLS.RFC9420.GroupError.membershipMismatch
 			}
 			var result = live
