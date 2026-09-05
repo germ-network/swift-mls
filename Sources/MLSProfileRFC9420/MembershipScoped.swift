@@ -23,6 +23,25 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
+	/// The sole local membership's index, or `ambiguousMembership` at N ≠ 1 — how
+	/// the bare (non-`as:`) send API resolves which membership acts.
+	func soleMembershipIndex() throws -> Int {
+		guard memberships.count == 1 else {
+			throw MLS.RFC9420.GroupError.ambiguousMembership(count: memberships.count)
+		}
+		return 0
+	}
+
+	/// The index of the local membership occupying `leaf`, or `ambiguousMembership`
+	/// if none does — how the `(as:)` send API resolves the named membership.
+	func membershipIndex(of leaf: MLS.LeafIndex) throws -> Int {
+		guard let index = memberships.firstIndex(where: { $0.leafIndex == leaf })
+		else {
+			throw MLS.RFC9420.GroupError.ambiguousMembership(count: memberships.count)
+		}
+		return index
+	}
+
 	/// Commit as the local membership occupying `leaf` (D18), in the D17
 	/// `Transition<SentCommit>` shape. See this file's note; the per-leaf ratchet
 	/// move that makes N > 1 send correct is slice 3b.
@@ -75,14 +94,52 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Propose a self-Update for the local membership occupying `leaf` (D18) —
-	/// the membership's pending transition to a new LeafNode.
+	/// the membership's pending transition to a new LeafNode. N > 1-correct (slice
+	/// 3b): the pending self-Update and the seal are both scoped to this membership.
 	public mutating func proposingUpdate(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		signingKey: MLS.SignatureSecretKey,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
-		try requireLocalMembership(leaf)
-		return try proposeUpdate(provider, signingKey: signingKey, framing: framing)
+		try proposeUpdate(
+			membershipIndex: try membershipIndex(of: leaf), provider,
+			signingKey: signingKey, framing: framing)
+	}
+
+	/// Send an application message as the local membership occupying `leaf` (D18),
+	/// with an explicit reuse guard. N > 1-correct (slice 3b): spends this
+	/// membership's own application ratchet, independent of any other membership's.
+	public mutating func protect(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		signingKey: MLS.SignatureSecretKey,
+		reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protectContent(
+			membershipIndex: try membershipIndex(of: leaf), provider,
+			content: .application(applicationData),
+			authenticatedData: authenticatedData, signingKey: signingKey,
+			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength)
+		).message
+	}
+
+	/// Convenience: fresh reuse-guard bytes from the provider.
+	public mutating func protect(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		signingKey: MLS.SignatureSecretKey,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protect(
+			as: leaf, provider, applicationData: applicationData,
+			authenticatedData: authenticatedData, signingKey: signingKey,
+			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+			paddingLength: paddingLength)
 	}
 }
