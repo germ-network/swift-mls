@@ -1,17 +1,18 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSSecretTree
 import MLSTreeMath
 import SecretBytes
 
-extension MLS.KeySchedule {
-	/// draft-ietf-mls-extensions-08 §4.4 (Exported Secrets). The Exporter Tree
+extension MLS.Extensions {
+	/// draft-ietf-mls-extensions §4.4 (Exported Secrets). The Exporter Tree
 	/// is the RFC 9420 §9 Secret Tree with three changes: it always has 2^16
 	/// leaves, its root is the `application_export_secret`
 	/// (`DeriveSecret(epoch_secret, "application_export")`), and its leaves are
 	/// indexed by a `ComponentID` rather than a member `LeafIndex`. Node
 	/// derivation (`ExpandWithLabel(parent, "tree", "left"/"right", Nh)`) and the
-	/// §9.2 deletion schedule are identical — so this composes the
+	/// §9.2 deletion schedule are identical — so this composes `MLSSecretTree`'s
 	/// `ConsumingSecretTree` verbatim, only fixing the leaf count and swapping
 	/// the root.
 	///
@@ -28,12 +29,12 @@ extension MLS.KeySchedule {
 		/// The fixed 2^16-leaf count — the 16 bits of a `ComponentID`.
 		public static let leafCount = try! MLS.LeafCount(validating: 1 << 16)
 
-		private var tree: ConsumingSecretTree
+		private var tree: MLS.SecretTree.ConsumingSecretTree
 
 		/// Roots the tree at the epoch's `application_export_secret`
 		/// (`EpochFanOut.applicationExportSecret`).
 		public init(applicationExportSecret: some ContiguousBytes) throws {
-			self.tree = try ConsumingSecretTree(
+			self.tree = try MLS.SecretTree.ConsumingSecretTree(
 				encryptionSecret: applicationExportSecret, leafCount: Self.leafCount
 			)
 		}
@@ -55,7 +56,7 @@ extension MLS.KeySchedule {
 		/// The root is *not* an input — an already-consumed component stays
 		/// unrecoverable, unlike a root-seeded rebuild.
 		public init(restoringFrontier frontier: [UInt32: SecretBytes]) {
-			self.tree = ConsumingSecretTree(
+			self.tree = MLS.SecretTree.ConsumingSecretTree(
 				restoringNodeSecrets: frontier, leafCount: Self.leafCount)
 		}
 
@@ -77,7 +78,7 @@ extension MLS.KeySchedule {
 				return try tree.consumeLeafSecret(
 					for: MLS.LeafIndex(value: UInt32(componentID.rawValue)),
 					provider)
-			} catch SecretTreeError.subtreeExhausted {
+			} catch MLS.SecretTree.SecretTreeError.subtreeExhausted {
 				throw ExportError.componentSecretConsumed(componentID)
 			}
 		}

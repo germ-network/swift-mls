@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeMath
@@ -67,7 +68,7 @@ extension MLS.RFC9420 {
 		/// `.uint32` `componentIDWireWidth`) followed by `psk_id`. Like the other
 		/// arms, `psk_nonce` follows the select. Domain-separates a component's PSKs
 		/// from the core protocol's and from other components'.
-		case application(componentID: MLS.KeySchedule.ComponentID, pskID: Data, nonce: Data)
+		case application(componentID: MLS.Extensions.ComponentID, pskID: Data, nonce: Data)
 	}
 
 	/// `struct { opaque kem_output<V>; } ExternalInit;`
@@ -261,7 +262,7 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 				}
 				rawComponentID = narrow
 			}
-			let componentID = MLS.KeySchedule.ComponentID(rawValue: rawComponentID)
+			let componentID = MLS.Extensions.ComponentID(rawValue: rawComponentID)
 			let pskID = Data(try reader.readOpaque())
 			self = .application(
 				componentID: componentID, pskID: pskID,

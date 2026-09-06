@@ -1,7 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
-import MLSKeySchedule
+import MLSExtensions
 import SecretBytes
 
 extension MLS.RFC9420.Group {
@@ -20,7 +20,7 @@ extension MLS.RFC9420.Group {
 	/// the root. Matches the deployed fork, which holds and serializes
 	/// `ExporterTree(SecretTree)`, never the root seed.
 	public mutating func safeExportSecret(
-		_ provider: any MLS.CipherSuiteProvider, componentID: MLS.KeySchedule.ComponentID
+		_ provider: any MLS.CipherSuiteProvider, componentID: MLS.Extensions.ComponentID
 	) throws -> SecretBytes {
 		let epochNumber = context.epoch
 		// Built by `installMessageSecrets` on every epoch-entry path and by
@@ -60,17 +60,15 @@ extension MLS.RFC9420.Group {
 	/// until a `SecretBytes`-returning resolver overload lands (a tracked
 	/// follow-up). Hold `psk` in `SecretBytes` and convert only at that call.
 	///
-	/// The labels `"psk_id"`/`"psk"` are combiner-02 Figure 3 (its prose is
-	/// silent); the deployed fork (`germ-network/mls-rs@b43703f`) applies plain
-	/// RFC 9420 `DeriveSecret` with them — the source tie-breaker. The test pins
-	/// that this helper uses those exact labels.
+	/// The derivation itself — the combiner-02 Figure 3 labels `"psk_id"`/`"psk"`
+	/// over the exported secret — is `MLS.Extensions.deriveApplicationPSK`; this
+	/// method is the profile glue that consumes the epoch's exporter leaf and
+	/// hands it to that substrate derivation.
 	public mutating func deriveApplicationPSK(
 		_ provider: any MLS.CipherSuiteProvider,
-		componentID: MLS.KeySchedule.ComponentID
+		componentID: MLS.Extensions.ComponentID
 	) throws -> (pskID: Data, psk: SecretBytes) {
 		let exporter = try safeExportSecret(provider, componentID: componentID)
-		let pskID = try MLS.deriveSecret(provider, secret: exporter, label: "psk_id")
-		let psk = try MLS.deriveSecretSecret(provider, secret: exporter, label: "psk")
-		return (pskID, psk)
+		return try MLS.Extensions.deriveApplicationPSK(provider, exporter: exporter)
 	}
 }

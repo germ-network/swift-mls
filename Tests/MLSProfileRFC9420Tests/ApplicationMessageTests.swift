@@ -4,6 +4,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSKeySchedule
+import MLSSecretTree
 import MLSTreeMath
 import Testing
 
@@ -237,7 +238,7 @@ struct ApplicationMessageTests {
 		// clear its chains, so the next derive re-bootstraps and the tree walk
 		// finds no held ancestor — the exhaustion path.
 		let leafCount = d.groupB.messageSecrets[epoch]!.tree.leafCount
-		d.groupB.messageSecrets[epoch]!.tree = MLS.KeySchedule.ConsumingSecretTree(
+		d.groupB.messageSecrets[epoch]!.tree = MLS.SecretTree.ConsumingSecretTree(
 			restoringNodeSecrets: [:], leafCount: leafCount)
 		d.groupB.messageSecrets[epoch]!.chains = [:]
 		let msg = try d.groupA.protect(

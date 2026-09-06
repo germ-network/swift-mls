@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSKeySchedule
 import MLSTreeKEM
 import SecretBytes
@@ -42,7 +43,7 @@ extension MLS.RFC9420 {
 		/// The current epoch's draft §4.4 Exporter Tree — the *consuming* tree,
 		/// never the raw root (forward secrecy, RFC 9420 §9.2). Keyed by epoch and
 		/// reset to the current epoch on every install.
-		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
+		var exporterTrees: [UInt64: MLS.Extensions.ExporterTree] = [:]
 
 		mutating func pruneResumptionPsks(currentEpoch: UInt64) {
 			// Saturating: at epochs below the depth, everything survives.
@@ -57,7 +58,7 @@ extension MLS.RFC9420 {
 			retention: Group.RetentionPolicy = Group.RetentionPolicy(),
 			resumptionPsks: [UInt64: SecretBytes],
 			messageSecrets: [UInt64: Group.MessageSecrets] = [:],
-			exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:]
+			exporterTrees: [UInt64: MLS.Extensions.ExporterTree] = [:]
 		) {
 			self.context = context
 			self.tree = tree

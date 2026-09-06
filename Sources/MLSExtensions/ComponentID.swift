@@ -1,6 +1,6 @@
 import MLSCodec
 
-extension MLS.KeySchedule {
+extension MLS.Extensions {
 	/// draft-ietf-mls-extensions-09 §4.1's `ComponentID` — "a two-byte value that
 	/// uniquely identifies a component"; `uint16 ComponentID`. The Exporter Tree
 	/// (§4.4) indexes its 2^16 leaves by one.
@@ -30,7 +30,7 @@ extension MLS.KeySchedule {
 	}
 }
 
-extension MLS.KeySchedule.ComponentID: ExpressibleByIntegerLiteral {
+extension MLS.Extensions.ComponentID: ExpressibleByIntegerLiteral {
 	public init(integerLiteral value: UInt16) {
 		self.rawValue = value
 	}

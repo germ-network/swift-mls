@@ -2,10 +2,10 @@ import Crypto
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
+import MLSKeySchedule
 import SecretBytes
 import Testing
-
-@testable import MLSKeySchedule
 
 /// draft-ietf-mls-extensions-08 §4.4 (Exported Secrets) — the Exporter Tree and
 /// `SafeExportSecret`, the mechanism the deployed TwoMLSPQ APQ combiner derives
@@ -30,7 +30,7 @@ struct ExporterTreeTests {
 	@Test("SafeExportSecret matches the deployed fork's known-answer vector")
 	func exporterTreeKnownAnswer() throws {
 		let cs = try Self.suite1()
-		var tree = try MLS.KeySchedule.ExporterTree(
+		var tree = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: Data(repeating: 42, count: 32))
 		let secret = try tree.safeExportSecret(cs, componentID: 0x8000)
 		#expect(
@@ -49,7 +49,7 @@ struct ExporterTreeTests {
 		let cs = try Self.suite1()
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(
 			cs, epochSecret: Data(repeating: 42, count: 32))
-		var tree = try MLS.KeySchedule.ExporterTree(
+		var tree = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: fanOut.applicationExportSecret)
 		let secret = try tree.safeExportSecret(cs, componentID: 0)
 		#expect(
@@ -70,7 +70,7 @@ struct ExporterTreeTests {
 				cs, secret: expected, label: "tree", context: Data("left".utf8),
 				length: cs.hashSize)
 		}
-		var tree = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
+		var tree = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
 		let derived = try tree.safeExportSecret(cs, componentID: 0)
 		#expect(derived == expected)
 	}
@@ -80,10 +80,10 @@ struct ExporterTreeTests {
 	@Test("exporting the same component twice fails as consumed")
 	func exportConsumesTheComponent() throws {
 		let cs = try Self.suite1()
-		var tree = try MLS.KeySchedule.ExporterTree(
+		var tree = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: cs.randomBytes(cs.hashSize))
 		_ = try tree.safeExportSecret(cs, componentID: 3)
-		#expect(throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(3))
+		#expect(throws: MLS.Extensions.ExporterTree.ExportError.componentSecretConsumed(3))
 		{
 			try tree.safeExportSecret(cs, componentID: 3)
 		}
@@ -97,10 +97,10 @@ struct ExporterTreeTests {
 		let cs = try Self.suite1()
 		let root = cs.randomBytes(cs.hashSize)
 
-		var reference = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
+		var reference = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
 		let expected = try reference.safeExportSecret(cs, componentID: 0x8000)
 
-		var tree = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
+		var tree = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
 		// Sibling leaf, far leaf, a leaf sharing most of the path, then the target.
 		for id: UInt32 in [0x8001, 0x0000, 0xFFFF, 0x8002] {
 			_ = try tree.safeExportSecret(cs, componentID: .init(UInt16(id)))
@@ -116,8 +116,8 @@ struct ExporterTreeTests {
 		let cs = try Self.suite1()
 		let root = cs.randomBytes(cs.hashSize)
 
-		var t1 = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
-		var t2 = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
+		var t1 = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
+		var t2 = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
 		let a = try t1.safeExportSecret(cs, componentID: 0x8000)
 		let b = try t2.safeExportSecret(cs, componentID: 0x8000)
 		let c = try t1.safeExportSecret(cs, componentID: 0x8001)
@@ -139,7 +139,7 @@ struct ExporterTreeTests {
 	func matchesStatelessOracleAcrossComponents() throws {
 		let cs = try Self.suite1()
 		let root = cs.randomBytes(cs.hashSize)
-		var tree = try MLS.KeySchedule.ExporterTree(applicationExportSecret: root)
+		var tree = try MLS.Extensions.ExporterTree(applicationExportSecret: root)
 		for id: UInt32 in [
 			0, 1, 2, 3, 0x00FF, 0x0100, 0x5555, 0xAAAA, 0xBEEF, 0x7FFF, 0x8000,
 			0x8001, 0xC000, 0xFFFE, 0xFFFF,
@@ -147,7 +147,7 @@ struct ExporterTreeTests {
 			let consumed = try tree.safeExportSecret(cs, componentID: .init(UInt16(id)))
 			let oracle = try MLS.KeySchedule.leafSecret(
 				cs, encryptionSecret: root, leafIndex: id,
-				numLeaves: MLS.KeySchedule.ExporterTree.leafCount)
+				numLeaves: MLS.Extensions.ExporterTree.leafCount)
 			#expect(Self.bytes(consumed) == oracle, "component \(id)")
 		}
 	}
@@ -156,11 +156,11 @@ struct ExporterTreeTests {
 	/// `rawValue`, and value equality. The exporter API takes this, not a raw int.
 	@Test("ComponentID wraps a UInt16 with literal and rawValue access")
 	func componentIDContract() {
-		let id: MLS.KeySchedule.ComponentID = 0xFF01
+		let id: MLS.Extensions.ComponentID = 0xFF01
 		#expect(id.rawValue == 0xFF01)
-		#expect(id == MLS.KeySchedule.ComponentID(0xFF01))
-		#expect(id == MLS.KeySchedule.ComponentID(rawValue: 0xFF01))
+		#expect(id == MLS.Extensions.ComponentID(0xFF01))
+		#expect(id == MLS.Extensions.ComponentID(rawValue: 0xFF01))
 		#expect(id != 0xFF02)
-		#expect(MLS.KeySchedule.ComponentID(rawValue: .max).rawValue == UInt16.max)
+		#expect(MLS.Extensions.ComponentID(rawValue: .max).rawValue == UInt16.max)
 	}
 }
