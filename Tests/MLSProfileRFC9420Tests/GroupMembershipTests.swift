@@ -45,18 +45,16 @@ struct GroupMembershipTests {
 		}
 	}
 
-	@Test("at N > 1 the bare send API is ambiguous; commit still fails closed")
+	@Test("at N > 1 every bare send entry is ambiguous; the (as:) form names the membership")
 	func multipleMembershipsSendResolution() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
 		var group = pair.groupA
 		// A second local membership on a DISTINCT leaf (identity is the leaf
-		// index). Slice 3b makes the pure sends (`protect`/`proposeUpdate`)
-		// per-membership, so the bare (non-`as:`) form can no longer pick one —
-		// it is `ambiguousMembership`, and `protect(as:)`/`proposingUpdate(as:)`
-		// are the N > 1 path (proven in `PerMembershipSendTests`). `commit` still
-		// re-keys the tree for one membership only, so it stays fenced until the
-		// per-membership receive slice.
+		// index). Every send is per-membership now (slices 3b + 4a: pure sends and
+		// `commit`), so the bare (non-`as:`) entry can no longer pick one — it is
+		// `ambiguousMembership`, and the `(as:)` forms are the N > 1 path (proven
+		// in `PerMembershipSendTests` / `PerMembershipReceiveTests`).
 		group.memberships.append(
 			MLS.RFC9420.Membership(
 				leafIndex: MLS.LeafIndex(value: 1), secretKeys: [:]))
@@ -66,7 +64,7 @@ struct GroupMembershipTests {
 				provider, applicationData: Data("x".utf8),
 				signingKey: pair.alice.signingKey)
 		}
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
+		#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 2)) {
 			_ = try group.commit(
 				provider, proposals: [], signingKey: pair.alice.signingKey,
 				randomness: .generate(provider))
@@ -84,27 +82,4 @@ struct GroupMembershipTests {
 		}
 	}
 
-	@Test("commit-receive fails closed at N > 1 (installs keys for one membership only)")
-	func commitReceiveFailsClosed() throws {
-		let provider = Self.provider
-		let pair = try ConstructedRejectionTests.pair()
-		// A real public commit from Alice at N = 1, that Bob would receive.
-		let commitOut = try pair.groupA.committing(
-			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
-		guard case .publicMessage(let publicCommit) = commitOut.output.message else {
-			Issue.record("expected a public commit")
-			return
-		}
-		// Bob gains a second local membership; receiving the commit then fails
-		// closed rather than installing keys for `memberships[0]` alone.
-		var bob = pair.groupB
-		bob.memberships.append(
-			MLS.RFC9420.Membership(leafIndex: MLS.LeafIndex(value: 2), secretKeys: [:]))
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
-			_ = try bob.processing(
-				provider, commit: publicCommit, proposals: .init(),
-				psk: { _ in nil })
-		}
-	}
 }

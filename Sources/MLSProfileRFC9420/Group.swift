@@ -20,19 +20,18 @@ extension MLS.RFC9420 {
 
 		/// The local memberships — one per client this device occupies in the
 		/// group, at least one (see `init(core:memberships:)`), ordered ascending
-		/// by leaf index on restore. The common case is exactly one. At N > 1 the
-		/// client-agnostic `core`, application receive (`unprotect`, which touches
-		/// only `core`), the pure sends (`protect(as:)`/`proposingUpdate(as:)`,
-		/// each on its own membership's ratchet — slice 3b), and format-2
-		/// persistence (which stores every membership) are all correct; the bare
-		/// (non-`as:`) send API is `ambiguousMembership` there, since it cannot pick
-		/// a membership. The path that is not yet N > 1-capable **fails closed**,
-		/// never silently: *commit* (`committing`, which re-keys the tree and
-		/// installs keys for `memberships[0]` alone) throws
-		/// `multipleMembershipsUnsupported` until the per-membership receive slice
-		/// re-derives the other memberships' path secrets. So N > 1 is
-		/// representable, persists, sends, and receives application traffic today;
-		/// only the commit round-trip is staged and loud.
+		/// by leaf index on restore. The common case is exactly one. Every path is
+		/// N > 1-capable: the client-agnostic `core` and application receive
+		/// (`unprotect`, which touches only `core`); the membership-scoped sends
+		/// (`protect(as:)` / `proposingUpdate(as:)` / `committing(as:)`, each on its
+		/// own membership — slices 3b/4a); commit receive (`processing`, which
+		/// decaps the path once per membership and installs each — slice 4a); and
+		/// format-2 persistence (which stores every membership). The bare
+		/// (non-`as:`) send entries are `ambiguousMembership` at N ≠ 1, since they
+		/// cannot pick a membership. N > 1 arises today only from a format-2 restore
+		/// (there is no op to add a second local membership to a live group);
+		/// **eviction** at N > 1 — a commit that removes one local membership but
+		/// not others — still rejects wholesale (slice 4b).
 		public internal(set) var memberships: [Membership]
 
 		/// The sole local membership, when there is exactly one (the common
@@ -114,6 +113,14 @@ extension MLS.RFC9420 {
 			// `SnapshotError` before it reaches here.
 			precondition(
 				!memberships.isEmpty, "a Group must hold at least one Membership")
+			// Leaf index is a membership's identity (D18): duplicates would make the
+			// per-membership key install (slice 4a) last-write-wins into one map
+			// entry, stranding a membership. Also a library invariant — format-2
+			// restore keys memberships by leaf in an `IntegerKeyedMap`, so it cannot
+			// produce a duplicate; only in-library construction could.
+			precondition(
+				Set(memberships.map(\.leafIndex)).count == memberships.count,
+				"a Group's memberships must have distinct leaf indices")
 			self.core = core
 			self.memberships = memberships
 		}

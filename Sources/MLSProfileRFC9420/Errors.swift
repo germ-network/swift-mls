@@ -112,17 +112,25 @@ extension MLS.RFC9420 {
 		case referencedProposalWrongEpoch(expected: UInt64, actual: UInt64)
 		/// S18: RFC 9420 §12.4 requires a path for this proposal list.
 		case pathRequired
-		/// An operation that is not yet N > 1-capable was invoked on a `Group`
-		/// holding more than one local `Membership` (D18): a send path
-		/// (`protect`, `committing`, `proposeUpdate` — each local membership
-		/// sends on its own ratchet, shared in `GroupCore` until the send-side
-		/// slice), commit-receive (`validating`/`processing`, which installs
-		/// keys for a single membership until the receive-side per-membership
-		/// slice), or a format-1 snapshot (`makeSnapshot`, which persists a
-		/// single membership until the format-2 slice). Fails closed rather than
-		/// sharing positions or silently dropping memberships. **A staging
-		/// limit, removed in those slices — not a policy one.**
+		/// The staging fence for operations not yet N > 1-capable (D18). **No
+		/// longer thrown** — slices 3b/4a made send, commit-receive, and the
+		/// snapshot all per-membership, and the bare send entries now surface
+		/// `ambiguousMembership` instead. Kept as a vestige for the slice-6 cleanup
+		/// pass rather than removed mid-stack.
 		case multipleMembershipsUnsupported
+		/// Two local memberships of one group decapped the same commit to
+		/// **different** `commit_secret`s (slice 4a). A commit's UpdatePath lets
+		/// each member recover a *different subset* of the path secrets — only
+		/// those from its own decryption point up to the root (RFC 9420 §7.5) — but
+		/// all derive up through the shared root, and `commit_secret` is
+		/// `path_secret[n+1]` off that last path secret (§12.4.2), so every member,
+		/// including two co-located on one device, lands on the identical value.
+		/// In practice §7.5's step 6 (each decapper verifies its derived public
+		/// keys against the wire nodes — see `RatchetTree.decapCommitPath`) already
+		/// rejects an inconsistent path, so a wire-valid commit cannot diverge:
+		/// this is defense in depth against a construction bug, rejecting rather
+		/// than advancing memberships into disagreeing epochs.
+		case divergentCommitSecret
 		/// A sole-membership convenience was used on a `Group` that does not hold
 		/// exactly one local `Membership` (D18). Use the membership-scoped API
 		/// (`committing(as:)`, `proposingUpdate(as:)`) to name the membership.

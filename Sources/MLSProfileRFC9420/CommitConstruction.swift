@@ -134,17 +134,36 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
-		// D18 guard: a commit re-keys the tree, so the OTHER local memberships'
-		// path secrets must be re-derived from it (a per-membership decap) for them
-		// to survive the epoch advance — that is the per-membership receive slice.
-		// The seal itself is already per-membership (slice 3b spends `memberships[0]`'s
-		// own ratchet), but `committing` still installs `secretKeys`/`pendingUpdate`
-		// for `memberships[0]` alone, so N > 1 fails closed for BOTH framings —
-		// public too — rather than silently stranding the others. Lifted by the
-		// per-membership receive slice.
-		guard memberships.count <= 1 else {
-			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
-		}
+		// The bare entry commits as the sole membership; `committing(as:)` names it.
+		try committing(
+			committerIndex: try soleMembershipIndex(), provider,
+			proposals: proposalList, proposalStore: proposalStore,
+			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
+			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
+	}
+
+	/// The committer-scoped core (slice 4a). `committerIndex` names the local
+	/// membership that authors this commit; the OTHER local memberships receive
+	/// the same commit by decapping its path (`installKeysForMembership`), so the
+	/// returned delta installs new-epoch keys for every membership. All must agree
+	/// on one `commit_secret` (`divergentCommitSecret` otherwise, a library bug on
+	/// the send side — the committer built the path all of them decap).
+	func committing(
+		committerIndex: Int,
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
+		let committerLeaf = memberships[committerIndex].leafIndex
 		// Resolve, exactly as the receive side does.
 		var resolved: [MLS.RFC9420.StoredProposal] = []
 		for entry in proposalList {
@@ -153,7 +172,7 @@ extension MLS.RFC9420.Group {
 				// Inline (by-value): framed in this commit, so this epoch.
 				resolved.append(
 					.init(
-						proposal: proposal, sender: .member(myLeafIndex),
+						proposal: proposal, sender: .member(committerLeaf),
 						epoch: context.epoch, groupID: context.groupID))
 			case .reference(let ref):
 				guard let stored = proposalStore[ref] else {
@@ -183,7 +202,7 @@ extension MLS.RFC9420.Group {
 			}
 		}
 		try validateProposalList(
-			resolved, committer: myLeafIndex,
+			resolved, committer: committerLeaf,
 			provisionalExtensions: provisionalExtensions, provider: provider)
 
 		let pskIDs = resolved.compactMap { stored -> MLS.RFC9420.PreSharedKeyIdentifier? in
@@ -212,10 +231,21 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.pathRequired
 		}
 
-		let applied = try applyProposals(resolved, committer: myLeafIndex)
+		let applied = try applyProposals(resolved, committer: committerLeaf)
 		var newTree = applied.tree
 
-		guard let senderRecord = tree.leaf(at: myLeafIndex) else {
+		// A commit that removes one of THIS device's OTHER local memberships would
+		// blank its leaf and strand it (it could not decap the path below). The
+		// receive side rejects the mirror case (`validatedDelta`'s self-removal
+		// loop); reject it here too rather than failing later at that membership's
+		// decap. Per-membership eviction is slice 4b.
+		for membership in memberships {
+			guard newTree.leaf(at: membership.leafIndex) != nil else {
+				throw MLS.RFC9420.GroupError.removedFromGroup
+			}
+		}
+
+		guard let senderRecord = tree.leaf(at: committerLeaf) else {
 			throw MLS.RFC9420.GroupError.ownLeafNotFound
 		}
 		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderRecord.encoded)
@@ -224,6 +254,9 @@ extension MLS.RFC9420.Group {
 		let commitSecret: Data
 		var stage: MLS.TreeKEM.CommitPathStage?
 		var unfilteredNodeIndices: [UInt32] = []
+		// The context the path secrets are encrypted against — kept for the
+		// other local memberships to decap the same path (slice 4a).
+		var provisionalContextEncoded: Data?
 
 		if includePath {
 			// The filtered direct path on the post-apply tree — computed
@@ -233,13 +266,13 @@ extension MLS.RFC9420.Group {
 			// are not in any copath resolution, so the filtering is
 			// stable across the call.)
 			let directPath = MLS.TreeMath.directPath(
-				from: 2 * myLeafIndex.value, leafCount: newTree.leafCount)
-			let filtered = try newTree.filteredDirectPath(from: myLeafIndex)
+				from: 2 * committerLeaf.value, leafCount: newTree.leafCount)
+			let filtered = try newTree.filteredDirectPath(from: committerLeaf)
 			unfilteredNodeIndices = zip(directPath, filtered)
 				.filter { !$0.1 }.map(\.0.path)
 
 			let pathStage = try newTree.beginCommitPath(
-				sender: myLeafIndex,
+				sender: committerLeaf,
 				firstPathSecret: randomness.firstPathSecret, provider)
 
 			var newLeaf = MLS.RFC9420.LeafNode(
@@ -254,8 +287,19 @@ extension MLS.RFC9420.Group {
 				provider, privateKey: signingKey, label: "LeafNodeTBS",
 				content: try newLeaf.toBeSigned(
 					placement: .inGroup(
-						groupID: context.groupID, leafIndex: myLeafIndex)))
-			try newTree.setLeaf(myLeafIndex, to: newLeaf.record)
+						groupID: context.groupID, leafIndex: committerLeaf))
+			)
+			// The new leaf carries the committer's OWN signature key, so verifying
+			// the signature we just produced fails loudly when `signingKey` is not
+			// the committer's private key (at N > 1, `as:` and `signingKey:` are two
+			// independent parameters that must agree — a mismatch would otherwise
+			// fork the composite locally against a commit every remote member
+			// rejects). Harmless at N = 1, where there is only one key to pass.
+			try newLeaf.verifySignature(
+				provider,
+				placement: .inGroup(
+					groupID: context.groupID, leafIndex: committerLeaf))
+			try newTree.setLeaf(committerLeaf, to: newLeaf.record)
 
 			// Provisional context: new epoch, post-merge tree hash, OLD
 			// confirmed transcript hash, new extensions (§12.4.1).
@@ -266,9 +310,10 @@ extension MLS.RFC9420.Group {
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
 
+			let encodedProvisional = try provisionalContext.mlsEncoded()
+			provisionalContextEncoded = encodedProvisional
 			let (pathNodes, derivedCommitSecret) = try newTree.finishCommitPath(
-				pathStage,
-				groupContext: try provisionalContext.mlsEncoded(),
+				pathStage, groupContext: encodedProvisional,
 				excluding: applied.addedLeaves, provider)
 			updatePath = MLS.RFC9420.UpdatePath(
 				leafNode: newLeaf,
@@ -289,7 +334,7 @@ extension MLS.RFC9420.Group {
 		let commit = MLS.RFC9420.Commit(proposals: proposalList, path: updatePath)
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: context.epoch,
-			sender: .member(myLeafIndex), authenticatedData: Data(),
+			sender: .member(committerLeaf), authenticatedData: Data(),
 			content: .commit(commit))
 		let (signedContent, signature) =
 			try framing == .publicMessage
@@ -332,13 +377,45 @@ extension MLS.RFC9420.Group {
 		// committed a path after a pathless commit -- the stage-5 review's
 		// three-member repro is now the regression test.
 		var newSecretKeys = prunedSecretKeys(
-			blankedNodes: applied.blankedNodes,
-			senderIndex: includePath ? myLeafIndex : nil,
+			heldSecretKeys: memberships[committerIndex].secretKeys,
+			ownLeaf: committerLeaf, blankedNodes: applied.blankedNodes,
+			senderIndex: includePath ? committerLeaf : nil,
 			leafCount: newTree.leafCount)
 		if let stage {
-			newSecretKeys[2 * myLeafIndex.value] = randomness.leafEncryptionSecretKey
+			newSecretKeys[2 * committerLeaf.value] = randomness.leafEncryptionSecretKey
 			for (node, key) in zip(unfilteredNodeIndices, stage.nodeSecretKeys) {
 				newSecretKeys[node] = key
+			}
+		}
+
+		// The committer built the path; every OTHER local membership receives the
+		// same commit by decapping it (slice 4a) — exactly as a remote member
+		// would in `validatedDelta`. Each must recover the committer's own
+		// `commit_secret`; a mismatch is a construction bug (the committer built
+		// what they decap), surfaced as `divergentCommitSecret` rather than
+		// shipping disagreeing key material.
+		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [
+			committerLeaf: newSecretKeys
+		]
+		for (index, membership) in memberships.enumerated() where index != committerIndex {
+			if let path = updatePath, let contextEncoded = provisionalContextEncoded {
+				let (keys, derived) = try installKeysForMembership(
+					membership, path: path, provisionalTree: newTree,
+					senderIndex: committerLeaf,
+					provisionalContextEncoded: contextEncoded,
+					blankedNodes: applied.blankedNodes,
+					addedLeaves: applied.addedLeaves, provider)
+				guard derived == commitSecret else {
+					throw MLS.RFC9420.GroupError.divergentCommitSecret
+				}
+				newSecretKeysByLeaf[membership.leafIndex] = keys
+			} else {
+				// Pathless: the other memberships only shed keys for blanked nodes.
+				newSecretKeysByLeaf[membership.leafIndex] = prunedSecretKeys(
+					heldSecretKeys: membership.secretKeys,
+					ownLeaf: membership.leafIndex,
+					blankedNodes: applied.blankedNodes,
+					senderIndex: nil, leafCount: newTree.leafCount)
 			}
 		}
 
@@ -359,19 +436,20 @@ extension MLS.RFC9420.Group {
 			effects: MLS.RFC9420.CommitEffects([
 				.epochAdvanced(
 					from: context.epoch, to: newContext.epoch,
-					committer: myLeafIndex)
+					committer: committerLeaf)
 			]),
 			base: context,
 			baseMemberships: Set(memberships.map(\.leafIndex)),
 			newContext: newContext, newTree: newTree,
 			newEpoch: EpochSecrets(retaining: newEpoch),
-			newSecretKeys: newSecretKeys, newInterimTranscriptHash: newInterim,
+			newSecretKeysByLeaf: newSecretKeysByLeaf,
+			newInterimTranscriptHash: newInterim,
 			newMessageStore: newStore, newExporterTree: newExporter,
 			newResumptionPsk: newEpoch.resumptionPsk)
 
 		let welcome = try makeWelcome(
-			provider, resolved: resolved, applied: applied, stage: stage,
-			newTree: newTree, newContext: newContext,
+			provider, committer: committerLeaf, resolved: resolved, applied: applied,
+			stage: stage, newTree: newTree, newContext: newContext,
 			confirmationTag: confirmationTag, newEpoch: newEpoch,
 			pskIDs: pskIDs, signingKey: signingKey,
 			includeRatchetTreeExtension: includeRatchetTreeExtension)
@@ -392,12 +470,11 @@ extension MLS.RFC9420.Group {
 					signature: signature, confirmationTag: confirmationTag,
 					membershipKey: epoch.membershipKey))
 		case .privateMessage:
-			// The committer is `memberships[0]` while `committing` stays fenced at
-			// N > 1 (see the guard); the per-membership decap slice threads the
-			// committing membership's index here when it lifts that fence.
+			// Sealed on the committing membership's own handshake ratchet (§12.4.1).
 			message = .privateMessage(
 				try sealed.sealHandshakeCommit(
-					membershipIndex: 0, provider, epoch: context.epoch,
+					membershipIndex: committerIndex, provider,
+					epoch: context.epoch,
 					framed: framed,
 					signature: signature, confirmationTag: confirmationTag,
 					reuseGuard: reuseGuard
@@ -436,9 +513,36 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> CommitOutput {
-		let transition = try committing(
-			provider, proposals: proposalList, proposalStore: proposalStore,
+		try commit(
+			committerIndex: try soleMembershipIndex(), provider,
+			proposals: proposalList, proposalStore: proposalStore,
 			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
+			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
+	}
+
+	/// The committer-scoped eager core (slice 4a): `committing(committerIndex:)`
+	/// then adopt + apply, so a commit authored by any local membership installs
+	/// every membership's new-epoch keys before returning.
+	@discardableResult
+	mutating func commit(
+		committerIndex: Int,
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+	) throws -> CommitOutput {
+		let transition = try committing(
+			committerIndex: committerIndex, provider, proposals: proposalList,
+			proposalStore: proposalStore, signingKey: signingKey,
+			randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
 			psk: psk)
@@ -460,6 +564,7 @@ extension MLS.RFC9420.Group {
 	/// first.
 	private func makeWelcome(
 		_ provider: any MLS.CipherSuiteProvider,
+		committer: MLS.LeafIndex,
 		resolved: [MLS.RFC9420.StoredProposal],
 		applied: AppliedProposals,
 		stage: MLS.TreeKEM.CommitPathStage?,
@@ -482,7 +587,7 @@ extension MLS.RFC9420.Group {
 		}
 		var groupInfo = MLS.RFC9420.GroupInfo(
 			groupContext: newContext, extensions: groupInfoExtensions,
-			confirmationTag: confirmationTag, signer: myLeafIndex,
+			confirmationTag: confirmationTag, signer: committer,
 			signature: Data())
 		groupInfo.signature = try MLS.signWithLabel(
 			provider, privateKey: signingKey, label: "GroupInfoTBS",
@@ -495,7 +600,7 @@ extension MLS.RFC9420.Group {
 			plaintext: try groupInfo.mlsEncoded())
 
 		let myPath = MLS.TreeMath.directPath(
-			from: 2 * myLeafIndex.value, leafCount: newTree.leafCount
+			from: 2 * committer.value, leafCount: newTree.leafCount
 		).map(\.path)
 
 		var secrets: [MLS.RFC9420.EncryptedGroupSecrets] = []

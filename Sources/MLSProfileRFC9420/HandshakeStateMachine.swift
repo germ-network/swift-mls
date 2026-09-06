@@ -167,7 +167,13 @@ extension MLS.RFC9420 {
 		let newContext: GroupContext
 		let newTree: MLS.TreeKEM.RatchetTree
 		let newEpoch: Group.EpochSecrets
-		let newSecretKeys: [UInt32: MLS.HpkeSecretKey]
+		/// The new-epoch HPKE secret keys **per local membership**, keyed by that
+		/// membership's leaf index (slice 4a). Each membership decaps the commit's
+		/// path against its own held keys, so the map has one entry per member of
+		/// `baseMemberships`; `apply` installs each onto its membership. The keys
+		/// were validated to agree on a single `commit_secret` across memberships
+		/// before this delta was built.
+		let newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]]
 		let newInterimTranscriptHash: Data
 		let newMessageStore: Group.MessageSecrets
 		let newExporterTree: MLS.KeySchedule.ExporterTree
@@ -206,11 +212,26 @@ extension MLS.RFC9420 {
 			result.context = newContext
 			result.tree = newTree
 			result.epoch = newEpoch
-			result.secretKeys = newSecretKeys
 			result.interimTranscriptHash = newInterimTranscriptHash
+			// Install each local membership's own new-epoch path keys (slice 4a).
+			// The membership set equals `baseMemberships` (guarded above), so every
+			// membership has an entry. Throw rather than install an empty set: an
+			// empty key map would silently strand the membership at `notAMember` —
+			// the exact silent-loss this per-membership slice exists to remove.
+			for index in result.memberships.indices {
+				guard
+					let keys = newSecretKeysByLeaf[
+						result.memberships[index].leafIndex]
+				else {
+					throw MLS.RFC9420.GroupError.membershipMismatch
+				}
+				result.memberships[index].secretKeys = keys
+			}
 			// Proposed-but-uncommitted self-Update secrets do not outlive the
 			// epoch (forward secrecy) — the advance retires the whole set.
-			result.pendingUpdates = nil
+			for index in result.memberships.indices {
+				result.memberships[index].pendingUpdate = nil
+			}
 			// Likewise each local membership's own send ratchet: the retired
 			// epoch's head secret is dropped, and the new epoch starts unseeded
 			// (re-seeded lazily from the new secret tree on its first send). The
