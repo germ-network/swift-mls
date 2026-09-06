@@ -39,14 +39,23 @@
 			var signingKey: MLS.SignatureSecretKey
 			var suite: MLS.CipherSuite
 		}
+		/// D17 §2.2: a `PendingCommit` is `~Copyable`, so it cannot be a struct
+		/// field of the `ClientState` stored in `entries`. A reference slot holds
+		/// it instead; the delta is composed onto the *live* group at
+		/// HandlePendingCommit, so any state the group advanced between constructing
+		/// the commit and confirming it is preserved (the successor-rollback the
+		/// live-group composition closes).
+		/// Actor-isolated — no `Sendable` needed.
+		private final class PendingCommitSlot {
+			var pending: MLS.RFC9420.PendingCommit?
+		}
 		private struct ClientState {
 			var group: MLS.RFC9420.Group
 			var credentials: Credentials
-			// The pre-computed successor group, adopted on HandlePendingCommit. The
-			// runner drives PUBLIC handshakes, which consume no key, so the
-			// old-epoch group needs no separate adoption before then; the D17
-			// PendingCommit reference slot (M2) is a later interop change.
-			var pending: MLS.RFC9420.Group?
+			// The un-applied commit awaiting the runner's confirmation, held by
+			// reference (D17 §2.2) so a copy of `ClientState` shares it. Applied onto
+			// the live group at HandlePendingCommit.
+			let pendingCommit = PendingCommitSlot()
 		}
 
 		private var entries: [UInt32: Entry] = [:]
@@ -202,7 +211,7 @@
 				epochSecret: p.randomBytes(p.hashSize))
 			let id = allocate()
 			entries[id] = .group(
-				ClientState(group: group, credentials: creds, pending: nil))
+				ClientState(group: group, credentials: creds))
 			var r = MlsClient_CreateGroupResponse()
 			r.stateID = id
 			return r
@@ -250,7 +259,9 @@
 				var treeReader = MLS.Reader(request.ratchetTree)
 				externalTree = try treeReader.decodeVector()
 			}
-			let group = try MLS.RFC9420.Group.join(
+			// D17: joining validates the Welcome and yields a PendingJoin; the harness
+			// adopts it immediately (the runner adjudicates the roster elsewhere).
+			let group = try MLS.RFC9420.Group.joining(
 				p, welcome: welcome,
 				credentials: .init(
 					keyPackage: creds.keyPackage, initKey: creds.initKey,
@@ -259,10 +270,11 @@
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
 					return externalPsks[pskID]
-				})
+				}
+			).apply().group
 			let id = allocate()
 			entries[id] = .group(
-				ClientState(group: group, credentials: creds, pending: nil))
+				ClientState(group: group, credentials: creds))
 			var r = MlsClient_JoinGroupResponse()
 			r.stateID = id
 			r.epochAuthenticator = group.epoch.epochAuthenticator
@@ -441,15 +453,14 @@
 					guard case .external(let pskID, _) = id else { return nil }
 					return externalPsks[pskID]
 				})
-			// Public framing: the transition's group is the old epoch unchanged, so
-			// pre-compute the successor and stash it as the pending commit.
-			let base = transition.group
+			// Public framing consumes no key, so the transition's group is the old
+			// epoch unchanged and `state.group` needs no adoption before the runner
+			// confirms. Store the un-applied pending (D17 §2.2): it is composed onto
+			// the live group at HandlePendingCommit, not pre-applied here.
 			let sent = transition.takeOutput()
 			let commitMessage = sent.message
 			let welcome = sent.welcome
-			let successor = try sent.takePending().apply(onto: base).group
-			state.pending = successor
-			entries[request.stateID] = .group(state)
+			let pending = sent.takePending()
 
 			var r = MlsClient_CommitResponse()
 			r.commit = try encoded(commitMessage)
@@ -457,10 +468,14 @@
 				r.welcome = try encoded(.welcome(welcome))
 			}
 			if request.externalTree {
+				// The tree this commit will install, delivered out of band — the
+				// delta's provisional ratchet tree, read without consuming the pending.
 				var writer = MLS.Writer()
-				try writer.encodeVector(successor.tree.nodes)
+				try writer.encodeVector(pending.newTree.nodes)
 				r.ratchetTree = Data(writer.bytes)
 			}
+			state.pendingCommit.pending = .some(pending)
+			entries[request.stateID] = .group(state)
 			return r
 		}
 
@@ -512,13 +527,31 @@
 				case .publicMessage(let commit) = try MLS.RFC9420.Message(
 					from: &commitReader)
 			else { throw invalid("commit is not a public message") }
-			try state.group.process(
+			// D17 two-step receive: validating computes the epoch delta (public
+			// framing consumes nothing, so no Transition), apply composes it onto
+			// the live group.
+			let pending = try state.group.validating(
 				p, commit: commit, proposals: store,
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
 					return externalPsks[pskID]
 				})
-			state.pending = nil
+			let transition = try pending.apply(onto: state.group)
+			let advanced = transition.group
+			let effects = transition.takeOutput()
+			// A full self-eviction is terminal: the sole local membership was
+			// removed, apply did not advance the epoch, and the app tears the group
+			// down (D17 §5). The pre-two-step receive signalled this by throwing
+			// `removedFromGroup`; preserve that signal for the harness.
+			if effects.events.contains(where: {
+				if case .membershipRemoved = $0 { return true }
+				return false
+			}) {
+				throw RPCError(code: .aborted, message: "removed from group")
+			}
+			state.group = advanced
+			// A received commit supersedes any of our own still-pending commit.
+			state.pendingCommit.pending = nil
 			entries[request.stateID] = .group(state)
 			var r = MlsClient_HandleCommitResponse()
 			r.stateID = request.stateID
@@ -529,16 +562,18 @@
 		func handlePendingCommit(
 			request: MlsClient_HandlePendingCommitRequest, context: ServerContext
 		) async throws -> MlsClient_HandleCommitResponse {
-			var state = try requireGroup(request.stateID)
-			guard let pending = state.pending else {
+			let state = try requireGroup(request.stateID)
+			guard let pending = state.pendingCommit.pending.take() else {
 				throw invalid("no pending commit for state \(request.stateID)")
 			}
-			state.group = pending
-			state.pending = nil
-			entries[request.stateID] = .group(state)
+			// D17 §2.2: compose the delta onto the *live* group (staleBase if it
+			// moved past the commit's base), not a pre-applied successor.
+			var advanced = state
+			advanced.group = try pending.apply(onto: state.group).group
+			entries[request.stateID] = .group(advanced)
 			var r = MlsClient_HandleCommitResponse()
 			r.stateID = request.stateID
-			r.epochAuthenticator = state.group.epoch.epochAuthenticator
+			r.epochAuthenticator = advanced.group.epoch.epochAuthenticator
 			return r
 		}
 

@@ -32,7 +32,7 @@ extension MLS.RFC9420 {
 
 		/// This client's self-proposed Updates awaiting a commit — the pending
 		/// membership → new-LeafNode transition. Seeded by `proposeUpdate` and
-		/// consumed by `processing` when a landing commit applies one; a *set*,
+		/// consumed when a landing commit applies one (`validating` → `apply`); a *set*,
 		/// because the committer (not the proposer) chooses which Update lands.
 		/// Valid only for the epoch it names; cleared on every epoch advance.
 		var pendingUpdate:

@@ -69,31 +69,6 @@ extension MLS.RFC9420.Group {
 			psk: psk)
 	}
 
-	/// The eager convenience of `committing(as:)` — see `commit(_:proposals:…)`.
-	@discardableResult
-	public mutating func commit(
-		as leaf: MLS.LeafIndex,
-		_ provider: any MLS.CipherSuiteProvider,
-		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
-		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
-		randomness: CommitRandomness,
-		includePath: Bool = true,
-		includeRatchetTreeExtension: Bool = true,
-		framing: HandshakeFraming = .privateMessage,
-		reuseGuard: MLS.Framing.ReuseGuard? = nil,
-		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
-	) throws -> CommitOutput {
-		try commit(
-			committerIndex: try membershipIndex(of: leaf), provider,
-			proposals: proposalList, proposalStore: proposalStore,
-			signingKey: signingKey, randomness: randomness, includePath: includePath,
-			includeRatchetTreeExtension: includeRatchetTreeExtension,
-			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
-			psk: psk)
-	}
-
 	/// Propose a self-Update for the local membership occupying `leaf` (D18) —
 	/// the membership's pending transition to a new LeafNode. N > 1-correct (slice
 	/// 3b): the pending self-Update and the seal are both scoped to this membership.

@@ -46,17 +46,6 @@ extension MLS.RFC9420.Group {
 		case publicMessage
 	}
 
-	public struct CommitOutput: Sendable {
-		/// The committer's own post-commit state.
-		public let group: MLS.RFC9420.Group
-		public let commit: MLS.RFC9420.Message
-		/// Present iff the commit added members. **At commit time or
-		/// never**: the retained epoch state deliberately keeps neither
-		/// the confirmation tag nor the welcome secret (§9.2 retention),
-		/// so there is no later route to a second Welcome for this epoch.
-		public let welcome: MLS.RFC9420.Welcome?
-	}
-
 	/// RFC 9420 §11: create a one-member group. `epochSecret` is §11's
 	/// "fresh random value of size KDF.Nh" — the epoch secret *is* the
 	/// random value (its joiner/welcome siblings do not exist at epoch 0,
@@ -347,7 +336,7 @@ extension MLS.RFC9420.Group {
 		// via `serializedNodeCount`, which trims trailing blanks by
 		// construction, so a built tree can never produce a malformed wire
 		// form. (It was a receive-side wire property; that check now lives on
-		// the decoded array in `Group.join`.)
+		// the decoded array in `Group.joining`.)
 
 		// Frame, sign under the OLD context, chain the transcript.
 		let commit = MLS.RFC9420.Commit(proposals: proposalList, path: updatePath)
@@ -509,78 +498,12 @@ extension MLS.RFC9420.Group {
 				message: message, welcome: welcome, pending: pending))
 	}
 
-	/// Eager convenience over `committing`: adopts the committer's consumption
-	/// AND applies the epoch advance immediately, without waiting for
-	/// Delivery-Service affirmation — a harness/test convenience (the send twin
-	/// of the `process` receive shim). Safe from generation reuse because it
-	/// adopts the consumption before anything else can send from `self`; a caller
-	/// that follows the pending model MUST use `committing` and adopt/persist
-	/// before transmitting.
-	///
-	/// `CommitOutput.group` equals `self` after the call — retained only so the
-	/// pre-transition call sites compile unchanged, not part of the design.
-	/// `commit` and `CommitOutput` both retire in the migration slice.
-	@discardableResult
-	public mutating func commit(
-		_ provider: any MLS.CipherSuiteProvider,
-		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
-		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
-		randomness: CommitRandomness,
-		includePath: Bool = true,
-		includeRatchetTreeExtension: Bool = true,
-		framing: HandshakeFraming = .privateMessage,
-		reuseGuard: MLS.Framing.ReuseGuard? = nil,
-		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
-	) throws -> CommitOutput {
-		try commit(
-			committerIndex: try soleMembershipIndex(), provider,
-			proposals: proposalList, proposalStore: proposalStore,
-			signingKey: signingKey, randomness: randomness, includePath: includePath,
-			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
-			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
-	}
-
-	/// The committer-scoped eager core (slice 4a): `committing(committerIndex:)`
-	/// then adopt + apply, so a commit authored by any local membership installs
-	/// every membership's new-epoch keys before returning.
-	@discardableResult
-	mutating func commit(
-		committerIndex: Int,
-		_ provider: any MLS.CipherSuiteProvider,
-		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
-		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
-		randomness: CommitRandomness,
-		includePath: Bool = true,
-		includeRatchetTreeExtension: Bool = true,
-		framing: HandshakeFraming = .privateMessage,
-		reuseGuard: MLS.Framing.ReuseGuard? = nil,
-		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
-	) throws -> CommitOutput {
-		let transition = try committing(
-			committerIndex: committerIndex, provider, proposals: proposalList,
-			proposalStore: proposalStore, signingKey: signingKey,
-			randomness: randomness, includePath: includePath,
-			includeRatchetTreeExtension: includeRatchetTreeExtension,
-			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
-			psk: psk)
-		self = transition.group
-		let sent = transition.takeOutput()
-		let message = sent.message
-		let welcome = sent.welcome
-		self = try sent.takePending().apply(onto: self).group
-		return CommitOutput(group: self, commit: message, welcome: welcome)
-	}
-
 	/// §12.4.1's Welcome tail: GroupInfo (signed, then sealed under the
 	/// welcome key/nonce), and per added member a `GroupSecrets` carrying
 	/// the joiner secret, the path secret at the least common ancestor
 	/// with the committer, and the commit's PSK ids in proposal order —
 	/// HPKE-sealed to the member's `init_key` with the *encrypted*
-	/// GroupInfo as context (the splice-prevention binding `join`'s
+	/// GroupInfo as context (the splice-prevention binding `joining`'s
 	/// decrypt side documents), which is why the GroupInfo must be sealed
 	/// first.
 	private func makeWelcome(

@@ -165,7 +165,7 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 	/// so a mismatch here diverges the epoch secrets, not just the parse. To
 	/// interoperate with a `uint32` (deployed-fork / -08) peer, scope the **whole**
 	/// operation that encodes or decodes an application id — the entire
-	/// `committing` / `processing` / `join` call, so the wire encode, the peer's
+	/// `committing` / `validating` / `joining` call, so the wire encode, the peer's
 	/// decode, and the `PSKLabel` all agree — under
 	/// `$componentIDWireWidth.withValue(.uint32) { … }`. The local
 	/// `applicationStorageID` key is deliberately *not* affected (it pins `uint16`),

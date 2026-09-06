@@ -15,7 +15,7 @@ extension MLS.RFC9420.Group {
 	/// fields below are held in zeroizing storage (`SecretBytes`), so *these*
 	/// scrub on release; but dropping a field means releasing
 	/// its zeroizing buffer, and the full `Epoch` still lives on as a local
-	/// through the rest of `join`'s and `processing`'s bodies (and value-type
+	/// through the rest of `joining`'s and `validating`'s bodies (and value-type
 	/// copies, spills, and decode-time transients are outside what any
 	/// buffer-scrub reaches). Erasure timing is a best-effort concern with an
 	/// unprovable ceiling; see `SECURITY.md`.

@@ -245,7 +245,7 @@ extension MLS.RFC9420 {
 	/// forking.
 	///
 	/// The delta fields are `internal`: a `PendingCommit` is produced only by
-	/// the library's receive (`validating`/`processing`) and send (`committing`)
+	/// the library's receive (`validating`) and send (`committing`)
 	/// paths, never constructed by a caller.
 	public struct PendingCommit: ~Copyable, Sendable {
 		public let effects: CommitEffects
@@ -263,8 +263,17 @@ extension MLS.RFC9420 {
 		// The epoch advance, derivable from the commit and `base` alone —
 		// nothing here is read from `base`'s message-secret state (D17 §4's
 		// invariant), so composing onto a more-consumed `live` is sound.
-		let newContext: GroupContext
-		let newTree: MLS.TreeKEM.RatchetTree
+		//
+		// `newContext` and `newTree` are the delta's **public** half: the
+		// `GroupContext` and ratchet tree this commit *will install if applied* —
+		// provisional, not group state until `apply(onto:)`. Both are public wire
+		// data the committer transmits anyway (the `ratchet_tree` extension /
+		// GroupInfo), so a caller may inspect them before adopting — the strongest
+		// form of the "inspect before apply" seam the effects begin. The rest of
+		// the delta (epoch secrets, installed keys, message store, exporter tree,
+		// resumption PSK) is secret and stays internal.
+		public let newContext: GroupContext
+		public let newTree: MLS.TreeKEM.RatchetTree
 		let newEpoch: Group.EpochSecrets
 		/// The new-epoch HPKE secret keys **per local membership**, keyed by that
 		/// membership's leaf index (slice 4a). Each membership decaps the commit's
@@ -289,7 +298,7 @@ extension MLS.RFC9420 {
 
 		// The memberwise initializer stays `internal` (the delta fields are
 		// internal), so a `PendingCommit` is produced only by the library's
-		// receive (`validating`/`processing`) and send (`committing`) paths —
+		// receive (`validating`) and send (`committing`) paths —
 		// never constructed by a caller.
 
 		/// Compose the epoch advance onto `live` (D17 §4). The new-epoch state

@@ -24,7 +24,7 @@ extension MLS.RFC9420 {
 		/// N > 1-capable: the client-agnostic `core` and application receive
 		/// (`unprotect`, which touches only `core`); the membership-scoped sends
 		/// (`protect(as:)` / `proposingUpdate(as:)` / `committing(as:)`, each on its
-		/// own membership — slices 3b/4a); commit receive (`processing`, which
+		/// own membership — slices 3b/4a); commit receive (`validating`, which
 		/// decaps the path once per membership and installs each — slice 4a); and
 		/// format-2 persistence (which stores every membership). The bare
 		/// (non-`as:`) send entries are `ambiguousMembership` at N ≠ 1, since they
@@ -447,24 +447,5 @@ extension MLS.RFC9420.Group {
 			roster: roster, signer: groupInfo.signer,
 			consumedKeyPackage: keyPackageRef, context: group.context,
 			myLeafIndex: group.myLeafIndex, group: group)
-	}
-
-	/// Eager convenience over `joining`: validates and adopts the join in one step
-	/// (the join twin of the eager commit shim). A caller that must adjudicate the
-	/// roster before trusting it — the §5.3.1 Authentication-Service seam — uses
-	/// `joining` and inspects `PendingJoin.roster` before calling `apply()`.
-	/// `join` and this eager shape retire with the other eager shims in the
-	/// migration slice.
-	public static func join(
-		_ provider: any MLS.CipherSuiteProvider,
-		welcome: MLS.RFC9420.Welcome,
-		credentials: JoinerCredentials,
-		externalTree: [MLS.RFC9420.Node?]? = nil,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws -> MLS.RFC9420.Group {
-		try joining(
-			provider, welcome: welcome, credentials: credentials,
-			externalTree: externalTree, psk: psk
-		).apply().group
 	}
 }
