@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
 import MLSTreeMath
@@ -9,10 +10,10 @@ import SecretBytes
 // D17 — the handshake state machine expressed in types. The
 // `Transition`/`PendingCommit` foundation (the interleaved-consumption fix); the
 // public two-step entry point for a public-framed commit is `validating(commit:)`
-// (see `CommitProcessing.swift`). Private framing, the send side, the
-// per-membership key install, eviction, and the §5.3.1 credential effects were
-// added across the D17/D18 slices; the join-side `PendingJoin` seam is a later
-// slice.
+// (see `CommitProcessing.swift`), and for a join `Group.joining` → `PendingJoin`
+// (see `Group.swift`). Private framing, the send side, the per-membership key
+// install, eviction, the §5.3.1 credential effects, and the join-side seam were
+// added across the D17/D18 slices.
 
 extension MLS.RFC9420 {
 	/// D12b made structural, with a **lazy** snapshot (D17 §2/H2): a state
@@ -66,6 +67,67 @@ extension MLS.RFC9420 {
 	public struct CredentialPresentation: Sendable, Equatable {
 		public let credential: MLS.RFC9420.Credential
 		public let signatureKey: MLS.SignaturePublicKey
+	}
+
+	/// One member of a group as a join presents it (slice 4c): its leaf and the
+	/// credential/signature-key it is bound to. The `joining` roster the app
+	/// adjudicates before applying (§5.3.1), and the `JoinEffects` roster it holds
+	/// after, are both lists of these.
+	public struct RosterEntry: Sendable, Equatable {
+		public let leaf: MLS.LeafIndex
+		public let presentation: CredentialPresentation
+	}
+
+	/// What a successful join produced (slice 4c) — the join-side analogue of
+	/// `CommitEffects`: the joiner's own leaf, the Welcome's `signer`, and the
+	/// group roster it just entered.
+	public struct JoinEffects: Sendable, Equatable {
+		public let myLeafIndex: MLS.LeafIndex
+		public let signer: MLS.LeafIndex
+		public let roster: [RosterEntry]
+	}
+
+	/// A validated but not-yet-adopted join (slice 4c) — the join twin of
+	/// `PendingCommit`. `joining` performs the full RFC 9420 §12.4.3.1 Welcome
+	/// validation and builds the group, but hands it back through this seam so the
+	/// application (the Authentication Service) can adjudicate `roster` — the
+	/// credentials it is about to trust — and the `signer` before adopting it with
+	/// `apply()`. `context` and `myLeafIndex` are exposed for the checks the app
+	/// must make at this point but the library cannot: RFC 9420 §12.4.3.1's
+	/// caller-side "verify `group_id` is unique among the groups this client is in"
+	/// (read `context.groupID`), and excluding the joiner's own leaf from AS
+	/// validation / reading `signer` relative to itself.
+	///
+	/// `consumedKeyPackage` is the reference of the one-time KeyPackage this join
+	/// used. The KeyPackage's private halves are app-held state (never on the
+	/// wire); a KeyPackage is single-use (RFC 9420 §10/§16.8: SHOULD NOT be reused,
+	/// last-resort excepted), and D17 §2 L5 makes deletion a MUST for this
+	/// library's apps — so this is reported **whether or not the app applies**, and
+	/// an app that declines the join must still delete it. (A `joining` that
+	/// *throws* reports nothing; the app holds the KeyPackage and decides whether
+	/// to burn it on a validation failure.)
+	public struct PendingJoin: ~Copyable, Sendable {
+		public let roster: [RosterEntry]
+		public let signer: MLS.LeafIndex
+		public let consumedKeyPackage: MLS.HashReference
+		/// The joined group's context — `groupID`, `epoch`, `cipherSuite` — for the
+		/// caller-side checks above, before `apply()`.
+		public let context: GroupContext
+		/// The joiner's own leaf in the group it is about to enter.
+		public let myLeafIndex: MLS.LeafIndex
+		// The fully-validated joined group. Internal: a `PendingJoin` is produced
+		// only by `joining`, never constructed by a caller.
+		let group: Group
+
+		/// Adopt the join. No `onto:`: a join has no live group to compose onto —
+		/// `joining` built the whole group already, and this hands it back with the
+		/// `JoinEffects`. Non-throwing: all validation happened at `joining`.
+		public consuming func apply() -> Transition<JoinEffects> {
+			Transition(
+				group: group,
+				output: JoinEffects(
+					myLeafIndex: myLeafIndex, signer: signer, roster: roster))
+		}
 	}
 
 	/// One effect a commit had, for the application to adjudicate at the seam
