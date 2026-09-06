@@ -18,7 +18,7 @@ extension MLS.RFC9420.Group {
 	/// Returns the framed proposal and its `ProposalRef` — the same ref a
 	/// receiver would compute over the identical bytes after authenticating
 	/// the proposal (`unprotect` for a `privateMessage`, or
-	/// `Group.verify(proposal:)` for a `publicMessage`) and feeding the
+	/// `Group.verifying(proposal:)` for a `publicMessage`) and feeding the
 	/// resulting `VerifiedProposal` to `ProposalStore.insert`. A caller that
 	/// is also the eventual committer needs nothing else to reference it by.
 	public mutating func proposeUpdate(
@@ -26,14 +26,22 @@ extension MLS.RFC9420.Group {
 		signingKey: MLS.SignatureSecretKey,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
-		// D18 send guard, at the top: a public-framed proposal seals via
-		// `sealPublic` and never reaches `protectContent`'s guard, and this
-		// mutates the sole membership's `pendingUpdate`. N > 1 fails closed until
-		// the send-side slice.
-		guard memberships.count <= 1 else {
-			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
-		}
-		guard let currentRecord = tree.leaf(at: myLeafIndex) else {
+		// Proposes for the sole local membership; `ambiguousMembership` at N ≠ 1,
+		// where `proposingUpdate(as:)` names it (slice 3b: the pending self-Update
+		// and the seal are both per-membership now, so this is N > 1-correct).
+		try proposeUpdate(
+			membershipIndex: try soleMembershipIndex(), provider,
+			signingKey: signingKey, framing: framing)
+	}
+
+	mutating func proposeUpdate(
+		membershipIndex: Int,
+		_ provider: any MLS.CipherSuiteProvider,
+		signingKey: MLS.SignatureSecretKey,
+		framing: HandshakeFraming = .privateMessage
+	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
+		let leaf = memberships[membershipIndex].leafIndex
+		guard let currentRecord = tree.leaf(at: leaf) else {
 			throw MLS.RFC9420.GroupError.ownLeafNotFound
 		}
 		let currentLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: currentRecord.encoded)
@@ -47,11 +55,11 @@ extension MLS.RFC9420.Group {
 			provider, privateKey: signingKey, label: "LeafNodeTBS",
 			content: try updateLeaf.toBeSigned(
 				placement: .inGroup(
-					groupID: context.groupID, leafIndex: myLeafIndex)))
+					groupID: context.groupID, leafIndex: leaf)))
 
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: context.epoch,
-			sender: .member(myLeafIndex), authenticatedData: Data(),
+			sender: .member(leaf), authenticatedData: Data(),
 			content: .proposal(.update(updateLeaf)))
 
 		let message: MLS.RFC9420.Message
@@ -75,7 +83,8 @@ extension MLS.RFC9420.Group {
 			// must be computed from (see `protectContent`'s own doc
 			// comment on why signing twice would diverge them).
 			let (sealed, signature) = try protectContent(
-				provider, content: .proposal(.update(updateLeaf)),
+				membershipIndex: membershipIndex, provider,
+				content: .proposal(.update(updateLeaf)),
 				authenticatedData: Data(), signingKey: signingKey,
 				reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 				paddingLength: 0)
@@ -86,12 +95,12 @@ extension MLS.RFC9420.Group {
 		}
 
 		let ref = try MLS.RFC9420.proposalRef(provider, authenticated)
-		if pendingUpdates?.epoch == context.epoch {
-			pendingUpdates?.updates.append(
+		if memberships[membershipIndex].pendingUpdate?.epoch == context.epoch {
+			memberships[membershipIndex].pendingUpdate?.updates.append(
 				(publicKey: newPublicKey, secret: newSecretKey))
 		} else {
-			pendingUpdates = (
-				epoch: context.epoch, node: 2 * myLeafIndex.value,
+			memberships[membershipIndex].pendingUpdate = (
+				epoch: context.epoch, node: 2 * leaf.value,
 				updates: [(publicKey: newPublicKey, secret: newSecretKey)]
 			)
 		}

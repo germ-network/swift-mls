@@ -24,8 +24,11 @@ extension MLS.RFC9420.Group {
 		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
 		var tree: MLS.KeySchedule.ConsumingSecretTree
+		/// **Remote** senders' ratchet chains only (slice 3b). A local
+		/// membership's own send ratchet lives on its `Membership.ownSend`, seeded
+		/// from `tree` but never cached back here — so this map never keys a local
+		/// leaf, and two local memberships never share a send position.
 		var chains: [ChainKey: MLS.KeySchedule.RatchetChain] = [:]
-		var ownNextGeneration: (handshake: UInt32, application: UInt32) = (0, 0)
 
 		struct ChainKey: Hashable, Sendable {
 			let leaf: MLS.LeafIndex
@@ -64,17 +67,22 @@ extension MLS.RFC9420.Group {
 }
 
 extension MLS.RFC9420.Group {
-	/// Builds and installs the message-secret state for a newly entered
-	/// epoch, and prunes retired epochs to
-	/// `retention.messageSecretsDepth`. Called by every epoch-entering
-	/// path (`create`, `join`, `processing`, `committing`).
-	mutating func installMessageSecrets(
+	/// Build — without installing — the new epoch's message-secret store and
+	/// Exporter Tree from the new epoch's secrets and the new tree. `static` by
+	/// design (D17 §4, L-4): it derives the delta's retained message state from
+	/// the new epoch's inputs alone and *cannot* read the live group's
+	/// (more-consumed) message-secret state, which is exactly the §4 invariant
+	/// that lets a `PendingCommit` hold these standalone and `apply(onto:)`
+	/// compose them onto a live group. Callers that install directly
+	/// (`installMessageSecrets`) prune afterwards; the delta path prunes at
+	/// `apply(onto:)` instead.
+	static func makeEpochMessageState(
 		context: MLS.RFC9420.GroupContext,
 		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
 		applicationExportSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
-	) throws {
+	) throws -> (store: MessageSecrets, exporter: MLS.KeySchedule.ExporterTree) {
 		var signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey] = [:]
 		// Two decodes per touched leaf: commit processing already decoded the
 		// added/updated/committer LeafNodes for validation, and this decodes
@@ -88,7 +96,7 @@ extension MLS.RFC9420.Group {
 			signatureKeys[leafIndex] =
 				try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded).signatureKey
 		}
-		messageSecrets[context.epoch] = try MessageSecrets(
+		let store = try MessageSecrets(
 			groupContext: context,
 			// Held zeroizing for the epoch's life: `senderDataSecret` seeds
 			// every message's sender-data key, so it is retained the whole
@@ -97,22 +105,40 @@ extension MLS.RFC9420.Group {
 			signatureKeys: signatureKeys,
 			tree: MLS.KeySchedule.ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))
-		let depth = UInt64(retention.messageSecretsDepth)
-		let floor = context.epoch >= depth ? context.epoch - depth : 0
-		messageSecrets = messageSecrets.filter { $0.key >= floor }
-
 		// draft-ietf-mls-extensions-08 §4.4: build this epoch's Exporter Tree from
 		// application_export_secret and hold the *consuming tree* — never the raw
 		// root. The first export splits and deletes the root, and each export
 		// deletes its component's root-to-leaf path (RFC 9420 §9.2, which §4.4
 		// invokes); retaining the root would re-derive consumed components and
-		// defeat forward secrecy. Single-epoch (past epochs' seeds aren't
-		// retained), so this assignment also drops any prior epoch's tree. Matches
-		// the deployed fork, which holds `ExporterTree(SecretTree)`, not the root.
-		exporterTrees = [
-			context.epoch: try MLS.KeySchedule.ExporterTree(
-				applicationExportSecret: applicationExportSecret)
-		]
+		// defeat forward secrecy. Matches the deployed fork, which holds
+		// `ExporterTree(SecretTree)`, not the root.
+		let exporter = try MLS.KeySchedule.ExporterTree(
+			applicationExportSecret: applicationExportSecret)
+		return (store, exporter)
+	}
+
+	/// Install the new epoch's message state into `self` and prune to the
+	/// retention window. Only `create` and `join` install directly (they build a
+	/// group, not a delta); every commit — receive and send alike — composes the
+	/// new epoch via the D17 delta's `apply(onto:)` instead.
+	mutating func installMessageSecrets(
+		context: MLS.RFC9420.GroupContext,
+		senderDataSecret: some ContiguousBytes, encryptionSecret: some ContiguousBytes,
+		applicationExportSecret: some ContiguousBytes,
+		tree: MLS.TreeKEM.RatchetTree,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws {
+		let (store, exporter) = try Self.makeEpochMessageState(
+			context: context, senderDataSecret: senderDataSecret,
+			encryptionSecret: encryptionSecret,
+			applicationExportSecret: applicationExportSecret, tree: tree, provider)
+		messageSecrets[context.epoch] = store
+		let depth = UInt64(retention.messageSecretsDepth)
+		let floor = context.epoch >= depth ? context.epoch - depth : 0
+		messageSecrets = messageSecrets.filter { $0.key >= floor }
+		// Single-epoch (past epochs' seeds aren't retained), so this drops any
+		// prior epoch's tree.
+		exporterTrees = [context.epoch: exporter]
 	}
 
 	/// Key/nonce for `(leaf, generation, kind)` in `epoch`, plus the
@@ -234,6 +260,88 @@ extension MLS.RFC9420.Group {
 		}
 		messageSecrets[pending.epoch] = secrets
 	}
+
+	/// Key/nonce for the membership at `membershipIndex`'s next own send in
+	/// `epoch`, advancing that membership's own ratchet (slice 3b). The send side
+	/// derives through the same §9.2 secret tree the receive side uses — one
+	/// authority, no drift — but the own leaf's chain lives on the `Membership`,
+	/// not in the shared `GroupCore` store, so two local memberships never share a
+	/// send position and each spends its own generation.
+	///
+	/// Consumption is immediate (our own send cannot "fail to decrypt"), and the
+	/// generation returned is the one that was spent. Send is strictly sequential
+	/// — the requested generation is always the chain head — so this walks exactly
+	/// one step and never caches a skipped key.
+	mutating func deriveOwnSendKey(
+		membershipIndex: Int, epoch: UInt64, isHandshake: Bool,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws -> (key: Data, nonce: Data, generation: UInt32) {
+		// A member frames only in its current epoch; a tag from any other epoch
+		// is stale state to discard, never a ratchet to resume — this is the
+		// structural bar against carrying a generation across an epoch (§9.1).
+		if memberships[membershipIndex].ownSend.epoch != epoch {
+			memberships[membershipIndex].ownSend = MLS.RFC9420.Membership.OwnSendState(
+				epoch: epoch)
+		}
+		let generation = memberships[membershipIndex].ownSend.nextGeneration(
+			isHandshake: isHandshake)
+		guard generation != .max else {
+			throw MLS.RFC9420.GroupError.sendGenerationExhausted
+		}
+
+		// Seed both own ratchets together from a single consumed leaf secret on
+		// the first send this epoch (§9.1: one leaf_secret forks into both). The
+		// leaf secret is consumed from — and deleted in — the shared `GroupCore`
+		// tree; the resulting chains are held on the membership.
+		if memberships[membershipIndex].ownSend.handshakeChain == nil {
+			guard var store = core.messageSecrets[epoch] else {
+				throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(
+					epoch: epoch)
+			}
+			let leaf = memberships[membershipIndex].leafIndex
+			let leafSecret: SecretBytes
+			do {
+				leafSecret = try store.tree.consumeLeafSecret(for: leaf, provider)
+			} catch MLS.KeySchedule.SecretTreeError.subtreeExhausted {
+				throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
+					generation: 0)
+			}
+			core.messageSecrets[epoch] = store
+			memberships[membershipIndex].ownSend.handshakeChain =
+				MLS.KeySchedule.RatchetChain(
+					headGeneration: 0,
+					headSecret: try MLS.KeySchedule.handshakeRatchetSecret(
+						provider, leafSecret: leafSecret))
+			memberships[membershipIndex].ownSend.applicationChain =
+				MLS.KeySchedule.RatchetChain(
+					headGeneration: 0,
+					headSecret: try MLS.KeySchedule.applicationRatchetSecret(
+						provider, leafSecret: leafSecret))
+		}
+
+		var chain =
+			isHandshake
+			? memberships[membershipIndex].ownSend.handshakeChain!
+			: memberships[membershipIndex].ownSend.applicationChain!
+		// generation == chain.headGeneration by construction (sequential send).
+		guard let headSecret = chain.headSecret else {
+			throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
+				generation: generation)
+		}
+		let step = try MLS.KeySchedule.ratchetStep(
+			provider, secret: headSecret, generation: generation)
+		// Advance the chain (the sole send position): its new head IS the next
+		// generation. `generation != .max` was guarded above, so the head never
+		// wraps and the chain never retires.
+		chain.headGeneration = generation + 1
+		chain.headSecret = step.nextSecret
+		if isHandshake {
+			memberships[membershipIndex].ownSend.handshakeChain = chain
+		} else {
+			memberships[membershipIndex].ownSend.applicationChain = chain
+		}
+		return (step.key, step.nonce, generation)
+	}
 }
 
 extension MLS.RFC9420.Group {
@@ -245,13 +353,45 @@ extension MLS.RFC9420.Group {
 		/// ref binds the framed content, which `insert` derives now rather than
 		/// this call computing it up front.
 		case proposal(MLS.RFC9420.VerifiedProposal)
-		/// A commit needs the full processing pipeline; hand back the
-		/// authenticated frame for `processing` to take over.
+		/// A commit needs the full processing pipeline. This hands back the
+		/// authenticated frame for inspection only: the processing core is gated
+		/// on a `VerifiedCommit` minted internally (D17 §2.1, M-1), so a raw
+		/// `AuthenticatedContent` cannot be re-applied through the public API, and
+		/// a bare `unprotect` has already consumed the ratchet. To *apply* a
+		/// private-framed commit, route by `wireFormat`/`contentType` and call
+		/// `process(privateCommit:)` on the `PrivateMessage` instead of
+		/// `unprotect`.
 		case commit(MLS.RFC9420.AuthenticatedContent)
 	}
 
 	public struct Unprotected: Sendable {
+		/// The leaf that framed this message — **a leaf in `epoch`'s roster, not
+		/// necessarily the current one.** A `PrivateMessage` may come from any
+		/// epoch still within the retention window, and a leaf index is not stable
+		/// across epochs: removing a member blanks its leaf, and the next Add fills
+		/// the leftmost empty leaf (RFC 9420 §12.1.1), so a later member can come to
+		/// occupy the same index. Resolving `sender` against the *current* `tree`
+		/// would then bind a retained-epoch message to whoever holds that leaf now,
+		/// not the member who framed it.
+		///
+		/// **MUST**: resolve `sender` to an identity only within `epoch`'s roster.
+		/// `senderSignatureKey` is that epoch's verified signing key for this leaf —
+		/// the key the framing signature was actually checked against — so key
+		/// identity off it directly, or compare it to the identity you expect,
+		/// rather than reading the current tree. The library does not retain
+		/// past-epoch credentials, so an application that needs the credential (not
+		/// just the key) must keep its own epoch → roster history.
 		public let sender: MLS.LeafIndex
+		/// The epoch this message was framed in and decrypted against — the epoch
+		/// whose roster `sender` indexes. Also readable before `unprotect` as
+		/// `PrivateMessage.epoch`; surfaced here so attribution is epoch-bound
+		/// without a second lookup.
+		public let epoch: UInt64
+		/// The signing key the framing signature was verified against: `epoch`'s
+		/// frozen `signature_key` for `sender`'s leaf. Epoch-bound identity — two
+		/// members occupying one leaf index in different epochs have different keys
+		/// here, so this distinguishes them where the bare leaf index cannot.
+		public let senderSignatureKey: MLS.SignaturePublicKey
 		public let authenticatedData: Data
 		public let content: UnprotectedContent
 	}
@@ -262,6 +402,9 @@ extension MLS.RFC9420.Group {
 	/// `Group` value as the single sending authority — copies of a value
 	/// type fork the ratchet, and the 4-byte reuse guard is the RFC's own
 	/// mitigation for exactly that, not a license for it.
+	///
+	/// Sends as the sole local membership; `ambiguousMembership` at N ≠ 1, where
+	/// `protect(as:)` names the sending membership.
 	public mutating func protect(
 		_ provider: any MLS.CipherSuiteProvider,
 		applicationData: Data,
@@ -271,7 +414,8 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0
 	) throws -> MLS.RFC9420.PrivateMessage {
 		try protectContent(
-			provider, content: .application(applicationData),
+			membershipIndex: try soleMembershipIndex(), provider,
+			content: .application(applicationData),
 			authenticatedData: authenticatedData, signingKey: signingKey,
 			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength)
 		).message
@@ -301,6 +445,7 @@ extension MLS.RFC9420.Group {
 	/// wrong one would never match what a receiver's own `unprotect` +
 	/// `ProposalStore.insert` computes.
 	mutating func protectContent(
+		membershipIndex: Int,
 		_ provider: any MLS.CipherSuiteProvider,
 		content: MLS.RFC9420.Content,
 		authenticatedData: Data,
@@ -308,39 +453,23 @@ extension MLS.RFC9420.Group {
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> (message: MLS.RFC9420.PrivateMessage, signature: MLS.Signature) {
-		// D18 send guard: this seals on the sender's own leaf ratchet
-		// (`ownNextGeneration`), shared in `GroupCore` until the send-side slice
-		// moves per-leaf ratchets onto each `Membership`, so N > 1 send fails
-		// closed. Removed there. (Covers application `protect` and
-		// `proposeUpdate`, which both seal here.)
-		guard memberships.count <= 1 else {
-			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
-		}
 		let epochNumber = context.epoch
-		guard var secrets = messageSecrets[epochNumber] else {
+		let leaf = memberships[membershipIndex].leafIndex
+		guard let secrets = core.messageSecrets[epochNumber] else {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(
 				epoch: epochNumber)
 		}
 		let isHandshake = content.contentType != .application
-		let generation =
-			isHandshake
-			? secrets.ownNextGeneration.handshake
-			: secrets.ownNextGeneration.application
-		guard generation != .max else {
-			throw MLS.RFC9420.GroupError.sendGenerationExhausted
-		}
 
-		// The send side derives through the same consuming store the
-		// receive side uses -- one authority, no drift -- but commits its
-		// consumption immediately: our own send cannot "fail to decrypt".
-		let (key, nonce, pending) = try deriveMessageKey(
-			epoch: epochNumber, leaf: myLeafIndex, generation: generation,
+		// Spend this membership's own generation (slice 3b) — seeded from and
+		// consuming the shared secret tree, advanced on the membership.
+		let (key, nonce, generation) = try deriveOwnSendKey(
+			membershipIndex: membershipIndex, epoch: epochNumber,
 			isHandshake: isHandshake, provider)
-		commitConsumption(pending)
 
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: epochNumber,
-			sender: .member(myLeafIndex), authenticatedData: authenticatedData,
+			sender: .member(leaf), authenticatedData: authenticatedData,
 			content: content)
 		// Split, rather than the one-shot `protectPrivate`, purely to keep
 		// the signature: behaviorally identical to `protectPrivate`, which
@@ -353,14 +482,6 @@ extension MLS.RFC9420.Group {
 			content: framed, signature: signature, generation: generation,
 			confirmationTag: nil, senderDataSecret: secrets.senderDataSecret,
 			reuseGuard: reuseGuard, paddingLength: paddingLength)
-
-		secrets = messageSecrets[epochNumber]!
-		if isHandshake {
-			secrets.ownNextGeneration.handshake = generation + 1
-		} else {
-			secrets.ownNextGeneration.application = generation + 1
-		}
-		messageSecrets[epochNumber] = secrets
 		return (message, signature)
 	}
 
@@ -370,10 +491,11 @@ extension MLS.RFC9420.Group {
 	/// `wireFormat: .privateMessage` (see `signPrivate`) — as a
 	/// `PrivateMessage`, advancing the committer's own handshake ratchet
 	/// exactly as `protectContent` advances it for a proposal. Takes
-	/// `oldEpoch` explicitly: a commit is sent in the epoch it closes, not
-	/// the one `committing` has already installed into `self` by the time
-	/// this runs.
+	/// `oldEpoch` explicitly: a commit is sent in the epoch it closes, and
+	/// `committing` seals on a copy of the pre-commit group whose current epoch
+	/// IS `oldEpoch` (the successor is a not-yet-applied delta).
 	mutating func sealHandshakeCommit(
+		membershipIndex: Int,
 		_ provider: any MLS.CipherSuiteProvider,
 		epoch oldEpoch: UInt64,
 		framed: MLS.RFC9420.FramedContent,
@@ -382,48 +504,47 @@ extension MLS.RFC9420.Group {
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> MLS.RFC9420.PrivateMessage {
-		// D18 send guard (see `protectContent`): a private commit seals on the
-		// committer's own handshake ratchet, shared until the send-side slice.
-		guard memberships.count <= 1 else {
-			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
-		}
-		guard var secrets = messageSecrets[oldEpoch] else {
+		guard let secrets = core.messageSecrets[oldEpoch] else {
 			throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(epoch: oldEpoch)
 		}
-		let generation = secrets.ownNextGeneration.handshake
-		guard generation != .max else {
-			throw MLS.RFC9420.GroupError.sendGenerationExhausted
-		}
+		// Spend the committer membership's own handshake generation in the old
+		// epoch (slice 3b) — exactly as `protectContent` spends it for a proposal.
+		let (key, nonce, generation) = try deriveOwnSendKey(
+			membershipIndex: membershipIndex, epoch: oldEpoch, isHandshake: true,
+			provider)
 
-		// Same derive-then-immediately-consume rule as `protectContent`:
-		// our own send cannot "fail to decrypt".
-		let (key, nonce, pending) = try deriveMessageKey(
-			epoch: oldEpoch, leaf: myLeafIndex, generation: generation,
-			isHandshake: true, provider)
-		commitConsumption(pending)
-
-		let message = try MLS.RFC9420.sealPrivate(
+		return try MLS.RFC9420.sealPrivate(
 			provider, keySource: OneShotKey(key: key, nonce: nonce),
 			content: framed, signature: signature, generation: generation,
 			confirmationTag: confirmationTag,
 			senderDataSecret: secrets.senderDataSecret,
 			reuseGuard: reuseGuard, paddingLength: paddingLength)
-
-		secrets = messageSecrets[oldEpoch]!
-		secrets.ownNextGeneration.handshake = generation + 1
-		messageSecrets[oldEpoch] = secrets
-		return message
 	}
 
-	/// Receive a `PrivateMessage` — the §9.2-ordered pipeline: route by
-	/// group/epoch/content-type before any ratchet is touched, open the
-	/// sender data, refuse our own leaf, bound the jump, derive, open the
-	/// content AEAD, and only then consume. A failed decrypt leaves every
+	/// What `openPrivate` recovers from a `PrivateMessage`: the authenticated
+	/// frame, the sender's leaf and `epoch`-bound verified key, and the ratchet
+	/// consumption to commit — or discard, for a read-only peek.
+	struct OpenedPrivate {
+		let authenticated: MLS.RFC9420.AuthenticatedContent
+		let senderLeaf: MLS.LeafIndex
+		let epoch: UInt64
+		let senderSignatureKey: MLS.SignaturePublicKey
+		let pending: PendingConsumption
+	}
+
+	/// The shared private-receive core (D17 §1.1): route by
+	/// group/epoch/content-type, open the sender data, refuse our own leaf,
+	/// derive the message key, and open the content AEAD + framing signature —
+	/// **without committing the ratchet consumption**. `mutating` only for the
+	/// one-time per-leaf chain bootstrap (§9's leaf-secret fork into the handshake
+	/// and application ratchets); the generation consumption is
+	/// returned as `pending` for the caller to `commitConsumption` (the
+	/// consuming entries) or discard (`peeking`). A failed decrypt leaves every
 	/// ratchet exactly where it was.
-	public mutating func unprotect(
+	mutating func openPrivate(
 		_ provider: any MLS.CipherSuiteProvider,
-		message: MLS.RFC9420.PrivateMessage
-	) throws -> Unprotected {
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> OpenedPrivate {
 		guard message.groupID == context.groupID else {
 			throw MLS.RFC9420.GroupError.wrongGroup
 		}
@@ -442,36 +563,107 @@ extension MLS.RFC9420.Group {
 		guard senderData.leafIndex != myLeafIndex else {
 			throw MLS.RFC9420.GroupError.cannotDecryptOwnMessage
 		}
+		// `epoch`'s frozen signing key for the sender's leaf: the key the framing
+		// signature is verified against below, and the epoch-bound identity
+		// surfaced on `Unprotected`. Checked BEFORE deriving any message key — a
+		// leaf blank in the framing epoch can never authenticate, so a forged
+		// `sender_data` naming a blank leaf must not make the receiver bootstrap
+		// and walk that leaf's ratchet.
+		guard let senderSignatureKey = secrets.signatureKeys[senderData.leafIndex]
+		else {
+			throw MLS.RFC9420.GroupError.blankSenderLeaf
+		}
 		let (key, nonce, pending) = try deriveMessageKey(
 			epoch: message.epoch, leaf: senderData.leafIndex,
 			generation: senderData.generation,
 			isHandshake: message.contentType != .application, provider)
 
-		let signatureKeys = secrets.signatureKeys
 		let authenticated = try MLS.RFC9420.openPrivateContent(
 			provider, message: message, senderData: senderData, key: key,
 			nonce: nonce, groupContext: secrets.groupContext,
-			verificationKey: { leaf in
-				guard let key = signatureKeys[leaf] else {
-					throw MLS.RFC9420.GroupError.blankSenderLeaf
-				}
-				return key
-			})
-		commitConsumption(pending)
+			// The verified key IS the returned key, by construction: verification
+			// uses the exact key surfaced on `Unprotected`, so the vouched-for key
+			// and the one that authenticated the frame cannot decouple.
+			verificationKey: { _ in senderSignatureKey })
+		return OpenedPrivate(
+			authenticated: authenticated, senderLeaf: senderData.leafIndex,
+			epoch: message.epoch, senderSignatureKey: senderSignatureKey,
+			pending: pending)
+	}
 
+	/// Build the `Unprotected` view of an opened frame (D17). `authenticatedData`
+	/// comes from the wire message; the epoch-bound `sender`/`senderSignatureKey`
+	/// come from `opened`.
+	static func makeUnprotected(
+		_ opened: OpenedPrivate, authenticatedData: Data
+	) -> Unprotected {
 		let content: UnprotectedContent
-		switch authenticated.content.content {
+		switch opened.authenticated.content.content {
 		case .application(let data):
 			content = .application(data)
 		case .proposal:
 			content = .proposal(
-				MLS.RFC9420.VerifiedProposal(verified: authenticated))
+				MLS.RFC9420.VerifiedProposal(verified: opened.authenticated))
 		case .commit:
-			content = .commit(authenticated)
+			content = .commit(opened.authenticated)
 		}
 		return Unprotected(
-			sender: senderData.leafIndex,
-			authenticatedData: message.authenticatedData,
-			content: content)
+			sender: opened.senderLeaf, epoch: opened.epoch,
+			senderSignatureKey: opened.senderSignatureKey,
+			authenticatedData: authenticatedData, content: content)
+	}
+
+	/// Receive a `PrivateMessage` as a transition (D17 §1.1). Decrypting a
+	/// private message advances a ratchet — a consumption §9.2 requires be
+	/// deleted — so this is a `Transition`: the `group` is the post-consumption
+	/// live state to adopt (and persist), the `output` is the decrypted
+	/// `Unprotected`. For a commit or proposal, route to `validating(commit:)` /
+	/// `verifying(proposal:)` to also get the delta / `VerifiedProposal`; this
+	/// entry decrypts every content type but hands the commit back as inspection
+	/// data (M5 — `.commit` is not applicable). A failed decrypt returns nothing
+	/// and consumes nothing.
+	public func unprotecting(
+		_ provider: any MLS.CipherSuiteProvider,
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> MLS.RFC9420.Transition<Unprotected> {
+		var group = self
+		let opened = try group.openPrivate(provider, message)
+		group.commitConsumption(opened.pending)
+		return MLS.RFC9420.Transition(
+			group: group,
+			output: Self.makeUnprotected(
+				opened, authenticatedData: message.authenticatedData))
+	}
+
+	/// Read-only decrypt (#31): recover a `PrivateMessage`'s content **without**
+	/// advancing any ratchet — nothing to adopt, so it returns a plain
+	/// `Unprotected`, never a `Transition`. Application content only: a handshake
+	/// is refused (`wrongContentType`), so a peek can never yield an applicable
+	/// commit (M5). The consumption the decrypt would make is discarded, so the
+	/// same generation still opens for real via `unprotecting` afterward.
+	public func peeking(
+		_ provider: any MLS.CipherSuiteProvider,
+		_ message: MLS.RFC9420.PrivateMessage
+	) throws -> Unprotected {
+		guard message.contentType == .application else {
+			throw MLS.RFC9420.GroupError.wrongContentType(message.contentType)
+		}
+		var group = self  // consumption + bootstrap land here and are discarded
+		let opened = try group.openPrivate(provider, message)
+		return Self.makeUnprotected(
+			opened, authenticatedData: message.authenticatedData)
+	}
+
+	/// Transitional mutating shim over `unprotecting` (removed in the migration
+	/// slice): adopts the transition's post-consumption `group` into `self` and
+	/// returns the decrypted content. Prefer `unprotecting`.
+	@discardableResult
+	public mutating func unprotect(
+		_ provider: any MLS.CipherSuiteProvider,
+		message: MLS.RFC9420.PrivateMessage
+	) throws -> Unprotected {
+		let transition = try unprotecting(provider, message)
+		self = transition.group
+		return transition.output
 	}
 }

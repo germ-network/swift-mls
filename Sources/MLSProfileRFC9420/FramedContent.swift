@@ -51,6 +51,12 @@ extension MLS.RFC9420 {
 		public var content: FramedContent
 		public var auth: MLS.FramedContentAuthData
 
+		// `AuthenticatedContent` is plain wire data (it is `MLSDecodable`), so its
+		// memberwise `init` is `public` like every other framing type's. It does
+		// NOT prove the signature was checked — a caller can decode one from
+		// arbitrary bytes — so the commit-processing core is not gated on this
+		// type; it is gated on `VerifiedCommit`, whose `init` is module-internal
+		// and minted only after verification (D17 §2.1, M-1). See `VerifiedCommit`.
 		public init(
 			wireFormat: MLS.WireFormat, content: FramedContent,
 			auth: MLS.FramedContentAuthData

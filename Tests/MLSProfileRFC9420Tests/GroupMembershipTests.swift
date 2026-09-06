@@ -26,10 +26,11 @@ struct GroupMembershipTests {
 	func committingAsSoleMembership() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
-		let output = try pair.groupA.committing(
-			as: pair.groupA.myLeafIndex, provider, proposals: [],
+		var group = pair.groupA
+		let output = try group.commit(
+			as: group.myLeafIndex, provider, proposals: [],
 			signingKey: pair.alice.signingKey, randomness: .generate(provider))
-		// Advanced the epoch exactly as the plain `committing` would.
+		// Advanced the epoch exactly as the plain `commit` would.
 		#expect(output.group.context.epoch == pair.groupA.context.epoch + 1)
 	}
 
@@ -44,44 +45,42 @@ struct GroupMembershipTests {
 		}
 	}
 
-	@Test("every send path and the format-1 snapshot fail closed at N > 1")
-	func multipleMembershipsFailClosed() throws {
+	@Test("at N > 1 the bare send API is ambiguous; commit still fails closed")
+	func multipleMembershipsSendResolution() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
 		var group = pair.groupA
 		// A second local membership on a DISTINCT leaf (identity is the leaf
-		// index). This is the shape the send-side slice makes correct; until
-		// then every send path — and the single-membership snapshot — must fail
-		// closed rather than share positions or silently drop a membership.
+		// index). Slice 3b makes the pure sends (`protect`/`proposeUpdate`)
+		// per-membership, so the bare (non-`as:`) form can no longer pick one —
+		// it is `ambiguousMembership`, and `protect(as:)`/`proposingUpdate(as:)`
+		// are the N > 1 path (proven in `PerMembershipSendTests`). `commit` still
+		// re-keys the tree for one membership only, so it stays fenced until the
+		// per-membership receive slice.
 		group.memberships.append(
 			MLS.RFC9420.Membership(
 				leafIndex: MLS.LeafIndex(value: 1), secretKeys: [:]))
 
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
+		#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 2)) {
 			_ = try group.protect(
 				provider, applicationData: Data("x".utf8),
 				signingKey: pair.alice.signingKey)
 		}
 		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
-			_ = try group.committing(
+			_ = try group.commit(
 				provider, proposals: [], signingKey: pair.alice.signingKey,
 				randomness: .generate(provider))
 		}
-		// Both framings: the public branch seals via `sealPublic` and never
-		// reaches `protectContent`'s guard, so `proposeUpdate` must guard at its
-		// top.
+		// Both framings resolve the membership before branching, so both are
+		// ambiguous on the bare form.
 		for framing in [
 			MLS.RFC9420.Group.HandshakeFraming.privateMessage, .publicMessage,
 		] {
-			#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
+			#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 2)) {
 				_ = try group.proposeUpdate(
 					provider, signingKey: pair.alice.signingKey,
 					framing: framing)
 			}
-		}
-		// Format-1 snapshot persists one membership; N > 1 must throw, not drop.
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
-			_ = try group.makeSnapshot()
 		}
 	}
 
@@ -93,7 +92,7 @@ struct GroupMembershipTests {
 		let commitOut = try pair.groupA.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
 			randomness: .generate(provider), framing: .publicMessage)
-		guard case .publicMessage(let publicCommit) = commitOut.commit else {
+		guard case .publicMessage(let publicCommit) = commitOut.output.message else {
 			Issue.record("expected a public commit")
 			return
 		}

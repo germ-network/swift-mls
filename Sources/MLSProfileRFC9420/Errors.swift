@@ -85,7 +85,7 @@ extension MLS.RFC9420 {
 		/// A `PublicMessage` that isn't a commit was handed to commit
 		/// processing.
 		case notACommit
-		/// `Group.verify(proposal:)` was given a message whose framed content
+		/// `Group.verifying(proposal:)` was given a message whose framed content
 		/// isn't a proposal (also `ProposalStore.insert`'s defensive guard,
 		/// though a `VerifiedProposal` cannot carry non-proposal content).
 		case notAProposal
@@ -116,6 +116,8 @@ extension MLS.RFC9420 {
 		/// holding more than one local `Membership` (D18): a send path
 		/// (`protect`, `committing`, `proposeUpdate` — each local membership
 		/// sends on its own ratchet, shared in `GroupCore` until the send-side
+		/// slice), commit-receive (`validating`/`processing`, which installs
+		/// keys for a single membership until the receive-side per-membership
 		/// slice), or a format-1 snapshot (`makeSnapshot`, which persists a
 		/// single membership until the format-2 slice). Fails closed rather than
 		/// sharing positions or silently dropping memberships. **A staging
@@ -125,6 +127,19 @@ extension MLS.RFC9420 {
 		/// exactly one local `Membership` (D18). Use the membership-scoped API
 		/// (`committing(as:)`, `proposingUpdate(as:)`) to name the membership.
 		case ambiguousMembership(count: Int)
+		/// `PendingCommit.apply(onto:)` was given a `live` group whose context
+		/// no longer equals the base the pending was validated against — the
+		/// group has moved to a different state (typically another commit
+		/// applied first). Applying the stale pending would fork the group, so
+		/// it is rejected rather than silently composed (D17 §4).
+		case staleBase
+		/// `PendingCommit.apply(onto:)` was given a `live` group whose set of
+		/// local memberships differs from the set the pending was validated
+		/// against (D18 / D17 §4 L-2). The delta installs per-membership key
+		/// material keyed by leaf index; composing it onto a different
+		/// membership set would misplace or drop that material, so it is
+		/// rejected rather than applied.
+		case membershipMismatch
 		/// A commit carried a ReInit proposal. RFC 9420 §12.4.2: such a
 		/// client "MUST NOT use the group to send messages anymore" and
 		/// must wait for a §11.2 Welcome — a transition this project

@@ -159,7 +159,7 @@ struct ApplicationPSKTests {
 		let bob = try SelfInteropTests.member("bob")
 
 		var groupA = try SelfInteropTests.createGroup(alice)
-		let add = try groupA.committing(
+		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
 		groupA = add.group
@@ -182,7 +182,7 @@ struct ApplicationPSKTests {
 		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
 			(try id.applicationStorageID()) == storageID ? Self.bytes(pskA) : nil
 		}
-		let commit = try groupA.committing(
+		let commit = try groupA.commit(
 			provider, proposals: [.proposal(.preSharedKey(appID))],
 			signingKey: alice.signingKey, randomness: .generate(provider), psk: resolveA
 		)
@@ -210,7 +210,7 @@ struct ApplicationPSKTests {
 			throws: MLS.RFC9420.GroupError.wrongPskNonceLength(
 				expected: provider.hashSize, actual: 1)
 		) {
-			try group.committing(
+			_ = try group.committing(
 				provider, proposals: [.proposal(.preSharedKey(badID))],
 				signingKey: solo.signingKey, randomness: .generate(provider))
 		}
