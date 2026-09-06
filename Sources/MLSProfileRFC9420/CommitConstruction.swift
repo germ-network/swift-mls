@@ -134,13 +134,14 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
-		// D18 guard: `committing` installs/prunes `secretKeys` and seeds the
-		// pending self-Update on the sole membership (`memberships[0]`) only, and
-		// a private commit also seals on that membership's handshake ratchet
-		// (shared in `GroupCore` until the send-side slice). So N > 1 fails closed
-		// for BOTH framings — public too, despite not touching the ratchet —
-		// because it would silently ignore the other memberships. Removed in the
-		// send-side slice.
+		// D18 guard: a commit re-keys the tree, so the OTHER local memberships'
+		// path secrets must be re-derived from it (a per-membership decap) for them
+		// to survive the epoch advance — that is the per-membership receive slice.
+		// The seal itself is already per-membership (slice 3b spends `memberships[0]`'s
+		// own ratchet), but `committing` still installs `secretKeys`/`pendingUpdate`
+		// for `memberships[0]` alone, so N > 1 fails closed for BOTH framings —
+		// public too — rather than silently stranding the others. Lifted by the
+		// per-membership receive slice.
 		guard memberships.count <= 1 else {
 			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
 		}
@@ -391,9 +392,13 @@ extension MLS.RFC9420.Group {
 					signature: signature, confirmationTag: confirmationTag,
 					membershipKey: epoch.membershipKey))
 		case .privateMessage:
+			// The committer is `memberships[0]` while `committing` stays fenced at
+			// N > 1 (see the guard); the per-membership decap slice threads the
+			// committing membership's index here when it lifts that fence.
 			message = .privateMessage(
 				try sealed.sealHandshakeCommit(
-					provider, epoch: context.epoch, framed: framed,
+					membershipIndex: 0, provider, epoch: context.epoch,
+					framed: framed,
 					signature: signature, confirmationTag: confirmationTag,
 					reuseGuard: reuseGuard
 						?? MLS.Framing.ReuseGuard(provider.randomBytes(4)),

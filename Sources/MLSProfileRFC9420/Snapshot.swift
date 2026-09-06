@@ -101,10 +101,32 @@ extension MLS.RFC9420.Group {
 	struct MembershipArchive: Codable, Sendable, Equatable {
 		var treeSecretKeys: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
 		var pendingUpdate: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>?
+		/// This membership's own send ratchets for the current epoch (slice 3b,
+		/// draft — spec.md §4 in the migration slice). Absent when the membership
+		/// has not sent this epoch (restore re-seeds lazily from the secret tree);
+		/// present ⟹ both ratchets seeded. Like `pendingUpdate`, its epoch is not
+		/// stored — it is the group's current epoch by construction.
+		var ownSend: OwnSendArchive?
 
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case treeSecretKeys = 0
 			case pendingUpdate = 1
+			case ownSend = 2
+		}
+	}
+
+	/// A membership's own send state for one epoch (slice 3b): its two send
+	/// ratchets, seeded together from one leaf secret and never carrying skipped
+	/// keys (own send is strictly sequential). The next generation is NOT stored —
+	/// it equals each chain's `head_generation` by construction (own chains never
+	/// retire), so a separate counter would be a second wire form for one state.
+	struct OwnSendArchive: Codable, Sendable, Equatable {
+		var handshakeChain: ChainArchive
+		var applicationChain: ChainArchive
+
+		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
+			case handshakeChain = 0
+			case applicationChain = 1
 		}
 	}
 
@@ -193,14 +215,16 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	/// spec/snapshot.md §4.3.
+	/// spec/snapshot.md §4.3. Slice 3b: `chains` now holds **remote** senders'
+	/// ratchets only — a local membership's own send ratchet moved to its
+	/// `MembershipArchive.ownSend`, so `own_next_generation` (former key 5) is
+	/// gone from here.
 	struct MessageSecretStoreArchive: Codable, Sendable, Equatable {
 		var groupContext: Data
 		@SecretField var senderDataSecret: SecretBytes
 		var signatureKeys: MLS.RFC9420.IntegerKeyedMap<Data>
 		var secretTree: SecretTreeStateArchive
 		var chains: MLS.RFC9420.IntegerKeyedMap<ChainArchive>
-		var ownNextGeneration: OwnNextGenerationArchive
 
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case groupContext = 0
@@ -209,7 +233,6 @@ extension MLS.RFC9420.Group {
 			case
 				secretTree = 3
 			case chains = 4
-			case ownNextGeneration = 5
 		}
 	}
 
@@ -249,18 +272,6 @@ extension MLS.RFC9420.Group {
 		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
 			case key = 0
 			case nonce = 1
-		}
-	}
-
-	/// spec/snapshot.md §4.3 `own_next_generation`, a fixed two-entry integer
-	/// map `{0: handshake, 1: application}`.
-	struct OwnNextGenerationArchive: Codable, Sendable, Equatable {
-		var handshake: UInt64
-		var application: UInt64
-
-		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
-			case handshake = 0
-			case application = 1
 		}
 	}
 
@@ -363,16 +374,23 @@ extension MLS.RFC9420.Group {
 		let membershipsMap = MLS.RFC9420.IntegerKeyedMap(
 			Dictionary(
 				uniqueKeysWithValues: memberships.map {
-					(UInt64($0.leafIndex.value), Self.makeMembershipArchive($0))
+					(
+						UInt64($0.leafIndex.value),
+						Self.makeMembershipArchive(
+							$0, currentEpoch: context.epoch)
+					)
 				}))
 
 		return Snapshot(format: 2, core: core, memberships: membershipsMap)
 	}
 
-	/// One membership's per-client archive: its tree-path secret keys and its
-	/// pending self-Update (index-keyed entries, absent when none is outstanding).
+	/// One membership's per-client archive: its tree-path secret keys, its
+	/// pending self-Update (index-keyed entries, absent when none is outstanding),
+	/// and its own send ratchets for `currentEpoch` (absent when unseeded, or when
+	/// tagged for another epoch — a live group's `ownSend` is reset to the current
+	/// epoch on every advance, so that only guards a stale in-memory tag).
 	private static func makeMembershipArchive(
-		_ membership: MLS.RFC9420.Membership
+		_ membership: MLS.RFC9420.Membership, currentEpoch: UInt64
 	) -> MembershipArchive {
 		let treeSecretKeysMap = MLS.RFC9420.IntegerKeyedMap(
 			Dictionary(
@@ -404,8 +422,20 @@ extension MLS.RFC9420.Group {
 								)
 							}))
 		}
+		// Persist own send state only when it is seeded and tagged for the current
+		// epoch; both ratchets seed together, so `handshakeChain != nil` gates both.
+		var ownSendArchive: OwnSendArchive?
+		if membership.ownSend.epoch == currentEpoch,
+			let handshakeChain = membership.ownSend.handshakeChain,
+			let applicationChain = membership.ownSend.applicationChain
+		{
+			ownSendArchive = OwnSendArchive(
+				handshakeChain: makeChain(handshakeChain),
+				applicationChain: makeChain(applicationChain))
+		}
 		return MembershipArchive(
-			treeSecretKeys: treeSecretKeysMap, pendingUpdate: pendingArchive)
+			treeSecretKeys: treeSecretKeysMap, pendingUpdate: pendingArchive,
+			ownSend: ownSendArchive)
 	}
 
 	/// The standalone artifact convenience of D10: the `Snapshot` encoded into a
@@ -462,10 +492,7 @@ extension MLS.RFC9420.Group {
 			signatureKeys: signatureKeys,
 			secretTree: SecretTreeStateArchive(
 				leafCount: store.tree.leafCount.value, nodeSecrets: nodeSecrets),
-			chains: chains,
-			ownNextGeneration: OwnNextGenerationArchive(
-				handshake: UInt64(store.ownNextGeneration.handshake),
-				application: UInt64(store.ownNextGeneration.application)))
+			chains: chains)
 	}
 
 	/// spec/snapshot.md §4.3: `key = (leaf << 1) | kind`, kind bit 0 =
@@ -553,7 +580,7 @@ extension MLS.RFC9420.Group {
 				try restoreMembership(
 					leafKey: leafKey,
 					archive: snapshot.memberships.entries[leafKey]!,
-					tree: tree, currentEpoch: context.epoch))
+					tree: tree, currentEpoch: context.epoch, provider))
 		}
 		return MLS.RFC9420.Group(core: core, memberships: memberships)
 	}
@@ -579,8 +606,9 @@ extension MLS.RFC9420.Group {
 		let membership = try restoreMembership(
 			leafKey: UInt64(snapshot.myLeafIndex),
 			archive: MembershipArchive(
-				treeSecretKeys: snapshot.treeSecretKeys, pendingUpdate: nil),
-			tree: tree, currentEpoch: context.epoch)
+				treeSecretKeys: snapshot.treeSecretKeys, pendingUpdate: nil,
+				ownSend: nil),
+			tree: tree, currentEpoch: context.epoch, provider)
 		return MLS.RFC9420.Group(core: core, memberships: [membership])
 	}
 
@@ -729,7 +757,7 @@ extension MLS.RFC9420.Group {
 	/// (format 1).
 	private static func restoreMembership(
 		leafKey: UInt64, archive: MembershipArchive, tree: MLS.TreeKEM.RatchetTree,
-		currentEpoch: UInt64
+		currentEpoch: UInt64, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Membership {
 		// A leaf index ≥ leaf_count (or ≥ 2^32) names no leaf. Guard BEFORE
 		// `leaf(at:)`, whose `2 * index` is a trapping UInt32 multiply
@@ -747,8 +775,30 @@ extension MLS.RFC9420.Group {
 			try restorePendingUpdate(
 				$0, leafIndex: leafIndex, currentEpoch: currentEpoch)
 		}
+		let ownSend = try restoreOwnSend(
+			archive.ownSend, currentEpoch: currentEpoch, nh: provider.hashSize,
+			nk: provider.aeadKeySize, nn: provider.aeadNonceSize)
 		return MLS.RFC9420.Membership(
-			leafIndex: leafIndex, secretKeys: secretKeys, pendingUpdate: pendingUpdate)
+			leafIndex: leafIndex, secretKeys: secretKeys, pendingUpdate: pendingUpdate,
+			ownSend: ownSend)
+	}
+
+	/// Rebuilds a membership's own send state (slice 3b). Absent ⟹ the membership
+	/// had not sent this epoch — a fresh, unseeded state that re-seeds lazily from
+	/// the secret tree on its first send. Present ⟹ both ratchets restored, tagged
+	/// with the current epoch so the send path resumes them rather than resetting.
+	/// The send positions are the restored chains' head generations — not stored
+	/// separately, so nothing can disagree with the chain.
+	private static func restoreOwnSend(
+		_ archive: OwnSendArchive?, currentEpoch: UInt64, nh: Int, nk: Int, nn: Int
+	) throws -> MLS.RFC9420.Membership.OwnSendState {
+		var state = MLS.RFC9420.Membership.OwnSendState(epoch: currentEpoch)
+		guard let archive else { return state }
+		state.handshakeChain = try restoreChain(
+			archive.handshakeChain, nh: nh, nk: nk, nn: nn)
+		state.applicationChain = try restoreChain(
+			archive.applicationChain, nh: nh, nk: nk, nn: nn)
+		return state
 	}
 
 	/// Rebuilds a membership's pending self-Update from its persisted update set
@@ -898,12 +948,9 @@ extension MLS.RFC9420.Group {
 			chains[chainKey] = try restoreChain(chainArchive, nh: nh, nk: nk, nn: nn)
 		}
 
-		let ownNext = try restoreOwnNextGeneration(archive.ownNextGeneration)
-
 		return MessageSecrets(
 			groupContext: storeContext, senderDataSecret: archive.senderDataSecret,
-			signatureKeys: signatureKeys, tree: secretTree, chains: chains,
-			ownNextGeneration: ownNext)
+			signatureKeys: signatureKeys, tree: secretTree, chains: chains)
 	}
 
 	private static func restoreChain(
@@ -950,26 +997,5 @@ extension MLS.RFC9420.Group {
 		}
 		return MLS.KeySchedule.RatchetChain(
 			headGeneration: 0, headSecret: nil, skipped: skipped)
-	}
-
-	private static func restoreOwnNextGeneration(
-		_ archive: OwnNextGenerationArchive
-	) throws -> (handshake: UInt32, application: UInt32) {
-		// spec/snapshot.md §4.3: own_next_generation ≤ 2^32, where 2^32 means
-		// "exhausted". This build's counters are UInt32 and never reach 2^32
-		// (the send guard caps at UInt32.max - 1), so 2^32 has no home here — a
-		// peer emitting it cannot be restored. Self-produced archives never do.
-		func narrow(_ value: UInt64) throws -> UInt32 {
-			guard let narrowed = UInt32(exactly: value) else {
-				throw MLS.RFC9420.SnapshotError.ownGenerationUnrepresentable(
-					handshake: archive.handshake,
-					application: archive.application)
-			}
-			return narrowed
-		}
-		return (
-			handshake: try narrow(archive.handshake),
-			application: try narrow(archive.application)
-		)
 	}
 }

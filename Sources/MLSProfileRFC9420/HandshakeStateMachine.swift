@@ -211,6 +211,16 @@ extension MLS.RFC9420 {
 			// Proposed-but-uncommitted self-Update secrets do not outlive the
 			// epoch (forward secrecy) — the advance retires the whole set.
 			result.pendingUpdates = nil
+			// Likewise each local membership's own send ratchet: the retired
+			// epoch's head secret is dropped, and the new epoch starts unseeded
+			// (re-seeded lazily from the new secret tree on its first send). The
+			// send path also self-corrects on an epoch-tag mismatch, so this is
+			// forward secrecy, not correctness — it just drops the old secret now
+			// rather than at the next send (slice 3b).
+			for index in result.memberships.indices {
+				result.memberships[index].ownSend =
+					MLS.RFC9420.Membership.OwnSendState(epoch: newContext.epoch)
+			}
 			// live's retained old-epoch stores are already in `result`; add the
 			// new epoch's, then prune to the retention window against the NEW
 			// epoch (pruning against the old could evict the entry just added).

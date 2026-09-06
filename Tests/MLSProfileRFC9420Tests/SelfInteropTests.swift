@@ -337,7 +337,7 @@ struct SelfInteropTests {
 
 		// Bob frames an Add proposal (of Carol) as a PrivateMessage.
 		let framed = try groupB.protectContent(
-			provider, content: .proposal(.add(carol.keyPackage)),
+			membershipIndex: 0, provider, content: .proposal(.add(carol.keyPackage)),
 			authenticatedData: Data(), signingKey: bob.signingKey,
 			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 			paddingLength: 0

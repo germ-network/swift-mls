@@ -45,21 +45,23 @@ struct GroupMembershipTests {
 		}
 	}
 
-	@Test("every send path fails closed at N > 1")
-	func multipleMembershipsFailClosed() throws {
+	@Test("at N > 1 the bare send API is ambiguous; commit still fails closed")
+	func multipleMembershipsSendResolution() throws {
 		let provider = Self.provider
 		let pair = try ConstructedRejectionTests.pair()
 		var group = pair.groupA
 		// A second local membership on a DISTINCT leaf (identity is the leaf
-		// index). This is the shape the send-side slice makes correct; until
-		// then every send path must fail closed rather than share positions or
-		// silently drop a membership. (The format-2 snapshot no longer guards
-		// here — it persists every membership; see `SnapshotTests`.)
+		// index). Slice 3b makes the pure sends (`protect`/`proposeUpdate`)
+		// per-membership, so the bare (non-`as:`) form can no longer pick one —
+		// it is `ambiguousMembership`, and `protect(as:)`/`proposingUpdate(as:)`
+		// are the N > 1 path (proven in `PerMembershipSendTests`). `commit` still
+		// re-keys the tree for one membership only, so it stays fenced until the
+		// per-membership receive slice.
 		group.memberships.append(
 			MLS.RFC9420.Membership(
 				leafIndex: MLS.LeafIndex(value: 1), secretKeys: [:]))
 
-		#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
+		#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 2)) {
 			_ = try group.protect(
 				provider, applicationData: Data("x".utf8),
 				signingKey: pair.alice.signingKey)
@@ -69,13 +71,12 @@ struct GroupMembershipTests {
 				provider, proposals: [], signingKey: pair.alice.signingKey,
 				randomness: .generate(provider))
 		}
-		// Both framings: the public branch seals via `sealPublic` and never
-		// reaches `protectContent`'s guard, so `proposeUpdate` must guard at its
-		// top.
+		// Both framings resolve the membership before branching, so both are
+		// ambiguous on the bare form.
 		for framing in [
 			MLS.RFC9420.Group.HandshakeFraming.privateMessage, .publicMessage,
 		] {
-			#expect(throws: MLS.RFC9420.GroupError.multipleMembershipsUnsupported) {
+			#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 2)) {
 				_ = try group.proposeUpdate(
 					provider, signingKey: pair.alice.signingKey,
 					framing: framing)

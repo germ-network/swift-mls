@@ -22,14 +22,17 @@ extension MLS.RFC9420 {
 		/// group, at least one (see `init(core:memberships:)`), ordered ascending
 		/// by leaf index on restore. The common case is exactly one. At N > 1 the
 		/// client-agnostic `core`, application receive (`unprotect`, which touches
-		/// only `core`), and format-2 persistence (which stores every membership)
-		/// are correct; the paths that are not yet N > 1-capable **fail closed**,
-		/// never silently: *send* (`protect`/`committing`/`proposeUpdate`) throws
-		/// until the send-side slice, and *commit* receive (`validatedDelta`, which
-		/// would install path keys for `memberships[0]` alone) throws until the
-		/// per-membership receive slice — both `multipleMembershipsUnsupported`. So
-		/// N > 1 is representable, persists, and receives application traffic
-		/// today; the rest is staged and loud.
+		/// only `core`), the pure sends (`protect(as:)`/`proposingUpdate(as:)`,
+		/// each on its own membership's ratchet — slice 3b), and format-2
+		/// persistence (which stores every membership) are all correct; the bare
+		/// (non-`as:`) send API is `ambiguousMembership` there, since it cannot pick
+		/// a membership. The path that is not yet N > 1-capable **fails closed**,
+		/// never silently: *commit* (`committing`, which re-keys the tree and
+		/// installs keys for `memberships[0]` alone) throws
+		/// `multipleMembershipsUnsupported` until the per-membership receive slice
+		/// re-derives the other memberships' path secrets. So N > 1 is
+		/// representable, persists, sends, and receives application traffic today;
+		/// only the commit round-trip is staged and loud.
 		public internal(set) var memberships: [Membership]
 
 		/// The sole local membership, when there is exactly one (the common

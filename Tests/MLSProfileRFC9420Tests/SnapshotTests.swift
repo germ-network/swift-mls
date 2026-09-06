@@ -344,10 +344,12 @@ struct SnapshotTests {
 			Self.provider, applicationData: Data("first".utf8),
 			signingKey: duo.alice.signingKey)
 		let epoch = duo.groupA.context.epoch
-		#expect(duo.groupA.messageSecrets[epoch]!.ownNextGeneration.application == 1)
+		// The own send position is per-membership now (slice 3b).
+		#expect(duo.groupA.memberships[0].ownSend.epoch == epoch)
+		#expect(duo.groupA.memberships[0].ownSend.nextGeneration(isHandshake: false) == 1)
 
 		var restored = try Group.restore(from: try duo.groupA.archive(), Self.provider)
-		#expect(restored.messageSecrets[epoch]!.ownNextGeneration.application == 1)
+		#expect(restored.memberships[0].ownSend.nextGeneration(isHandshake: false) == 1)
 
 		// The restored sender's next message uses generation 1, not a reused 0.
 		let second = try restored.protect(
@@ -502,8 +504,9 @@ struct SnapshotTests {
 		// the update-set map (a container; its per-entry secret is in the table
 		// below).
 		assertClassification(
-			Group.MembershipArchive(treeSecretKeys: secretMap, pendingUpdate: nil),
-			["treeSecretKeys": .secret, "pendingUpdate": .plain])
+			Group.MembershipArchive(
+				treeSecretKeys: secretMap, pendingUpdate: nil, ownSend: nil),
+			["treeSecretKeys": .secret, "pendingUpdate": .plain, "ownSend": .plain])
 
 		// A pending-update entry — public_key is opaque wire bytes; secret is the
 		// proposed leaf HPKE private key.
@@ -554,13 +557,10 @@ struct SnapshotTests {
 				signatureKeys: publicMap,
 				secretTree: Group.SecretTreeStateArchive(
 					leafCount: 1, nodeSecrets: secretMap),
-				chains: MLS.RFC9420.IntegerKeyedMap([:]),
-				ownNextGeneration: Group.OwnNextGenerationArchive(
-					handshake: 0, application: 0)),
+				chains: MLS.RFC9420.IntegerKeyedMap([:])),
 			[
 				"groupContext": .plain, "senderDataSecret": .secret,
 				"signatureKeys": .plain, "secretTree": .plain, "chains": .plain,
-				"ownNextGeneration": .plain,
 			])
 
 		assertClassification(
@@ -578,9 +578,20 @@ struct SnapshotTests {
 			Group.SkippedKeyArchive(key: secret, nonce: Data([0])),
 			["key": .secret, "nonce": .plain])
 
+		// §4 own send state (slice 3b): the ratchets nest their own secret fields;
+		// at this level each field is a plain sub-struct. The send positions are
+		// the chains' head generations, not a separate field.
 		assertClassification(
-			Group.OwnNextGenerationArchive(handshake: 0, application: 0),
-			["handshake": .plain, "application": .plain])
+			Group.OwnSendArchive(
+				handshakeChain: Group.ChainArchive(
+					headGeneration: 0,
+					headSecret: SecretField(wrappedValue: secret),
+					skipped: MLS.RFC9420.IntegerKeyedMap([:])),
+				applicationChain: Group.ChainArchive(
+					headGeneration: 0,
+					headSecret: SecretField(wrappedValue: secret),
+					skipped: MLS.RFC9420.IntegerKeyedMap([:]))),
+			["handshakeChain": .plain, "applicationChain": .plain])
 
 		assertClassification(
 			Group.RetentionArchive(

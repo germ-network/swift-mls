@@ -41,11 +41,6 @@ extension MLS.RFC9420 {
 		/// A skipped-key generation was ≥ the chain's `head_generation`
 		/// (spec/snapshot.md §4.3: `skipped` keys MUST be < `head_generation`).
 		case skippedGenerationNotBelowHead(generation: UInt64, headGeneration: UInt64)
-		/// `own_next_generation` was `2^32` (spec/snapshot.md §4.3's "exhausted"
-		/// sentinel). Legal in the format but unrepresentable in this build's
-		/// `UInt32` own-generation counters; a peer emitting it cannot be
-		/// restored here. Self-produced archives never emit it.
-		case ownGenerationUnrepresentable(handshake: UInt64, application: UInt64)
 		/// A `Retention` value was ≥ 2^32 (spec/snapshot.md §4.4: each < 2^32).
 		case retentionValueOutOfRange(field: String, value: UInt64)
 		/// A store's key packing, index bound, epoch key, or `group_context`
