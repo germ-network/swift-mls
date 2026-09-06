@@ -86,11 +86,14 @@ identifiers. Here that part is the application. Credentials are opaque to this
 library: it holds no identity policy, interprets no identifiers, and never calls
 into the application.
 
-Known gap: the library does not yet *report* credential replacements (an Update
-or UpdatePath carrying a new credential for an existing leaf); an application can
-detect them today only by diffing the pre- and post-commit trees itself. The
-two-step handshake API in issue #32 will surface every §5.3.1 event — including
-the old and new credential together — before anything is applied.
+Because the application is the AS, the library *surfaces* every §5.3.1-relevant
+event rather than judging it. The two-step handshake API (issue #32) is that
+seam: validating a commit returns a pending value whose effects report each
+credential replacement — old and new credential together — alongside every add,
+update, and removal, before anything is applied; joining from a Welcome returns
+the roster it is about to trust, for the same adjudication. The application
+inspects the report, applies its identity policy, and only then adopts the
+pending — or declines it.
 
 ## Licence
 

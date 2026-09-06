@@ -6,17 +6,17 @@ import MLSTreeMath
 import SecretBytes
 
 /// `2^32` — the format's one-past-the-last generation. spec/snapshot.md §4.3:
-/// a retired `Chain` sets `head_generation` here (`head_secret` absent), and
-/// `own_next_generation` uses it as the "exhausted" sentinel. Held as a `UInt64`
-/// because it does not fit the in-memory `UInt32` generation counters.
+/// a retired `Chain` sets `head_generation` here (`head_secret` absent); format
+/// 1's `own_next_generation` (§4.7) uses it as the "exhausted" sentinel. Held as
+/// a `UInt64` because it does not fit the in-memory `UInt32` generation counters.
 private let generationCeiling: UInt64 = 1 << 32
 
 extension MLS.RFC9420.Group {
 	// MARK: - Schema (spec/snapshot.md §4)
 
 	/// The persisted state of one `MLS.RFC9420` group — the `Snapshot` archive
-	/// (spec/snapshot.md documents format 1; this is format 2, folded into the
-	/// spec by the migration slice), a `Codable` value with secrets carried as
+	/// (spec/snapshot.md §4.1: format 2 is the native shape; §4.7 the decode-only
+	/// format 1), a `Codable` value with secrets carried as
 	/// `@SecretField`. The API vends this type (design decision D10): a consumer
 	/// either composes it into its own archive or seals the standalone
 	/// `SecretArchive` from `archive()`. Sealing is out of this format's scope
@@ -101,8 +101,8 @@ extension MLS.RFC9420.Group {
 	struct MembershipArchive: Codable, Sendable, Equatable {
 		var treeSecretKeys: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
 		var pendingUpdate: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>?
-		/// This membership's own send ratchets for the current epoch (slice 3b,
-		/// draft — spec.md §4 in the migration slice). Absent when the membership
+		/// This membership's own send ratchets for the current epoch
+		/// (spec/snapshot.md §4.1.2 `own_send`). Absent when the membership
 		/// has not sent this epoch (restore re-seeds lazily from the secret tree);
 		/// present ⟹ both ratchets seeded. Like `pendingUpdate`, its epoch is not
 		/// stored — it is the group's current epoch by construction.
@@ -161,7 +161,7 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// The flat, single-membership **format 1** schema, retained decode-only
-	/// (spec/snapshot.md §4, format 1). `makeSnapshot` no longer emits it; it is
+	/// (spec/snapshot.md §4.7). `makeSnapshot` no longer emits it; it is
 	/// the shape of archives produced before the D18 client-aware split, chiefly
 	/// the deployed `export_for_swift()` migration source (#49). A format-1
 	/// archive restores to a group with exactly one membership (its `myLeafIndex`
@@ -176,7 +176,7 @@ extension MLS.RFC9420.Group {
 		var epochSecrets: EpochSecretsArchive
 		var treeSecretKeys: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
 		var resumptionPsks: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>
-		var messageSecrets: MLS.RFC9420.IntegerKeyedMap<MessageSecretStoreArchive>
+		var messageSecrets: MLS.RFC9420.IntegerKeyedMap<MessageSecretStoreFormat1Archive>
 		var retention: RetentionArchive
 		var config: SnapshotConfig?
 		var exporterTree: SecretTreeStateArchive?
@@ -194,6 +194,43 @@ extension MLS.RFC9420.Group {
 			case retention = 9
 			case config = 10
 			case exporterTree = 11
+		}
+	}
+
+	/// Format 1's per-epoch store (spec/snapshot.md §4.7): §4.3's fields plus the
+	/// **required** `own_next_generation` (key 5) the mls-rs emitter includes,
+	/// which format 2's `MessageSecretStoreArchive` does not model. Decode-only;
+	/// `restoreFormat1` cross-checks key 5 against the own-leaf chains and then
+	/// maps this onto the format-2 store, dropping both key 5 and the own-leaf
+	/// chains (own send is per-`Membership` in format 2, re-seeded lazily).
+	struct MessageSecretStoreFormat1Archive: Codable, Sendable, Equatable {
+		var groupContext: Data
+		@SecretField var senderDataSecret: SecretBytes
+		var signatureKeys: MLS.RFC9420.IntegerKeyedMap<Data>
+		var secretTree: SecretTreeStateArchive
+		var chains: MLS.RFC9420.IntegerKeyedMap<ChainArchive>
+		var ownNextGeneration: OwnNextGenerationArchive
+
+		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
+			case groupContext = 0
+			case senderDataSecret = 1
+			case signatureKeys = 2
+			case secretTree = 3
+			case chains = 4
+			case ownNextGeneration = 5
+		}
+	}
+
+	/// Format 1's `own_next_generation` (spec/snapshot.md §4.7 key 5): the
+	/// sender's own next handshake and application send positions. Cross-checked
+	/// against the own-leaf chains at restore, then discarded.
+	struct OwnNextGenerationArchive: Codable, Sendable, Equatable {
+		var handshake: UInt64
+		var application: UInt64
+
+		enum CodingKeys: Int, CodingKey, ArchiveIntegerCodingKey {
+			case handshake = 0
+			case application = 1
 		}
 	}
 
@@ -312,7 +349,7 @@ extension MLS.RFC9420.Group {
 		// Prune to the current retention window before emitting. `messageSecrets`
 		// is pruned lazily by the live layer (only on epoch entry), so after a
 		// `messageSecretsDepth` decrease it can transiently hold epochs outside
-		// the window — which restore rejects per spec/snapshot.md §4.1 key 8.
+		// the window — which restore rejects per spec/snapshot.md §4.1.1 key 5.
 		// Emitting the window-conformant subset realizes the retention policy the
 		// caller set and keeps the snapshot self-consistent. `resumptionPsks` is
 		// already window-pruned on the policy change; filtering it here is a
@@ -532,7 +569,7 @@ extension MLS.RFC9420.Group {
 	/// opened from a sealed blob by the consumer). `provider` must back the
 	/// suite named in the snapshot's `group_context`; it is used only for the
 	/// §3.1 length checks and suite match, never for a cryptographic operation
-	/// at decode (spec/snapshot.md §4.1).
+	/// at decode (spec/snapshot.md §4.1.1).
 	public static func restore(
 		from archive: SecretArchive, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
@@ -552,8 +589,8 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Restores a group from a decoded **format 2** `Snapshot` (D18): validates
-	/// the core section (spec/snapshot.md §4.1/§4.3 cross-consistency MUSTs) and
-	/// each membership, then composes them. Every failure is a thrown
+	/// the core section (spec/snapshot.md §4.1.1/§4.3 cross-consistency MUSTs)
+	/// and each membership, then composes them. Every failure is a thrown
 	/// `SnapshotError` (or a propagated codec/tree error), never a trap.
 	public static func restore(
 		from snapshot: Snapshot, _ provider: any MLS.CipherSuiteProvider
@@ -563,8 +600,8 @@ extension MLS.RFC9420.Group {
 		}
 		let (core, tree, context) = try restoreCore(snapshot.core, provider)
 
-		// D18: at least one membership (the format-2 schema is written into
-		// spec/snapshot.md by the migration slice). The composite
+		// D18: at least one membership (spec/snapshot.md §4.1: `memberships` is
+		// never empty). The composite
 		// `init(core:memberships:)` has a matching precondition, but that guards a
 		// library invariant — a decoded archive is wire-reachable, so an empty
 		// map throws rather than trapping.
@@ -592,6 +629,25 @@ extension MLS.RFC9420.Group {
 	private static func restoreFormat1(
 		_ snapshot: SnapshotFormat1, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
+		// The current epoch names which store holds the sender's live own-send
+		// ratchets (spec/snapshot.md §4.7); decode it before mapping the stores.
+		let currentEpoch = try MLS.RFC9420.GroupContext(
+			mlsEncoded: snapshot.groupContext
+		).epoch
+		// Cross-check each store's own_next_generation against its own-leaf chains.
+		// For the current epoch, lift those chains into the membership's own_send
+		// (a member that had sent resumes at its recorded position); for retained
+		// epochs, drop them (they cannot be sent in). The core's stores hold remote
+		// senders only either way (§4.3).
+		var stores: [UInt64: MessageSecretStoreArchive] = [:]
+		var ownSend: OwnSendArchive?
+		for (epoch, store) in snapshot.messageSecrets.entries {
+			let (stripped, reconstructed) = try strippingOwnSend(
+				store, myLeafIndex: snapshot.myLeafIndex,
+				isCurrentEpoch: epoch == currentEpoch)
+			stores[epoch] = stripped
+			if epoch == currentEpoch { ownSend = reconstructed }
+		}
 		let (core, tree, context) = try restoreCore(
 			CoreArchive(
 				groupContext: snapshot.groupContext,
@@ -599,7 +655,7 @@ extension MLS.RFC9420.Group {
 				interimTranscriptHash: snapshot.interimTranscriptHash,
 				epochSecrets: snapshot.epochSecrets,
 				resumptionPsks: snapshot.resumptionPsks,
-				messageSecrets: snapshot.messageSecrets,
+				messageSecrets: MLS.RFC9420.IntegerKeyedMap(stores),
 				retention: snapshot.retention,
 				config: snapshot.config, exporterTree: snapshot.exporterTree),
 			provider)
@@ -607,13 +663,84 @@ extension MLS.RFC9420.Group {
 			leafKey: UInt64(snapshot.myLeafIndex),
 			archive: MembershipArchive(
 				treeSecretKeys: snapshot.treeSecretKeys, pendingUpdate: nil,
-				ownSend: nil),
+				ownSend: ownSend),
 			tree: tree, currentEpoch: context.epoch, provider)
 		return MLS.RFC9420.Group(core: core, memberships: [membership])
 	}
 
+	/// spec/snapshot.md §4.7: cross-check a format-1 store's `own_next_generation`
+	/// against its own-leaf chains (each MUST equal the chain `head_generation`
+	/// when present, 0 when absent) and lift the own-leaf chains out of `chains`
+	/// (format 2's store is remote-only, §4.3). For the current epoch the own-leaf
+	/// chains **are** the sender's live send ratchets, returned as an
+	/// `OwnSendArchive` to seed the membership's own_send; a member that had sent
+	/// resumes at its recorded position rather than throwing `subtreeExhausted`
+	/// against a §9.2-deleted leaf secret. Own chains absent → `nil`, and own send
+	/// seeds lazily from the still-present leaf secret. Retained (non-current)
+	/// epochs cannot be sent in, so their own chains are dropped, not returned.
+	private static func strippingOwnSend(
+		_ store: MessageSecretStoreFormat1Archive, myLeafIndex: UInt32,
+		isCurrentEpoch: Bool
+	) throws -> (store: MessageSecretStoreArchive, ownSend: OwnSendArchive?) {
+		var chains = store.chains.entries
+		let handshakeKey = (UInt64(myLeafIndex) << 1) | 0
+		let applicationKey = (UInt64(myLeafIndex) << 1) | 1
+		let handshakeChain = chains.removeValue(forKey: handshakeKey)
+		let applicationChain = chains.removeValue(forKey: applicationKey)
+		try crossCheckOwnGeneration(
+			store.ownNextGeneration.handshake, handshakeChain, kind: "handshake")
+		try crossCheckOwnGeneration(
+			store.ownNextGeneration.application, applicationChain, kind: "application")
+
+		var ownSend: OwnSendArchive?
+		if isCurrentEpoch {
+			switch (handshakeChain, applicationChain) {
+			case (let handshake?, let application?):
+				ownSend = OwnSendArchive(
+					handshakeChain: handshake, applicationChain: application)
+			case (nil, nil):
+				ownSend = nil
+			default:
+				// A member that has sent seeds both ratchets from one leaf secret,
+				// so an honest emitter has both own chains or neither.
+				throw MLS.RFC9420.SnapshotError.inconsistentStore(
+					"current-epoch own-leaf chains partially present")
+			}
+		}
+		return (
+			MessageSecretStoreArchive(
+				groupContext: store.groupContext,
+				senderDataSecret: store.senderDataSecret,
+				signatureKeys: store.signatureKeys,
+				secretTree: store.secretTree,
+				chains: MLS.RFC9420.IntegerKeyedMap(chains)),
+			ownSend
+		)
+	}
+
+	/// spec/snapshot.md §4.7 cross-check for one kind: `own_next_generation` MUST
+	/// equal the own-leaf chain's `head_generation` when the chain is present, and
+	/// 0 when it is absent — a mismatch is a decode error.
+	private static func crossCheckOwnGeneration(
+		_ expected: UInt64, _ chain: ChainArchive?, kind: String
+	) throws {
+		if let chain {
+			guard expected == chain.headGeneration else {
+				throw MLS.RFC9420.SnapshotError.inconsistentStore(
+					"own_next_generation \(expected) != own-leaf \(kind) chain head "
+						+ "\(chain.headGeneration)")
+			}
+		} else {
+			guard expected == 0 else {
+				throw MLS.RFC9420.SnapshotError.inconsistentStore(
+					"own_next_generation \(expected) nonzero but own-leaf \(kind) "
+						+ "chain absent")
+			}
+		}
+	}
+
 	/// The client-agnostic restore shared by both formats: validates the core
-	/// section (spec/snapshot.md §4.1/§4.3) and builds the `GroupCore`, returning
+	/// section (spec/snapshot.md §4.1.1/§4.3) and builds the `GroupCore`, returning
 	/// the ratchet tree and context the per-membership restore needs (to validate
 	/// leaves, and to check a pending Update names the current epoch).
 	private static func restoreCore(
@@ -657,7 +784,7 @@ extension MLS.RFC9420.Group {
 			epochAuthenticator: core.epochSecrets.epochAuthenticator,
 			membershipKey: core.epochSecrets.membershipKey)
 
-		// spec/snapshot.md §4.1 key 7: resumption_psks within the retention
+		// spec/snapshot.md §4.1.1 key 4: resumption_psks within the retention
 		// window, never empty, current epoch always retained.
 		guard !core.resumptionPsks.entries.isEmpty else {
 			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "resumption_psks")
@@ -679,7 +806,7 @@ extension MLS.RFC9420.Group {
 				"resumption_psks missing current epoch \(context.epoch)")
 		}
 
-		// spec/snapshot.md §4.1 key 8: message_secrets ≤ epoch, within depth,
+		// spec/snapshot.md §4.1.1 key 5: message_secrets ≤ epoch, within depth,
 		// never empty, current epoch always present.
 		guard !core.messageSecrets.entries.isEmpty else {
 			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "message_secrets")
@@ -750,9 +877,10 @@ extension MLS.RFC9420.Group {
 		return (groupCore, tree, context)
 	}
 
-	/// Restores one membership from its archive (spec/snapshot.md §4.1 keys 4/6,
-	/// plus format 2's per-membership pending self-Update): validates the leaf is
-	/// a non-blank member, restores its direct-path secret keys, and rebuilds any
+	/// Restores one membership from its archive (spec/snapshot.md §4.1.2: its
+	/// leaf-index map key and tree_secret_keys, plus the per-membership pending
+	/// self-Update): validates the leaf is a non-blank member, restores its
+	/// direct-path secret keys, and rebuilds any
 	/// pending self-Update. `leafKey` is the map key (format 2) or `my_leaf_index`
 	/// (format 1).
 	private static func restoreMembership(
@@ -842,7 +970,7 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
-	/// spec/snapshot.md §4.1 key 6: node indices lie on the member's own direct
+	/// spec/snapshot.md §4.1.2 key 0: node indices lie on the member's own direct
 	/// path (own leaf included), never empty.
 	private static func restoreTreeSecretKeys(
 		_ map: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>,
@@ -863,7 +991,7 @@ extension MLS.RFC9420.Group {
 				throw MLS.RFC9420.SnapshotError.treeSecretKeyOffDirectPath(
 					node: UInt32(clamping: nodeKey))
 			}
-			// §4.1 key 6: keys MUST reference non-blank nodes.
+			// §4.1.2 key 0: keys MUST reference non-blank nodes.
 			let occupied =
 				MLS.TreeMath.isLeaf(node)
 				? tree.leaf(at: MLS.LeafIndex(value: node / 2)) != nil
@@ -883,8 +1011,8 @@ extension MLS.RFC9420.Group {
 		nh: Int, nk: Int, nn: Int
 	) throws -> MessageSecrets {
 		let storeContext = try MLS.RFC9420.GroupContext(mlsEncoded: archive.groupContext)
-		// spec/snapshot.md §4.3: same suite + group_id as the top level, epoch
-		// equals the map key, and the current epoch's store is byte-identical.
+		// spec/snapshot.md §4.3: same suite + group_id as core.group_context
+		// (§4.1.1), epoch equals the map key, current-epoch store byte-identical.
 		guard storeContext.cipherSuite == topLevel.cipherSuite,
 			storeContext.groupID == topLevel.groupID
 		else {
@@ -898,7 +1026,7 @@ extension MLS.RFC9420.Group {
 		}
 		if epoch == topLevel.epoch, archive.groupContext != topLevelContextBytes {
 			throw MLS.RFC9420.SnapshotError.inconsistentStore(
-				"current-epoch store group_context not byte-identical to top level")
+				"current-epoch store group_context not byte-identical to core")
 		}
 
 		try requireLength(archive.senderDataSecret.byteCount, nh, "sender_data_secret")
