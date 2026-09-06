@@ -5,14 +5,14 @@ import MLSFraming
 import MLSTreeMath
 
 // D18 — the membership-scoped entry points. Operations that depend on *which*
-// local client acts (committing, proposing a self-Update) name the membership
-// explicitly, so client-dependence is visible exactly where it exists; the
-// receive path and application receive are client-independent and stay on
-// `Group`. In slice 1a these validate the leaf and delegate to the pre-D18
-// sole-membership methods (which, at N = 1, act on that membership); N > 1 send
-// fails closed until the send-side slice, which reshapes `committing(as:)` to
-// return a `Transition<SentCommit>` and moves per-leaf ratchets onto each
-// `Membership`.
+// local client acts (committing, sending, proposing a self-Update) name the
+// membership explicitly, so client-dependence is visible exactly where it
+// exists; the receive path and application receive are client-independent and
+// stay on `Group`. Each `(as:)` form resolves the leaf to a membership index and
+// drives that membership's own state (slices 3b/4a make this N > 1-correct: the
+// send ratchets are per-membership, and a commit installs new-epoch keys for
+// every membership by decapping its path). The bare (non-`as:`) forms resolve
+// the sole membership and are `ambiguousMembership` at N ≠ 1.
 
 extension MLS.RFC9420.Group {
 	/// Validates that `leaf` names one of this group's local memberships — the
@@ -43,8 +43,9 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// Commit as the local membership occupying `leaf` (D18), in the D17
-	/// `Transition<SentCommit>` shape. See this file's note; the per-leaf ratchet
-	/// move that makes N > 1 send correct is slice 3b.
+	/// `Transition<SentCommit>` shape. N > 1-correct (slice 4a): the delta installs
+	/// new-epoch keys for every local membership — `leaf` from the path it builds,
+	/// the others by decapping that path.
 	public func committing(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
@@ -59,9 +60,9 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
-		try requireLocalMembership(leaf)
-		return try committing(
-			provider, proposals: proposalList, proposalStore: proposalStore,
+		try committing(
+			committerIndex: try membershipIndex(of: leaf), provider,
+			proposals: proposalList, proposalStore: proposalStore,
 			signingKey: signingKey, randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
@@ -84,9 +85,9 @@ extension MLS.RFC9420.Group {
 		paddingLength: Int = 0,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
 	) throws -> CommitOutput {
-		try requireLocalMembership(leaf)
-		return try commit(
-			provider, proposals: proposalList, proposalStore: proposalStore,
+		try commit(
+			committerIndex: try membershipIndex(of: leaf), provider,
+			proposals: proposalList, proposalStore: proposalStore,
 			signingKey: signingKey, randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,

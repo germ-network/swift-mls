@@ -419,17 +419,11 @@ extension MLS.RFC9420.Group {
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.PendingCommit {
 		let message = verified.content
-		// D18 guard: the delta installs path keys (`secretKeys`) for the sole
-		// membership (`memberships[0]`) only; at N > 1 the other local
-		// memberships would silently keep stale keys (the M3 silent-loss class).
-		// Fails closed until the receive-side per-membership slice. Unreachable
-		// via public API today (no public constructor yields N > 1), but kept
-		// uniform with the send and snapshot guards. Application receive
-		// (`unprotect`, which touches only `core`) is correct at N > 1 and is
-		// not guarded.
-		guard memberships.count <= 1 else {
-			throw MLS.RFC9420.GroupError.multipleMembershipsUnsupported
-		}
+		// slice 4a: the delta now installs path keys per local membership — each
+		// decaps the commit's path against its own held keys (see the per-
+		// membership loop below), and `apply` installs each. The N > 1 fence is
+		// gone; `commit_secret` agreement across memberships guards a divergent
+		// decap.
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
 				expected: context.epoch, actual: message.content.epoch)
@@ -580,12 +574,20 @@ extension MLS.RFC9420.Group {
 		// needs a commit_secret we can no longer derive. So this means "an
 		// authenticated member removed me", not "a fully verified commit
 		// removed me", and the caller decides what to do about it.
-		guard provisionalTree.leaf(at: myLeafIndex) != nil else {
-			throw MLS.RFC9420.GroupError.removedFromGroup
+		// Each LOCAL membership must still be present to advance (slice 4a): the
+		// commit re-keys every member's path, and a membership removed by this
+		// commit has no key material in the new epoch. Per-membership eviction is
+		// slice 4b; here any local removal rejects.
+		for membership in memberships {
+			guard provisionalTree.leaf(at: membership.leafIndex) != nil else {
+				throw MLS.RFC9420.GroupError.removedFromGroup
+			}
 		}
 
-		// 9: merge the UpdatePath, or take the pathless commit_secret.
-		var newSecretKeys = secretKeys
+		// 9: merge the UpdatePath (each local membership decaps its own path), or
+		// take the pathless commit_secret. `newSecretKeysByLeaf` is the per-
+		// membership install the D17 delta carries.
+		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [:]
 		let commitSecret: Data
 
 		if let path = commit.path {
@@ -659,70 +661,50 @@ extension MLS.RFC9420.Group {
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
 
-			// 10 (before 9f): stale keys must go before the fresh ones
-			// arrive, or a stale entry overwrites a fresh one at the same
-			// node index.
-			newSecretKeys = prunedSecretKeys(
-				blankedNodes: blankedNodes, senderIndex: senderIndex,
-				leafCount: provisionalTree.leafCount)
-
-			// The updater-side handoff: `secretKeys` has no entry for a
-			// self-proposed Update's new leaf key until it is seeded here
-			// -- `proposeUpdate` only ever stashed it in `pendingUpdates`,
-			// never in `secretKeys`, because until a commit lands there is
-			// nothing to decap against.
-			//
-			// The committer -- not the proposer -- is the authority on
-			// which Update lands. Across an epoch this member may propose
-			// several self-Updates (each a fresh leaf key); §12.2 permits a
-			// single commit to apply at most one per leaf (validation
-			// rejects the rest as `duplicateProposalForLeaf`), but separate
-			// commits may each reference a different one. So we retain
-			// *every* proposed secret and seed the one whose public key the
-			// already-validated provisional tree actually installed at our
-			// leaf -- ground truth for what this commit's UpdatePath
-			// encrypts against, and independent of the store's sender field.
-			//
-			// Two gates: the epoch must match (a stale-epoch secret must
-			// never leak into a new epoch), and the installed leaf key must
-			// be one we hold a secret for. If it is not -- a concurrent
-			// commit that applied none of our Updates -- we seed nothing and
-			// decap under our old leaf key, which `prunedSecretKeys` above
-			// deliberately retained.
-			//
-			// Must run strictly after the `prunedSecretKeys` reassignment
-			// above and before decap below: seeding earlier is discarded
-			// the moment that reassignment runs.
-			if let pendingUpdates, pendingUpdates.epoch == context.epoch,
-				let installedKey = provisionalTree.leaf(at: myLeafIndex)?
-					.encryptionKey,
-				let match = pendingUpdates.updates.first(where: {
-					$0.publicKey == installedKey
-				})
-			{
-				newSecretKeys[pendingUpdates.node] = match.secret
+			// 10 + 9f + 9g, per local membership: each prunes and decaps against
+			// its OWN held keys and pending self-Update (the pruning-before-decap
+			// ordering, the committer-not-proposer Update seeding, and the decap
+			// are all in `installKeysForMembership`). Every membership recovers the
+			// same whole-group `commit_secret` — the path secret converges at the
+			// root — so a divergence means the memberships decapped inconsistent
+			// path material and the commit is rejected, never applied.
+			let provisionalContextEncoded = try provisionalContext.mlsEncoded()
+			var agreedCommitSecret: Data?
+			for membership in memberships {
+				let (keys, derived) = try installKeysForMembership(
+					membership, path: path, provisionalTree: provisionalTree,
+					senderIndex: senderIndex,
+					provisionalContextEncoded: provisionalContextEncoded,
+					blankedNodes: blankedNodes, addedLeaves: addedLeaves,
+					provider)
+				if let agreed = agreedCommitSecret {
+					guard derived == agreed else {
+						throw MLS.RFC9420.GroupError.divergentCommitSecret
+					}
+				} else {
+					agreedCommitSecret = derived
+				}
+				newSecretKeysByLeaf[membership.leafIndex] = keys
 			}
-
-			// 9f
-			let result = try provisionalTree.decapCommitPath(
-				heldSecretKeys: newSecretKeys, sender: senderIndex,
-				pathNodes: path.nodes.map(\.pathNode),
-				groupContext: try provisionalContext.mlsEncoded(),
-				excluding: addedLeaves, provider)
-
-			// 9g
-			for (node, secretKey) in result.nodeSecretKeys {
-				newSecretKeys[node] = secretKey
+			// The loop always runs (`memberships` is never empty — composite
+			// invariant), so agreement is set. Guard rather than fall back to the
+			// all-zero pathless secret, which would be wrong for a path commit.
+			guard let agreed = agreedCommitSecret else {
+				throw MLS.RFC9420.GroupError.membershipMismatch
 			}
-			commitSecret = result.commitSecret
+			commitSecret = agreed
 		} else {
 			// S23: §12.4.2 -- a commit without a path contributes an
 			// all-zero commit_secret of the hash's own length, not an
-			// absent one.
+			// absent one. No decap: each membership only sheds keys for the
+			// nodes this commit blanked, off its own path.
 			commitSecret = Data(repeating: 0, count: provider.hashSize)
-			newSecretKeys = prunedSecretKeys(
-				blankedNodes: blankedNodes, senderIndex: nil,
-				leafCount: provisionalTree.leafCount)
+			for membership in memberships {
+				newSecretKeysByLeaf[membership.leafIndex] = prunedSecretKeys(
+					heldSecretKeys: membership.secretKeys,
+					ownLeaf: membership.leafIndex, blankedNodes: blankedNodes,
+					senderIndex: nil, leafCount: provisionalTree.leafCount)
+			}
 		}
 
 		// 11. The wire format is part of §8.2's confirmed-transcript-hash
@@ -793,7 +775,8 @@ extension MLS.RFC9420.Group {
 			baseMemberships: Set(memberships.map(\.leafIndex)),
 			newContext: newContext, newTree: provisionalTree,
 			newEpoch: MLS.RFC9420.Group.EpochSecrets(retaining: newEpoch),
-			newSecretKeys: newSecretKeys, newInterimTranscriptHash: newInterim,
+			newSecretKeysByLeaf: newSecretKeysByLeaf,
+			newInterimTranscriptHash: newInterim,
 			newMessageStore: newStore, newExporterTree: newExporter,
 			newResumptionPsk: newEpoch.resumptionPsk)
 	}
@@ -1181,6 +1164,18 @@ extension MLS.RFC9420.Group {
 	func prunedSecretKeys(
 		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: MLS.LeafCount
 	) -> [UInt32: MLS.HpkeSecretKey] {
+		prunedSecretKeys(
+			heldSecretKeys: secretKeys, ownLeaf: myLeafIndex,
+			blankedNodes: blankedNodes, senderIndex: senderIndex, leafCount: leafCount)
+	}
+
+	/// The per-membership form (slice 4a): prunes `heldSecretKeys` (that
+	/// membership's own keys) against `ownLeaf`'s direct path, so each local
+	/// membership prunes its own key set — never another's.
+	func prunedSecretKeys(
+		heldSecretKeys: [UInt32: MLS.HpkeSecretKey], ownLeaf: MLS.LeafIndex,
+		blankedNodes: Set<UInt32>, senderIndex: MLS.LeafIndex?, leafCount: MLS.LeafCount
+	) -> [UInt32: MLS.HpkeSecretKey] {
 		var stale = blankedNodes
 		if let senderIndex {
 			stale.formUnion(
@@ -1189,15 +1184,58 @@ extension MLS.RFC9420.Group {
 				).map(\.path))
 		}
 
-		var ownNodes: Set<UInt32> = [2 * myLeafIndex.value]
+		var ownNodes: Set<UInt32> = [2 * ownLeaf.value]
 		ownNodes.formUnion(
 			MLS.TreeMath.directPath(
-				from: 2 * myLeafIndex.value, leafCount: leafCount
+				from: 2 * ownLeaf.value, leafCount: leafCount
 			).map(\.path))
 
-		return secretKeys.filter { node, _ in
+		return heldSecretKeys.filter { node, _ in
 			!stale.contains(node) && ownNodes.contains(node)
 		}
+	}
+
+	/// Decap the committer's path for one **local membership** (slice 4a),
+	/// returning that membership's installed new-epoch keys and the
+	/// `commit_secret` it derives. Each membership prunes and decaps against its
+	/// own held keys and its own pending self-Update, so no membership's key
+	/// material crosses into another's. The `commit_secret` is a whole-group
+	/// value (the path secret converges at the root); the caller checks that
+	/// every local membership derives the same one.
+	func installKeysForMembership(
+		_ membership: MLS.RFC9420.Membership,
+		path: MLS.RFC9420.UpdatePath,
+		provisionalTree: MLS.TreeKEM.RatchetTree,
+		senderIndex: MLS.LeafIndex,
+		provisionalContextEncoded: Data,
+		blankedNodes: Set<UInt32>,
+		addedLeaves: Set<MLS.LeafIndex>,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws -> (keys: [UInt32: MLS.HpkeSecretKey], commitSecret: Data) {
+		// Stale keys go before the fresh ones arrive (the prune-before-merge order
+		// is this layer's — a stale entry would otherwise overwrite a fresh one at
+		// the same node; §7.5's MUST is the deletion itself, see `prunedSecretKeys`),
+		// pruned against this membership's own path.
+		var keys = prunedSecretKeys(
+			heldSecretKeys: membership.secretKeys, ownLeaf: membership.leafIndex,
+			blankedNodes: blankedNodes, senderIndex: senderIndex,
+			leafCount: provisionalTree.leafCount)
+		// Seed this membership's committed self-Update leaf key (see the N = 1
+		// path's own comment): retain every proposed secret, install the one whose
+		// public key the provisional tree actually placed at this leaf.
+		if let pending = membership.pendingUpdate, pending.epoch == context.epoch,
+			let installedKey = provisionalTree.leaf(at: membership.leafIndex)?
+				.encryptionKey,
+			let match = pending.updates.first(where: { $0.publicKey == installedKey })
+		{
+			keys[pending.node] = match.secret
+		}
+		let result = try provisionalTree.decapCommitPath(
+			heldSecretKeys: keys, sender: senderIndex,
+			pathNodes: path.nodes.map(\.pathNode),
+			groupContext: provisionalContextEncoded, excluding: addedLeaves, provider)
+		for (node, secretKey) in result.nodeSecretKeys { keys[node] = secretKey }
+		return (keys, result.commitSecret)
 	}
 
 	/// §12.4.2: "Verify that none of the public keys in the UpdatePath

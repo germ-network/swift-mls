@@ -9,10 +9,9 @@ import Testing
 /// on one composite `Group` each hold their own send ratchet (on the
 /// `Membership`, seeded from the shared `GroupCore` secret tree), so both can
 /// send in the same epoch without sharing a generation — the capability the
-/// N > 1 send guard used to fence off. `committing` stays fenced (a commit
-/// re-keys the tree for one membership; the others need the per-membership
-/// receive slice), so this exercises the pure sends: `protect` and
-/// `proposeUpdate`.
+/// N > 1 send guard used to fence off. This suite exercises the pure sends
+/// (`protect` / `proposeUpdate`) and the committer-scoping guards; the N > 1
+/// commit round-trip itself is `PerMembershipReceiveTests` (slice 4a).
 @Suite("Per-membership send (D18 3b)")
 struct PerMembershipSendTests {
 	static let provider = ConstructedRejectionTests.provider
@@ -187,5 +186,38 @@ struct PerMembershipSendTests {
 			return
 		}
 		#expect(db == Data("b1".utf8))
+	}
+
+	@Test("committing(as:) with the wrong membership's signing key is rejected, not forked")
+	func committingWithMismatchedSigningKeyRejected() throws {
+		let provider = Self.provider
+		let f = try Self.multi()
+		let bobLeaf = f.bobView.myLeafIndex
+		// Commit AS Bob but sign with ALICE's key: the two `(as:)` / `signingKey:`
+		// parameters disagree. Must fail loudly (the composite would otherwise fork
+		// against a commit every remote member rejects), not advance.
+		#expect(throws: MLS.CryptoError.self) {
+			_ = try f.multi.committing(
+				as: bobLeaf, provider, proposals: [],
+				signingKey: f.alice.signingKey,
+				randomness: .generate(provider))
+		}
+	}
+
+	@Test("committing a Remove of a co-located membership is rejected, not stranded")
+	func committingRemoveOfLocalMembershipRejected() throws {
+		let provider = Self.provider
+		let f = try Self.multi()
+		let aliceLeaf = f.aliceView.myLeafIndex
+		let bobLeaf = f.bobView.myLeafIndex
+		// Alice commits a Remove of Bob — the OTHER local membership. It must reject
+		// (Bob would be blanked and could not decap the path), not surface later as
+		// a decap failure. Per-membership eviction is slice 4b.
+		#expect(throws: MLS.RFC9420.GroupError.removedFromGroup) {
+			_ = try f.multi.committing(
+				as: aliceLeaf, provider,
+				proposals: [.proposal(.remove(bobLeaf))],
+				signingKey: f.alice.signingKey, randomness: .generate(provider))
+		}
 	}
 }
