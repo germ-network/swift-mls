@@ -29,9 +29,10 @@ extension MLS.RFC9420 {
 		/// format-2 persistence (which stores every membership). The bare
 		/// (non-`as:`) send entries are `ambiguousMembership` at N ≠ 1, since they
 		/// cannot pick a membership. N > 1 arises today only from a format-2 restore
-		/// (there is no op to add a second local membership to a live group);
-		/// **eviction** at N > 1 — a commit that removes one local membership but
-		/// not others — still rejects wholesale (slice 4b).
+		/// (there is no op to add a second local membership to a live group).
+		/// **Eviction** is per-membership (slice 4b): a commit removing one local
+		/// membership but not others drops just that one and advances the rest;
+		/// removing every local membership is a terminal full eviction.
 		public internal(set) var memberships: [Membership]
 
 		/// The sole local membership, when there is exactly one (the common

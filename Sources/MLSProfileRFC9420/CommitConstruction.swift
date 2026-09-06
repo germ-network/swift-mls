@@ -201,7 +201,7 @@ extension MLS.RFC9420.Group {
 				provisionalExtensions = extensions
 			}
 		}
-		try validateProposalList(
+		let updateChanges = try validateProposalList(
 			resolved, committer: committerLeaf,
 			provisionalExtensions: provisionalExtensions, provider: provider)
 
@@ -234,16 +234,18 @@ extension MLS.RFC9420.Group {
 		let applied = try applyProposals(resolved, committer: committerLeaf)
 		var newTree = applied.tree
 
-		// A commit that removes one of THIS device's OTHER local memberships would
-		// blank its leaf and strand it (it could not decap the path below). The
-		// receive side rejects the mirror case (`validatedDelta`'s self-removal
-		// loop); reject it here too rather than failing later at that membership's
-		// decap. Per-membership eviction is slice 4b.
-		for membership in memberships {
-			guard newTree.leaf(at: membership.leafIndex) != nil else {
-				throw MLS.RFC9420.GroupError.removedFromGroup
-			}
+		// Slice 4b eviction, send side: a commit may remove one of THIS device's
+		// OTHER local memberships. It is always PARTIAL — the committer cannot
+		// remove itself (RFC 9420 §12.2, and `validateProposalList` rejects an
+		// inline self-Remove), so the committer always survives. The removed
+		// memberships are dropped from the delta's installs and reported as
+		// `membershipRemoved`; `apply` removes them from the composite.
+		let removedLeaves = resolved.compactMap { stored -> MLS.LeafIndex? in
+			if case .remove(let leaf) = stored.proposal { return leaf }
+			return nil
 		}
+		let localLeaves = Set(memberships.map(\.leafIndex))
+		let removedLocal = localLeaves.intersection(removedLeaves)
 
 		guard let senderRecord = tree.leaf(at: committerLeaf) else {
 			throw MLS.RFC9420.GroupError.ownLeafNotFound
@@ -257,6 +259,14 @@ extension MLS.RFC9420.Group {
 		// The context the path secrets are encrypted against — kept for the
 		// other local memberships to decap the same path (slice 4a).
 		var provisionalContextEncoded: Data?
+		// The committer's own path-leaf refresh, for the credential effects (slice
+		// 4b). The new leaf keeps the committer's credential and signature key, so
+		// this is always an `updated` (encryption-key-only) effect; nil if pathless.
+		var committerChange:
+			(
+				leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+				new: MLS.RFC9420.CredentialPresentation
+			)?
 
 		if includePath {
 			// The filtered direct path on the post-apply tree — computed
@@ -300,6 +310,15 @@ extension MLS.RFC9420.Group {
 				placement: .inGroup(
 					groupID: context.groupID, leafIndex: committerLeaf))
 			try newTree.setLeaf(committerLeaf, to: newLeaf.record)
+			committerChange = (
+				leaf: committerLeaf,
+				old: MLS.RFC9420.CredentialPresentation(
+					credential: senderLeaf.credential,
+					signatureKey: senderLeaf.signatureKey),
+				new: MLS.RFC9420.CredentialPresentation(
+					credential: newLeaf.credential,
+					signatureKey: newLeaf.signatureKey)
+			)
 
 			// Provisional context: new epoch, post-merge tree hash, OLD
 			// confirmed transcript hash, new extensions (§12.4.1).
@@ -397,7 +416,8 @@ extension MLS.RFC9420.Group {
 		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [
 			committerLeaf: newSecretKeys
 		]
-		for (index, membership) in memberships.enumerated() where index != committerIndex {
+		for (index, membership) in memberships.enumerated()
+		where index != committerIndex && !removedLocal.contains(membership.leafIndex) {
 			if let path = updatePath, let contextEncoded = provisionalContextEncoded {
 				let (keys, derived) = try installKeysForMembership(
 					membership, path: path, provisionalTree: newTree,
@@ -432,20 +452,21 @@ extension MLS.RFC9420.Group {
 			encryptionSecret: newEpoch.encryptionSecret,
 			applicationExportSecret: newEpoch.applicationExportSecret,
 			tree: newTree, provider)
+		let effects = commitMembershipEffects(
+			epochAdvanced: .epochAdvanced(
+				from: context.epoch, to: newContext.epoch, committer: committerLeaf),
+			added: applied.added, updateChanges: updateChanges,
+			committerChange: committerChange, removedLeaves: removedLeaves,
+			localMembershipLeaves: localLeaves)
 		let pending = MLS.RFC9420.PendingCommit(
-			effects: MLS.RFC9420.CommitEffects([
-				.epochAdvanced(
-					from: context.epoch, to: newContext.epoch,
-					committer: committerLeaf)
-			]),
-			base: context,
-			baseMemberships: Set(memberships.map(\.leafIndex)),
+			effects: effects, base: context, baseMemberships: localLeaves,
 			newContext: newContext, newTree: newTree,
 			newEpoch: EpochSecrets(retaining: newEpoch),
 			newSecretKeysByLeaf: newSecretKeysByLeaf,
 			newInterimTranscriptHash: newInterim,
 			newMessageStore: newStore, newExporterTree: newExporter,
-			newResumptionPsk: newEpoch.resumptionPsk)
+			newResumptionPsk: newEpoch.resumptionPsk,
+			removedMemberships: removedLocal)
 
 		let welcome = try makeWelcome(
 			provider, committer: committerLeaf, resolved: resolved, applied: applied,

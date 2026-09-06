@@ -374,8 +374,27 @@ extension MLS.RFC9420.Group {
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
-		try validating(provider, commit: message, proposals: proposals, psk: psk)
-			.apply(onto: self).group
+		let pending = try validating(
+			provider, commit: message, proposals: proposals, psk: psk)
+		return try applyingOrEvicted(pending)
+	}
+
+	/// The eager shims cannot surface effects, so they preserve the pre-4b signal:
+	/// a **full** self-eviction (every local membership removed — the delta is
+	/// empty and terminal) throws `removedFromGroup`, as before slice 4b. A
+	/// partial eviction applies normally (the survivors advance, the removed
+	/// memberships are dropped). The effect-returning `validating(commit:)` API
+	/// packages a full eviction as a `membershipRemoved` effect instead of
+	/// throwing — the app then tears down at the seam (D17 §5).
+	func applyingOrEvicted(_ pending: consuming MLS.RFC9420.PendingCommit) throws
+		-> MLS.RFC9420.Group
+	{
+		if !pending.removedMemberships.isEmpty,
+			pending.removedMemberships == pending.baseMemberships
+		{
+			throw MLS.RFC9420.GroupError.removedFromGroup
+		}
+		return try pending.apply(onto: self).group
 	}
 
 	/// Transitional shim for an already-verified commit — the private path
@@ -390,9 +409,9 @@ extension MLS.RFC9420.Group {
 		proposals: MLS.RFC9420.ProposalStore,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
 	) throws -> MLS.RFC9420.Group {
-		try validatedDelta(
-			provider, commit: verified, proposals: proposals, psk: psk
-		).apply(onto: self).group
+		let pending = try validatedDelta(
+			provider, commit: verified, proposals: proposals, psk: psk)
+		return try applyingOrEvicted(pending)
 	}
 
 	/// The commit-processing core, on an *already authenticated* frame —
@@ -408,6 +427,53 @@ extension MLS.RFC9420.Group {
 	/// the frame is trusted on entry, and the epoch/group/member/blank-leaf
 	/// checks below still run because the private path does not repeat them.
 	///
+	/// Assemble the §5.3.1 membership/credential effects a commit had (slice 4b),
+	/// shared by receive (`validatedDelta`) and send (`committing`) so both report
+	/// the same effects. `epochAdvanced` is `nil` for a full eviction (no member
+	/// could derive the new epoch). `committerChange` is the committer's own
+	/// path-leaf refresh (`nil` for a pathless commit). A `removed` leaf that
+	/// names a local membership also emits `membershipRemoved`.
+	func commitMembershipEffects(
+		epochAdvanced: MLS.RFC9420.CommitEffect?,
+		added: [(leaf: MLS.LeafIndex, presentation: MLS.RFC9420.CredentialPresentation)],
+		updateChanges: [(
+			leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+			new: MLS.RFC9420.CredentialPresentation
+		)],
+		committerChange: (
+			leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+			new: MLS.RFC9420.CredentialPresentation
+		)?,
+		removedLeaves: [MLS.LeafIndex],
+		localMembershipLeaves: Set<MLS.LeafIndex>
+	) -> MLS.RFC9420.CommitEffects {
+		// Emitted in §12.3 application order — update, then remove, then add — so
+		// the stream is replayable against a leaf-indexed roster: an Add fills the
+		// leftmost blank, which a Remove in the SAME commit may have just freed, so
+		// `removed` MUST precede `added` for that leaf, or a replay would delete the
+		// member it just added.
+		var events: [MLS.RFC9420.CommitEffect] = []
+		if let epochAdvanced { events.append(epochAdvanced) }
+		for change in updateChanges + (committerChange.map { [$0] } ?? []) {
+			events.append(
+				change.old == change.new
+					? .updated(leaf: change.leaf)
+					: .credentialReplaced(
+						leaf: change.leaf, old: change.old, new: change.new)
+			)
+		}
+		for leaf in removedLeaves {
+			events.append(.removed(leaf: leaf))
+			if localMembershipLeaves.contains(leaf) {
+				events.append(.membershipRemoved(leaf: leaf))
+			}
+		}
+		for entry in added {
+			events.append(.added(leaf: entry.leaf, presentation: entry.presentation))
+		}
+		return MLS.RFC9420.CommitEffects(events)
+	}
+
 	/// Internal: the public entries are the `validating(commit:)` overloads;
 	/// the transitional `processing` shims below apply this onto `self`. Gated
 	/// on `VerifiedCommit`, not a raw `AuthenticatedContent`, so it cannot be
@@ -478,7 +544,7 @@ extension MLS.RFC9420.Group {
 				provisionalExtensions = extensions
 			}
 		}
-		try validateProposalList(
+		let updateChanges = try validateProposalList(
 			resolved, committer: senderIndex,
 			provisionalExtensions: provisionalExtensions, provider: provider)
 
@@ -567,25 +633,76 @@ extension MLS.RFC9420.Group {
 		let blankedNodes = applied.blankedNodes
 		let addedLeaves = applied.addedLeaves
 
-		// S19: detect self-removal explicitly. This is *after* step 5, so
-		// the signature and membership MAC have both passed -- an
-		// authenticated member told us we are out. It is necessarily
-		// *before* the confirmation tag, which needs the new epoch, which
-		// needs a commit_secret we can no longer derive. So this means "an
-		// authenticated member removed me", not "a fully verified commit
-		// removed me", and the caller decides what to do about it.
-		// Each LOCAL membership must still be present to advance (slice 4a): the
-		// commit re-keys every member's path, and a membership removed by this
-		// commit has no key material in the new epoch. Per-membership eviction is
-		// slice 4b; here any local removal rejects.
-		for membership in memberships {
-			guard provisionalTree.leaf(at: membership.leafIndex) != nil else {
-				throw MLS.RFC9420.GroupError.removedFromGroup
-			}
+		// Slice 4b eviction: a commit that removes one of THIS device's local
+		// memberships evicts it rather than throwing (4a's `removedFromGroup`). A
+		// removed member is framing-authenticated (signature + MAC passed above)
+		// but cannot derive the new epoch's key schedule — the commit's fresh path
+		// entropy is not delivered to a removed member (RFC 9420 §3.2) — so it
+		// cannot verify the confirmation tag; §12.4.2 says such a client SHOULD
+		// promptly delete its state. So partition the local memberships:
+		//   - FULL eviction (no survivor): the delta is EMPTY and terminal — no
+		//     member here can derive the new epoch. Package the `membershipRemoved`
+		//     effects (the private-frame consumption is already in `self`); `apply`
+		//     returns the group unchanged and the app tears down.
+		//   - PARTIAL eviction (≥1 survivor): a survivor derives the new epoch
+		//     normally; the delta drops the removed memberships and advances.
+		// Precedence: PSK availability and the ReInit rejection run above (RFC
+		// 9420 §12.4.2 order), so a full-eviction commit that ALSO names a PSK this
+		// member cannot resolve is rejected with that error rather than packaged as
+		// an eviction — an edge, since a removed member has no use for the PSK.
+		let removedLeaves = resolved.compactMap { stored -> MLS.LeafIndex? in
+			if case .remove(let leaf) = stored.proposal { return leaf }
+			return nil
+		}
+		let localLeaves = Set(memberships.map(\.leafIndex))
+		let removedLocal = localLeaves.intersection(removedLeaves)
+		let survivingMemberships = memberships.filter {
+			!removedLocal.contains($0.leafIndex)
 		}
 
-		// 9: merge the UpdatePath (each local membership decaps its own path), or
-		// take the pathless commit_secret. `newSecretKeysByLeaf` is the per-
+		if !removedLocal.isEmpty, survivingMemberships.isEmpty {
+			// FULL eviction — framing-authenticated, not tag-confirmed. Empty,
+			// terminal delta: no path validation, no decap, no epoch advance. The
+			// advance fields below are placeholders `apply` never reads (it returns
+			// at the terminal branch): the current-epoch store and resumption PSK
+			// are always retained, but the exporter tree can be legitimately absent
+			// on a migration-restored group (predating the snapshot's exporter
+			// key), so fall back rather than requiring state the terminal delta
+			// does not use. Only `removed`/`membershipRemoved` are reported here —
+			// any add/update in the same commit belongs to an epoch this device
+			// never enters, and is not tag-confirmed.
+			guard let store = core.messageSecrets[context.epoch],
+				let resumption = core.resumptionPsks[context.epoch]
+			else {
+				throw MLS.RFC9420.GroupError.messageFromUnretainedEpoch(
+					epoch: context.epoch)
+			}
+			let exporter =
+				core.exporterTrees[context.epoch]
+				?? MLS.KeySchedule.ExporterTree(restoringFrontier: [:])
+			let effects = commitMembershipEffects(
+				epochAdvanced: nil, added: [], updateChanges: [],
+				committerChange: nil, removedLeaves: removedLeaves,
+				localMembershipLeaves: localLeaves)
+			return MLS.RFC9420.PendingCommit(
+				effects: effects, base: context, baseMemberships: localLeaves,
+				newContext: context, newTree: tree, newEpoch: epoch,
+				newSecretKeysByLeaf: [:],
+				newInterimTranscriptHash: interimTranscriptHash,
+				newMessageStore: store, newExporterTree: exporter,
+				newResumptionPsk: resumption, removedMemberships: removedLocal)
+		}
+
+		// The committer's own path-leaf refresh, for the credential effects
+		// (set inside the path block below once `path.leafNode` is validated).
+		var committerChange:
+			(
+				leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+				new: MLS.RFC9420.CredentialPresentation
+			)?
+
+		// 9: merge the UpdatePath (each SURVIVING membership decaps its own path),
+		// or take the pathless commit_secret. `newSecretKeysByLeaf` is the per-
 		// membership install the D17 delta carries.
 		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [:]
 		let commitSecret: Data
@@ -644,6 +761,19 @@ extension MLS.RFC9420.Group {
 			// vacuous, since merging is what puts these keys in the tree.
 			try checkUpdatePathKeysAreFresh(path, in: provisionalTree)
 
+			// The committer's own leaf is refreshed by its path; report the
+			// presentation change (slice 4b). Usually an encryption-key-only
+			// `updated`, but a committer MAY carry a new credential/key here.
+			committerChange = (
+				leaf: senderIndex,
+				old: MLS.RFC9420.CredentialPresentation(
+					credential: senderLeaf.credential,
+					signatureKey: senderLeaf.signatureKey),
+				new: MLS.RFC9420.CredentialPresentation(
+					credential: path.leafNode.credential,
+					signatureKey: path.leafNode.signatureKey)
+			)
+
 			// 9d
 			try provisionalTree.applyUpdatePath(
 				sender: senderIndex, leaf: try path.leafNode.record,
@@ -670,7 +800,7 @@ extension MLS.RFC9420.Group {
 			// path material and the commit is rejected, never applied.
 			let provisionalContextEncoded = try provisionalContext.mlsEncoded()
 			var agreedCommitSecret: Data?
-			for membership in memberships {
+			for membership in survivingMemberships {
 				let (keys, derived) = try installKeysForMembership(
 					membership, path: path, provisionalTree: provisionalTree,
 					senderIndex: senderIndex,
@@ -686,9 +816,10 @@ extension MLS.RFC9420.Group {
 				}
 				newSecretKeysByLeaf[membership.leafIndex] = keys
 			}
-			// The loop always runs (`memberships` is never empty — composite
-			// invariant), so agreement is set. Guard rather than fall back to the
-			// all-zero pathless secret, which would be wrong for a path commit.
+			// The loop always runs (`survivingMemberships` is non-empty here — a
+			// full eviction returned at the terminal branch above), so agreement is
+			// set. Guard rather than fall back to the all-zero pathless secret,
+			// which would be wrong for a path commit.
 			guard let agreed = agreedCommitSecret else {
 				throw MLS.RFC9420.GroupError.membershipMismatch
 			}
@@ -699,7 +830,7 @@ extension MLS.RFC9420.Group {
 			// absent one. No decap: each membership only sheds keys for the
 			// nodes this commit blanked, off its own path.
 			commitSecret = Data(repeating: 0, count: provider.hashSize)
-			for membership in memberships {
+			for membership in survivingMemberships {
 				newSecretKeysByLeaf[membership.leafIndex] = prunedSecretKeys(
 					heldSecretKeys: membership.secretKeys,
 					ownLeaf: membership.leafIndex, blankedNodes: blankedNodes,
@@ -765,20 +896,21 @@ extension MLS.RFC9420.Group {
 		let newInterim = try MLS.Framing.interimTranscriptHash(
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
+		let effects = commitMembershipEffects(
+			epochAdvanced: .epochAdvanced(
+				from: context.epoch, to: newContext.epoch, committer: senderIndex),
+			added: applied.added, updateChanges: updateChanges,
+			committerChange: committerChange, removedLeaves: removedLeaves,
+			localMembershipLeaves: localLeaves)
 		return MLS.RFC9420.PendingCommit(
-			effects: MLS.RFC9420.CommitEffects([
-				.epochAdvanced(
-					from: context.epoch, to: newContext.epoch,
-					committer: senderIndex)
-			]),
-			base: context,
-			baseMemberships: Set(memberships.map(\.leafIndex)),
+			effects: effects, base: context, baseMemberships: localLeaves,
 			newContext: newContext, newTree: provisionalTree,
 			newEpoch: MLS.RFC9420.Group.EpochSecrets(retaining: newEpoch),
 			newSecretKeysByLeaf: newSecretKeysByLeaf,
 			newInterimTranscriptHash: newInterim,
 			newMessageStore: newStore, newExporterTree: newExporter,
-			newResumptionPsk: newEpoch.resumptionPsk)
+			newResumptionPsk: newEpoch.resumptionPsk,
+			removedMemberships: removedLocal)
 	}
 
 	/// Value-semantics convenience over `processing`. Assigns only on
@@ -826,7 +958,11 @@ extension MLS.RFC9420.Group {
 	struct AppliedProposals {
 		var tree: MLS.TreeKEM.RatchetTree
 		var blankedNodes: Set<UInt32>
-		var addedLeaves: Set<MLS.LeafIndex>
+		/// Added members in application order, each with the presentation its
+		/// KeyPackage carried (slice 4b's `.added` effect).
+		var added: [(leaf: MLS.LeafIndex, presentation: MLS.RFC9420.CredentialPresentation)]
+		/// The leaves an Add filled — for copath exclusion at decap.
+		var addedLeaves: Set<MLS.LeafIndex> { Set(added.map(\.leaf)) }
 	}
 
 	/// The §12.3 application pass — update, then remove, then add, in
@@ -841,7 +977,9 @@ extension MLS.RFC9420.Group {
 	) throws -> AppliedProposals {
 		var provisionalTree = tree
 		var blankedNodes: Set<UInt32> = []
-		var addedLeaves: Set<MLS.LeafIndex> = []
+		var added:
+			[(leaf: MLS.LeafIndex, presentation: MLS.RFC9420.CredentialPresentation)] =
+				[]
 
 		for stored in resolved {
 			guard case .update = stored.proposal else { continue }
@@ -890,14 +1028,21 @@ extension MLS.RFC9420.Group {
 		}
 
 		for stored in resolved {
-			guard case .add = stored.proposal else { continue }
+			guard case .add(let keyPackage) = stored.proposal else { continue }
 			// Positional, from `insertLeaf` itself -- content matching
 			// only agreed with §7.6's positional rule while leaves were
 			// unique, and the uniqueness sweep runs after this loop.
-			if let added = try provisionalTree.apply(
+			if let addedLeaf = try provisionalTree.apply(
 				stored.proposal, sender: committer)
 			{
-				addedLeaves.insert(added)
+				added.append(
+					(
+						leaf: addedLeaf,
+						presentation: MLS.RFC9420.CredentialPresentation(
+							credential: keyPackage.leafNode.credential,
+							signatureKey: keyPackage.leafNode
+								.signatureKey)
+					))
 			}
 		}
 
@@ -929,8 +1074,7 @@ extension MLS.RFC9420.Group {
 		}
 
 		return AppliedProposals(
-			tree: provisionalTree, blankedNodes: blankedNodes,
-			addedLeaves: addedLeaves)
+			tree: provisionalTree, blankedNodes: blankedNodes, added: added)
 	}
 
 	/// RFC 9420 §12.2 (list rules) and §12.1 (per-proposal validity), over
@@ -945,8 +1089,20 @@ extension MLS.RFC9420.Group {
 		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex,
 		provisionalExtensions: [MLS.RFC9420.Extension],
 		provider: any MLS.CipherSuiteProvider
-	) throws {
+	) throws -> [(
+		leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+		new: MLS.RFC9420.CredentialPresentation
+	)] {
 		let groupRequirements = try provisionalExtensions.requiredCapabilities()
+		// The old→new presentation for each Update, for slice 4b's credential
+		// effects — computed here because this is where the replaced leaf is
+		// already decoded (D17 §2 L4: "must be returned", not read "already in
+		// hand"). Shared by receive (`validatedDelta`) and send (`committing`).
+		var updateChanges:
+			[(
+				leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
+				new: MLS.RFC9420.CredentialPresentation
+			)] = []
 
 		// One decode pass over the members, shared by every leaf check.
 		// Indexed, because §12.1.7's membership sweep below needs to
@@ -1012,6 +1168,16 @@ extension MLS.RFC9420.Group {
 					groupRequirements: groupRequirements,
 					memberCredentialTypes: memberCredentialTypes,
 					memberCapabilities: memberCapabilities)
+				updateChanges.append(
+					(
+						leaf: updateSender,
+						old: MLS.RFC9420.CredentialPresentation(
+							credential: replaced.credential,
+							signatureKey: replaced.signatureKey),
+						new: MLS.RFC9420.CredentialPresentation(
+							credential: leafNode.credential,
+							signatureKey: leafNode.signatureKey)
+					))
 
 			case .remove(let removed):
 				// §12.2: a self-remove must come through someone else's
@@ -1115,6 +1281,7 @@ extension MLS.RFC9420.Group {
 				}
 			}
 		}
+		return updateChanges
 	}
 
 	/// Resumption ids resolve from this group's own retained history;
