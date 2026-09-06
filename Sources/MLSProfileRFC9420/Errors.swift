@@ -68,12 +68,24 @@ extension MLS.RFC9420 {
 		/// here rather than deriving garbage that only fails later at the
 		/// confirmation tag.
 		case emptyJoinerSecret
-		/// RFC 9420 §12.4.3.1's `reinit`/`branch` resumption-PSK rules
-		/// (uniqueness among the Welcome's PSKs, `GroupInfo.epoch == 1`)
-		/// are out of scope — ReInit and branching are deferred
-		/// project-wide. Rejected outright rather than silently accepted
-		/// without those checks.
+		/// The capability gate for `reinit`/`branch` resumption PSKs: ReInit
+		/// and branching are deferred project-wide, so any resumption PSK with
+		/// usage `reinit` or `branch` is rejected outright rather than silently
+		/// accepted with its *semantic* checks unenforced — the Welcome's epoch
+		/// being 1, the `reinit` epoch matching the epoch after the Commit
+		/// covering the ReInit, and the `branch` subgroup's LeafNode match (RFC
+		/// 9420 §11.2/§11.3). The
+		/// purely *structural* "only such PSK" rule (§12.4.3.1) is enforced
+		/// separately and independently — see `resumptionPSKNotSole`.
 		case unsupportedResumptionUsage
+		/// RFC 9420 §12.4.3.1: "if a PreSharedKeyID has type resumption with
+		/// usage reinit or branch, verify that it is the only such PSK." "Such"
+		/// is anaphoric to "resumption with usage reinit or branch", so this is
+		/// read as: at most one resumption PSK of usage `reinit`/`branch` may
+		/// appear in a Welcome's `GroupSecrets.psks` (external/application PSKs
+		/// may accompany it). A structural well-formedness rule, enforced
+		/// independently of ReInit/branch support.
+		case resumptionPSKNotSole
 		/// S12/S25: a `confirmation_tag` didn't match the locally
 		/// recomputed value.
 		case confirmationTagMismatch
