@@ -301,11 +301,30 @@ extension MLS.RFC9420.Group {
 		let groupSecrets = try welcome.decryptGroupSecrets(
 			provider, keyPackageRef: keyPackageRef, initKey: credentials.initKey)
 
-		// bullet 3. Resumption PSKs with usage reinit/branch carry their
-		// own uniqueness and `GroupInfo.epoch == 1` rules -- meaningless
-		// without ReInit/branching support, which this project defers
-		// project-wide. Rejected outright rather than silently accepted
-		// with those RFC-mandated checks unenforced.
+		// bullet 3, structural half. RFC 9420 §12.4.3.1: "if a PreSharedKeyID
+		// has type resumption with usage reinit or branch, verify that it is
+		// the only such PSK." "Such" is anaphoric to "resumption with usage
+		// reinit or branch", so this is read as: at most one resumption PSK of
+		// usage reinit/branch (external/application PSKs may accompany it).
+		// Purely structural, so it precedes both the capability gate below and
+		// any resolution or derivation. That gate today rejects every
+		// reinit/branch usage regardless; keeping this check independent keeps
+		// the MUST enforced for when the gate is relaxed.
+		let reinitOrBranchPSKs = groupSecrets.psks.filter {
+			if case .resumption(let resumption, _) = $0 {
+				return resumption.usage == .reinit || resumption.usage == .branch
+			}
+			return false
+		}.count
+		guard reinitOrBranchPSKs <= 1 else {
+			throw MLS.RFC9420.GroupError.resumptionPSKNotSole
+		}
+
+		// bullet 3, capability + custody half. Resumption PSKs with usage
+		// reinit/branch carry semantic rules (the Welcome's epoch being 1, and
+		// the §11.2/§11.3 referenced-group checks) meaningless without ReInit/
+		// branching support, which this project defers project-wide. Rejected
+		// outright rather than silently accepted with those checks unenforced.
 		var resolvedPsks: [(encodedID: Data, psk: SecretBytes)] = []
 		for id in groupSecrets.psks {
 			if case .resumption(let resumption, _) = id,

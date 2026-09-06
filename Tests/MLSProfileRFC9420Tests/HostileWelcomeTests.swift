@@ -136,4 +136,129 @@ struct HostileWelcomeTests {
 				&b, provider, pskCommit.commit, psk: emptyResolve)
 		}
 	}
+
+	/// RFC 9420 §12.4.3.1: "if a PreSharedKeyID has type resumption with usage
+	/// reinit or branch, verify that it is the only such PSK." Read per the
+	/// anaphoric "such" as: at most one resumption PSK of usage reinit/branch.
+	/// A Welcome carrying two of them — reinit+reinit, reinit+branch, or
+	/// branch+branch — violates the rule and `join` must reject it with the
+	/// dedicated `resumptionPSKNotSole`, thrown before any resolution or
+	/// derivation. (Pre-fix, the per-entry capability gate would throw
+	/// `unsupportedResumptionUsage` on the first entry instead, so this pins the
+	/// new structural check specifically, not the pre-existing gate.)
+	@Test(
+		"join rejects a Welcome with more than one reinit/branch resumption PSK",
+		arguments: [
+			[MLS.RFC9420.ResumptionPSKUsage.reinit, .reinit],
+			[.reinit, .branch],
+			[.branch, .branch],
+		])
+	func joinRejectsMultipleReinitBranchResumptionPSKs(
+		_ usages: [MLS.RFC9420.ResumptionPSKUsage]
+	) throws {
+		let provider = Self.provider
+		let psks = usages.map { Self.resumptionPSK(provider, usage: $0) }
+		let (hostile, bob) = try Self.hostileWelcome(provider, psks: psks)
+
+		#expect(throws: MLS.RFC9420.GroupError.resumptionPSKNotSole) {
+			_ = try MLS.RFC9420.Group.join(
+				provider, welcome: hostile,
+				credentials: bob.joinCredentials, psk: { _ in nil })
+		}
+	}
+
+	/// The discriminator between the RFC-correct reading and the stricter
+	/// misreading (that a reinit/branch PSK must be the *sole* PSK): a single
+	/// reinit resumption PSK accompanied by an allowed companion is well-formed
+	/// under the only-such rule, which counts only the reinit/branch kind
+	/// ("external/application PSKs may accompany it"), so it is NOT rejected as
+	/// `resumptionPSKNotSole`. Exercised for all three companion kinds the rule
+	/// permits — external, resumption-usage `application`, and the draft
+	/// top-level `application` type — so the test fails if the only-such check
+	/// is ever tightened to count any of them (e.g. reading A, or folding
+	/// application PSKs into the limit). It is still rejected here, by the
+	/// capability gate (`unsupportedResumptionUsage`, reinit/branch deferred
+	/// project-wide), with the reinit entry ordered first so the gate, not the
+	/// unresolved companion, is what fires.
+	@Test(
+		"a lone reinit resumption PSK beside an allowed companion is not an only-such violation",
+		arguments: ["external", "resumption-application", "application-component"])
+	func loneReinitWithAllowedCompanionIsNotOnlySuchViolation(_ companion: String) throws {
+		let provider = Self.provider
+		let nonce = Data(repeating: 0, count: provider.hashSize)
+		let companionPSK: MLS.RFC9420.PreSharedKeyIdentifier =
+			switch companion {
+			case "external":
+				.external(pskID: Data(repeating: 9, count: 8), nonce: nonce)
+			case "resumption-application":
+				.resumption(
+					.init(
+						usage: .application, groupID: Data("other".utf8),
+						epoch: 2),
+					nonce: nonce)
+			default:
+				.application(
+					componentID: MLS.KeySchedule.ComponentID(0xFF01),
+					pskID: Data(repeating: 9, count: 8), nonce: nonce)
+			}
+		let psks: [MLS.RFC9420.PreSharedKeyIdentifier] = [
+			Self.resumptionPSK(provider, usage: .reinit), companionPSK,
+		]
+		let (hostile, bob) = try Self.hostileWelcome(provider, psks: psks)
+
+		#expect(throws: MLS.RFC9420.GroupError.unsupportedResumptionUsage) {
+			_ = try MLS.RFC9420.Group.join(
+				provider, welcome: hostile,
+				credentials: bob.joinCredentials, psk: { _ in nil })
+		}
+	}
+
+	private static func resumptionPSK(
+		_ provider: any MLS.CipherSuiteProvider,
+		usage: MLS.RFC9420.ResumptionPSKUsage
+	) -> MLS.RFC9420.PreSharedKeyIdentifier {
+		.resumption(
+			.init(usage: usage, groupID: Data("old-group".utf8), epoch: 1),
+			nonce: Data(repeating: 0, count: provider.hashSize))
+	}
+
+	/// Build a real Welcome (Alice adds Bob), then re-seal a `GroupSecrets`
+	/// carrying `psks` to Bob's own init key, under the same "Welcome" label and
+	/// `encrypted_group_info` context the real Welcome binds — exactly what a
+	/// malicious inviter (who signs the GroupInfo) could produce. `joiner_secret`
+	/// is non-empty so the structural PSK check, not the empty-joiner guard, is
+	/// what fires.
+	private static func hostileWelcome(
+		_ provider: any MLS.CipherSuiteProvider,
+		psks: [MLS.RFC9420.PreSharedKeyIdentifier]
+	) throws -> (welcome: MLS.RFC9420.Welcome, bob: SelfInteropTests.Member) {
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+
+		var groupA = try SelfInteropTests.createGroup(alice)
+		let add = try groupA.commit(
+			provider,
+			proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey,
+			randomness: .generate(provider))
+		let welcome = try #require(add.welcome)
+
+		let tampered = MLS.RFC9420.GroupSecrets(
+			joinerSecret: Data(repeating: 1, count: provider.hashSize),
+			pathSecret: nil, psks: psks)
+		let (enc, ciphertext) = try MLS.encryptWithLabel(
+			provider, publicKey: bob.keyPackage.initKey, label: "Welcome",
+			context: welcome.encryptedGroupInfo,
+			plaintext: try tampered.mlsEncoded())
+		let hostile = MLS.RFC9420.Welcome(
+			cipherSuite: welcome.cipherSuite,
+			secrets: [
+				.init(
+					newMember: try bob.keyPackage.reference(provider),
+					encryptedGroupSecrets: .init(
+						kemOutput: enc, ciphertext: ciphertext))
+			],
+			encryptedGroupInfo: welcome.encryptedGroupInfo)
+		return (hostile, bob)
+	}
 }
