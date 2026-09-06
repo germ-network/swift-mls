@@ -60,4 +60,92 @@ struct MlsRsMigrationTests {
 		#expect(!store.chains.isEmpty)
 		#expect(!store.tree.nodeSecrets.isEmpty)
 	}
+
+	/// spec/snapshot.md §4.7 reconstruct rule: format-1 restore lifts the current
+	/// epoch's own-leaf chains into `Membership.own_send`, so a migrated member
+	/// that had already sent resumes at its recorded generation instead of
+	/// re-seeding at 0 (which would throw `subtreeExhausted` against the
+	/// §9.2-deleted leaf secret). Transcribe a live 2-member group that has sent
+	/// into a format-1 archive, restore, and prove the resumed member keeps
+	/// sending in generation order to a co-member.
+	@Test("format-1 restore reconstructs own_send so a member that had sent resumes")
+	func format1ReconstructsOwnSend() throws {
+		typealias G = MLS.RFC9420.Group
+		let provider = SelfInteropTests.provider
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+		var groupA = try SelfInteropTests.createGroup(alice)
+		let add = try groupA.commit(
+			provider, proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey, randomness: .generate(provider))
+		groupA = add.group
+		var groupB = try G.join(
+			provider, welcome: try #require(add.welcome),
+			credentials: bob.joinCredentials, psk: { _ in nil })
+
+		// Alice sends in the current epoch → her own send ratchets seed; Bob
+		// consumes generation 0, and the own application chain head advances to 1.
+		let m0 = try groupA.protect(
+			provider, applicationData: Data("m0".utf8), signingKey: alice.signingKey)
+		_ = try groupB.unprotect(provider, message: m0)
+
+		// Transcribe groupA's format-2 snapshot into a format-1 archive: the
+		// current epoch's own_send chains move into the store's `chains` at the
+		// own-leaf keys, with own_next_generation set from their heads (the shape
+		// an mls-rs export carries).
+		let snap = try groupA.makeSnapshot()
+		let leaf = UInt64(groupA.myLeafIndex.value)
+		let currentEpoch = groupA.context.epoch
+		let membership = try #require(snap.memberships.entries[leaf])
+		let ownSend = try #require(membership.ownSend)
+
+		var stores: [UInt64: G.MessageSecretStoreFormat1Archive] = [:]
+		for (epoch, store) in snap.core.messageSecrets.entries {
+			var chains = store.chains.entries
+			var ownNext = G.OwnNextGenerationArchive(handshake: 0, application: 0)
+			if epoch == currentEpoch {
+				chains[(leaf << 1) | 0] = ownSend.handshakeChain
+				chains[(leaf << 1) | 1] = ownSend.applicationChain
+				ownNext = G.OwnNextGenerationArchive(
+					handshake: ownSend.handshakeChain.headGeneration,
+					application: ownSend.applicationChain.headGeneration)
+			}
+			stores[epoch] = G.MessageSecretStoreFormat1Archive(
+				groupContext: store.groupContext,
+				senderDataSecret: store.senderDataSecret,
+				signatureKeys: store.signatureKeys,
+				secretTree: store.secretTree,
+				chains: MLS.RFC9420.IntegerKeyedMap(chains),
+				ownNextGeneration: ownNext)
+		}
+
+		let format1 = G.SnapshotFormat1(
+			format: 1,
+			groupContext: snap.core.groupContext,
+			ratchetTree: snap.core.ratchetTree,
+			interimTranscriptHash: snap.core.interimTranscriptHash,
+			myLeafIndex: UInt32(leaf),
+			epochSecrets: snap.core.epochSecrets,
+			treeSecretKeys: membership.treeSecretKeys,
+			resumptionPsks: snap.core.resumptionPsks,
+			messageSecrets: MLS.RFC9420.IntegerKeyedMap(stores),
+			retention: snap.core.retention,
+			config: snap.core.config,
+			exporterTree: snap.core.exporterTree)
+
+		var restoredA = try G.restore(
+			from: try SecretArchive(encoding: format1), provider)
+
+		// The reconstructed own_send resumes at generation 1: Alice sends again and
+		// Bob — who consumed generation 0 — decrypts it. A re-seed at 0 (the discard
+		// path) would throw `subtreeExhausted` here against the consumed leaf secret.
+		let m1 = try restoredA.protect(
+			provider, applicationData: Data("m1".utf8), signingKey: alice.signingKey)
+		let opened = try groupB.unprotect(provider, message: m1)
+		guard case .application(let data) = opened.content else {
+			Issue.record("expected application content")
+			return
+		}
+		#expect(data == Data("m1".utf8))
+	}
 }

@@ -94,10 +94,10 @@ from the suite named in `group_context`:
 - `Nsk` — the suite's KEM private key length (RFC 9180 §7.1).
 
 Every byte string annotated with a length below MUST be exactly that length;
-a wrong-length value is a decode error. The canonical key ordering of §4.1
-places `group_context` (key 1) ahead of every length-constrained field, so a
-decoder reading keys in order always knows the suite before it needs a
-length.
+a wrong-length value is a decode error. The canonical key ordering places
+`group_context` first within `core` (§4.1.1) — ahead of every
+length-constrained field — so a decoder reading keys in order always knows the
+suite before it needs a length.
 
 ## 4. Schema
 
@@ -106,51 +106,109 @@ decode error, not a value to be clamped or reinterpreted.
 
 ### 4.1 Top level
 
+Format 2 splits what a device holds for a group into a client-agnostic `core`
+— one copy per group, identical across the device's memberships in it — and
+one `Membership` per local membership, keyed by leaf index:
+
 ```
 Snapshot = {
-    0: format                ; uint, this document: 1
-    1: group_context         ; bstr, MLS GroupContext (RFC 9420 §8.1)
-    2: ratchet_tree          ; bstr, MLS ratchet_tree extension content
-                             ;   (RFC 9420 §12.4.3.3: optional<Node> vector)
-    3: interim_transcript_hash ; bstr, length Nh
-    4: my_leaf_index         ; uint, < 2^32
-    5: epoch_secrets         ; EpochSecrets
-    6: tree_secret_keys      ; { + uint => bstr }        SECRET values
-    7: resumption_psks       ; { + uint => bstr }        SECRET values
-    8: message_secrets       ; { + uint => MessageSecretStore }
-    9: retention             ; Retention
-  ? 10: config               ; Config — absent when empty
-  ? 11: exporter_tree        ; SecretTreeState (§4.6), the current epoch's
-                             ;   Exporter Tree frontier — absent only from a
-                             ;   producer that predates it (a migration source)
+    0: format          ; uint, format 2
+    1: core            ; Core (§4.1.1)
+    2: memberships     ; { + uint => Membership }  key: leaf index (§4.1.2)
 }
 ```
 
-- `group_context` is the single source of truth for the cipher suite,
-  `group_id`, and current epoch. No *top-level* field duplicates them; the
-  per-epoch stores of §4.3 each carry their own `group_context`, constrained
-  there.
+- `memberships` is never empty: a group with no local membership is not a
+  thing a device persists (the N ≥ 1 construction invariant). Each key MUST
+  index a non-blank leaf of `core.ratchet_tree`, and the map is the sole
+  carrier of leaf identity — a duplicate leaf is structurally impossible,
+  since it would be a duplicate map key, already a §3 decode error. A decoder
+  orders memberships ascending by key so `memberships[0]` is deterministic.
+
+#### 4.1.1 Core
+
+The client-agnostic state. `group_context` (key 0) is the single source of
+truth for the cipher suite, `group_id`, and current epoch, and precedes every
+length-constrained field so a decoder always knows the suite before it needs a
+length (§3.1). No core field duplicates those three; the per-epoch stores of
+§4.3 each carry their own `group_context`, constrained there.
+
+```
+Core = {
+    0: group_context           ; bstr, MLS GroupContext (RFC 9420 §8.1)
+    1: ratchet_tree            ; bstr, MLS ratchet_tree extension content
+                               ;   (RFC 9420 §12.4.3.3: optional<Node> vector)
+    2: interim_transcript_hash ; bstr, length Nh
+    3: epoch_secrets           ; EpochSecrets (§4.2)
+    4: resumption_psks         ; { + uint => bstr }  SECRET values (Nh)
+    5: message_secrets         ; { + uint => MessageSecretStore (§4.3) }
+    6: retention               ; Retention (§4.4)
+  ? 7: config                  ; Config (§4.5) — always absent
+  ? 8: exporter_tree           ; SecretTreeState (§4.6), the current epoch's
+                               ;   Exporter Tree frontier — absent only from a
+                               ;   producer that predates it (a migration source)
+}
+```
+
 - `ratchet_tree` uses the same encoding the `ratchet_tree` extension carries
-  on the wire. At decode, an implementation MUST perform the structural
-  parse and the tree-integrity checks that need no cryptographic provider:
-  well-formed node vector, consistent leaf/parent placement, and
-  `my_leaf_index` naming a non-blank leaf. Signature and parent-hash
-  verification are **not** decode-time obligations — they are performed when
-  the tree is used, exactly as on the wire path — so snapshot decode does
-  not require a `CipherSuiteProvider`.
-- `my_leaf_index` MUST index a non-blank leaf of `ratchet_tree`.
-- `tree_secret_keys` maps node index (< 2^32) → the node's KEM private key,
-  in the raw serialized form the suite's KEM accepts for key reconstruction
-  (length `Nsk`). Keys MUST lie on the member's direct path (own leaf
-  included) and reference non-blank nodes. Never empty: a member always
-  holds at least its own leaf key.
+  on the wire. At decode, an implementation MUST perform the structural parse
+  and the tree-integrity checks that need no cryptographic provider:
+  well-formed node vector, consistent leaf/parent placement, and every
+  `memberships` key naming a non-blank leaf. Signature and parent-hash
+  verification are **not** decode-time obligations — they run when the tree is
+  used, exactly as on the wire path — so snapshot decode does not require a
+  `CipherSuiteProvider`.
 - `resumption_psks` maps epoch → that epoch's resumption PSK (length `Nh`).
-  Retained epochs MUST fall within the window `retention` describes,
-  relative to `group_context.epoch`. Never empty: the current epoch's PSK is
-  always retained.
+  Retained epochs MUST fall within the window `retention` describes, relative
+  to `group_context.epoch`. Never empty: the current epoch's PSK is always
+  retained.
 - `message_secrets` maps epoch → that epoch's store. Every key MUST be
-  ≤ `group_context.epoch` and MUST fall within `message_secrets_depth` of
-  it. Never empty: the current epoch always has a store.
+  ≤ `group_context.epoch` and MUST fall within `message_secrets_depth` of it.
+  Never empty: the current epoch always has a store.
+
+#### 4.1.2 Membership
+
+One local membership's per-client state, keyed in `memberships` by its leaf
+index (D18 makes the leaf index the membership identity), so the index is not
+repeated inside the entry.
+
+```
+Membership = {
+    0: tree_secret_keys   ; { + uint => bstr }  SECRET values (Nsk)
+  ? 1: pending_updates    ; { + uint => PendingUpdateEntry }  absent when none
+  ? 2: own_send           ; OwnSend  absent when nothing sent this epoch
+}
+
+PendingUpdateEntry = {
+    0: public_key         ; bstr, the proposed leaf's HPKE public key
+    1: secret             ; bstr  SECRET (Nsk), its HPKE private key
+}
+
+OwnSend = {
+    0: handshake_chain    ; Chain (§4.3)
+    1: application_chain  ; Chain (§4.3)
+}
+```
+
+- `tree_secret_keys` maps node index (< 2^32) → the node's KEM private key, in
+  the raw serialized form the suite's KEM accepts for key reconstruction
+  (length `Nsk`). Keys MUST lie on this membership's own direct path (its own
+  leaf included) and reference non-blank nodes. Never empty: a member always
+  holds at least its own leaf key.
+- `pending_updates` is this membership's outstanding self-Update — the set of
+  proposed new leaf key pairs (a set: the committer, not the proposer, picks
+  which lands), keyed by dense index `0..<count` in proposal order. Absent when
+  none is outstanding, never empty when present (§3's one-wire-form rule). The
+  epoch and own-leaf node the live value also carries are not stored: the epoch
+  can only be `group_context.epoch` (a pending Update is cleared on every
+  advance), and the node is the membership's own leaf.
+- `own_send` is this membership's two send ratchets for the current epoch
+  (sending happens only in the current epoch). Absent when the membership has
+  not sent this epoch — restore re-seeds it lazily from the consuming secret
+  tree; present ⟹ both ratchets seeded. Each chain's next generation is not
+  stored: it equals that chain's `head_generation` by construction (own chains
+  never retire), so a separate counter would be a second wire form for one
+  state.
 
 ### 4.2 EpochSecrets
 
@@ -184,7 +242,9 @@ are key material and remain secret-marked.
 One retained epoch's `PrivateMessage` decryption state. It is deliberately
 not sufficient to verify that epoch's `PublicMessage` traffic: no per-epoch
 `membership_key` is retained, so only the current epoch — whose
-`membership_key` lives in §4.2 — can verify a `PublicMessage`.
+`membership_key` lives in §4.2 — can verify a `PublicMessage`. `chains` holds
+**remote** senders' ratchets only; a local membership's own send ratchets live
+in its `Membership.own_send` (§4.1.2), so no own-send counter appears here.
 
 ```
 MessageSecretStore = {
@@ -194,7 +254,6 @@ MessageSecretStore = {
     3: secret_tree           ; SecretTreeState
     4: chains                ; { * uint => Chain }  key: (leaf << 1) | kind
                              ;   kind bit: 0 = handshake, 1 = application
-    5: own_next_generation   ; { 0: uint, 1: uint } handshake, application
 }
 
 SecretTreeState = {
@@ -222,9 +281,9 @@ its generation is consumed — independent of the per-field marking.
 Cross-consistency requirements, all decode errors when violated:
 
 - Each store's `group_context` MUST name the same cipher suite and
-  `group_id` as the top-level `group_context`, and its epoch MUST equal the
-  store's map key. The store for `group_context.epoch` MUST carry a
-  `group_context` byte-identical to the top-level one.
+  `group_id` as `core.group_context` (§4.1.1), and its epoch MUST equal the
+  store's map key. The store for `core.group_context.epoch` MUST carry a
+  `group_context` byte-identical to `core`'s.
 - `signature_keys` leaf indices MUST be < the store's `leaf_count`. Never
   empty: a group always has at least one non-blank leaf.
 - `chains` keys pack sender leaf index and ratchet kind as
@@ -243,8 +302,6 @@ Cross-consistency requirements, all decode errors when violated:
   addressable in `skipped`. `head_generation` MUST be < `2^32` whenever
   `head_secret` is present. There is exactly one encoding of a retired
   chain.
-- `own_next_generation` values MUST be ≤ `2^32`, with `2^32` meaning the
-  member's own chain of that kind is exhausted.
 
 ### 4.4 Retention
 
@@ -262,8 +319,8 @@ Retention = {
 
 ### 4.5 Config
 
-Profile configuration the group was running under. `format` 1 defines no
-config keys; the section MUST be absent. When a future format defines
+Profile configuration the group was running under. Neither format defines any
+config keys, so the section MUST be absent. When a future format defines
 configuration, an unsupported value MUST fail decode — a group is never
 silently restored under different rules than it was persisted under.
 
@@ -299,27 +356,112 @@ adds at most one copath sibling per level (≤ 16, the tree's depth), fewer with
 the overlap of nearby `ComponentID`s. A typical archive carries a handful of
 `node_secrets`, never one per leaf.
 
-`exporter_tree` is **optional** (key 11): every live group installs a tree, so a
-conforming producer of this format emits it. It is absent only from an archive
-written by a producer that predates the Exporter Tree — a migration source such
-as a peer's cross-implementation export. Restoring such an archive yields a
-group with no exporter tree; `SafeExportSecret` is unavailable until the group
-advances an epoch and installs one. Nothing is re-derivable in the meantime, so
-the absence is forward-secrecy-safe.
+`exporter_tree` is **optional** (`core` key 8, §4.1.1): every live group
+installs a tree, so a conforming producer of format 2 emits it. It is absent
+only from an archive written by a producer that predates the Exporter Tree — a
+migration source such as a peer's cross-implementation export (format 1).
+Restoring such an archive yields a group with no exporter tree;
+`SafeExportSecret` is unavailable until the group advances an epoch and installs
+one, and — since a format-2 producer emits key 8 rather than omitting it — such
+a group also cannot be **re-archived** until then. Nothing is re-derivable in the
+meantime, so the absence is forward-secrecy-safe.
 
-## 5. Versioning
+### 4.7 Format 1 (decode-only)
 
-`format` is required and is the only version in this format; sections do not
-self-version. An unknown `format` is a decode error. A future format change
-is a new `format` value plus an explicit, specified transform from the
-previous one — never a silent reinterpretation of existing fields.
+Format 1 is the flat, single-membership shape emitted before the D18
+client-aware split — chiefly the deployed mls-rs `export_for_swift()` migration
+source. This profile decodes it and never writes it (§5); its shape is fixed by
+that external emitter and does not grow here.
 
-Format 1 is **not frozen** until the wire cut: while the target is still under
-development it may gain required fields in place (e.g. `exporter_tree`, key 11
-of §4.1) without a `format` bump, so an archive written by an earlier build may
-fail to decode against a later one. There is no persisted archive corpus to
-preserve pre-cut. Once the wire is cut, format 1 freezes and this in-place-growth
-allowance ends — any later change takes a new `format` value under the rule above.
+```
+SnapshotFormat1 = {
+    0: format                  ; uint, format 1
+    1: group_context           ; bstr, MLS GroupContext
+    2: ratchet_tree            ; bstr, ratchet_tree extension content
+    3: interim_transcript_hash ; bstr, length Nh
+    4: my_leaf_index           ; uint, < 2^32
+    5: epoch_secrets           ; EpochSecrets (§4.2)
+    6: tree_secret_keys        ; { + uint => bstr }  SECRET values (Nsk)
+    7: resumption_psks         ; { + uint => bstr }  SECRET values (Nh)
+    8: message_secrets         ; { + uint => MessageSecretStoreFormat1 }
+    9: retention               ; Retention (§4.4)
+  ? 10: config                 ; Config (§4.5) — absent
+  ? 11: exporter_tree          ; SecretTreeState (§4.6) — absent from a producer
+                               ;   that predates it
+}
+
+MessageSecretStoreFormat1 = {
+    0..4: as MessageSecretStore (§4.3)
+    5: own_next_generation   ; { 0: uint, 1: uint }  handshake, application;
+                             ;   each ≤ 2^32
+}
+```
+
+Restore maps the flat fields onto the format-2 shape: `group_context` through
+`exporter_tree` become `core` (§4.1.1), and `my_leaf_index` + `tree_secret_keys`
+become the sole `Membership` (§4.1.2) — with no `pending_updates` (format 1 has
+no such field) and `own_send` reconstructed from the current epoch's own-leaf
+chains (below). The cross-consistency MUSTs of §4.1.1 and §4.3 apply unchanged;
+`my_leaf_index` MUST index a non-blank leaf, and `tree_secret_keys` MUST lie on
+that leaf's direct path.
+
+A format-1 `MessageSecretStore` carries one field format 2's (§4.3) does not:
+`own_next_generation` (key 5), a **required** `{ 0: uint, 1: uint }` giving the
+sender's own next handshake and application send positions. A decoder MUST parse
+it — it is not an unknown key to skip. At restore it is **cross-checked**: for
+each kind, `own_next_generation.<kind>` MUST equal the sender's own-leaf chain
+`head_generation` when that chain is present in `chains` (the own leaf is
+`my_leaf_index`, keyed `(my_leaf_index << 1) | kind`), and MUST be 0 when it is
+absent — a mismatch is a decode error. This is the same value by construction for
+an honest emitter — a sender's own send position is its own ratchet's generation
+— so it turns a field swift does not otherwise carry into a checked one at the
+mis-decode-fatal boundary.
+
+The own-leaf chains are then lifted out of `chains` (a format-2 `chains` holds
+remote senders only, §4.3) and, **for the current epoch**, become the
+membership's `own_send`: those chains *are* the sender's live send ratchets, so a
+member that had sent resumes at its recorded position. Reconstructing rather than
+discarding is required, not optional: under §9.2 a member that has sent deleted
+the leaf secret its own send ratchet derives from, so a discarded `own_send`
+could not be re-seeded and that member could not send again until the next epoch
+— a silent send loss across migration. A member that had **not** sent has both
+own chains absent and `own_send` unseeded; own send then seeds lazily from the
+still-present leaf secret. A member seeds both ratchets from one leaf secret, so
+an honest emitter carries both own chains or neither; exactly one present is a
+decode error. Retained (non-current) epochs cannot be sent in, so their own-leaf
+chains are cross-checked and dropped, never reconstructed.
+
+## 5. Versioning and dispatch
+
+`format` (key 0) is required and is the sole version of the whole item;
+sections do not self-version. Because §3 orders map keys strictly increasing
+and 0 is the least, `format` is always the **first entry** of the top-level
+map. A decoder therefore reads that first entry, selects the schema it names,
+and decodes the entire item strictly under that schema. Reading only the first
+entry to dispatch is **not** an unknown-key exemption: the probe decodes that
+one entry and nothing else, and the selected schema then decodes the whole
+item, first entry included. An unknown `format` is a decode error. A future
+format change is a new `format` value plus an explicit, specified transform
+from the previous one — never a silent reinterpretation of existing fields.
+
+Two formats are defined:
+
+- **Format 2** (`format` = 2) is this profile's native persisted shape (§4.1):
+  a client-agnostic `core` plus one entry per local membership. This profile
+  always writes format 2.
+- **Format 1** (`format` = 1) is the flat, single-membership legacy shape
+  (§4.7), **decode-only**: the shape a pre-split producer emits, chiefly the
+  deployed mls-rs `export_for_swift()` cross-implementation migration source.
+  This profile decodes it — restoring a group with exactly one membership and
+  no pending self-Update — and never writes it. Its shape is fixed by that
+  external emitter and does not grow here.
+
+Format 2 is **not frozen** until the wire cut: while the target is still under
+development it may gain required fields in place without a `format` bump, so an
+archive written by an earlier build may fail to decode against a later one. There is no persisted archive corpus to preserve
+pre-cut. Once the wire is cut, format 2 freezes and this in-place-growth
+allowance ends — any later change takes a new `format` value under the rule
+above.
 
 ## 6. The Transition contract
 
@@ -335,9 +477,14 @@ shapes, three obligations:
 - **Application-message decryption** advances the ratchet and yields a
   Transition.
 - **Handshake application** — a commit taking effect — yields a Transition
-  at the moment it is *applied*, not when it is received or validated.
-  Receiving, authenticating, and validating a commit produce no state
-  change and no Transition.
+  at the moment it is *applied*. Validating a commit beforehand is itself a
+  Transition when the frame is a `PrivateMessage`: the AEAD open spends the
+  sender's ratchet generation (§9.2's delete-on-consume), and that
+  consumption MUST be persisted so it is not reused after a restart — even
+  when the commit is then declined, or turns out invalid. Validating a
+  `PublicMessage`-framed commit consumes nothing and yields no Transition
+  until apply; receiving and authenticating short of the private AEAD open
+  never advance state.
 - **Read-only decryption** (decrypting to display without owning the
   persisted state) yields no Transition, and its derived state MUST be
   discarded rather than persisted.
@@ -351,24 +498,31 @@ Therefore:
    outputs before that write commits. Processing a batch of N messages and
    atomically persisting N outputs with only the final snapshot satisfies
    this — intermediate snapshots need never be encoded.
-3. **A commit is applied only once established as canonical.** RFC 9420
-   gives the Delivery Service the role of determining which commit begins
-   the next epoch; a member MUST NOT apply a commit — its own included —
-   before establishing that it is that commit. Applying a non-canonical
-   commit is unrecoverable: the previous epoch's state is destroyed by
-   design, and the member must rejoin by Welcome. Constructing a commit is
-   therefore **not** a state advance and generates no snapshot to persist.
-   Two consequences for a committer awaiting confirmation: the Welcome
-   produced alongside a commit cannot be regenerated later and MUST be
-   retained across the wait if the commit adds members; and the inputs
+3. **A commit's epoch advance is applied only once it is canonical.** RFC
+   9420 gives the Delivery Service the role of determining which commit
+   begins the next epoch; a member MUST NOT apply a commit's epoch advance —
+   its own included — before establishing that it is that commit. Applying a
+   non-canonical advance is unrecoverable: the previous epoch's state is
+   destroyed by design, and the member must rejoin by Welcome. Constructing
+   a commit does not advance the epoch — but sealing it under `PrivateMessage`
+   framing spends the committer's own next handshake-ratchet generation
+   (§9.1: a key/nonce pair MUST NOT encrypt two messages), a consumption that
+   rides on the returned transition and MUST be persisted before the commit
+   is transmitted, exactly as an outbound message's is (rule 4); the epoch
+   advance is the separate pending part, applied later. A `PublicMessage`-framed
+   commit consumes nothing and yields no state to persist until it is applied.
+   Two further consequences for a committer awaiting confirmation: the
+   Welcome produced alongside a commit cannot be regenerated later and MUST
+   be retained across the wait if the commit adds members; and the inputs
    needed to reproduce the commit deterministically MUST be retained if the
    implementation intends to recover its own accepted commit after a crash.
-4. For outbound application messages: the application MUST durably persist
-   the snapshot **before** transmitting. The consumed generation is gone
-   from the sender's own chain the moment the message is produced;
-   transmitting first and crashing before the persist leaves the sender
-   able to reuse that generation, and an AEAD key–nonce pair reused across
-   two plaintexts is a confidentiality break.
+4. For outbound `PrivateMessage`s — application and handshake alike: the
+   application MUST durably persist the snapshot **before** transmitting.
+   The consumed generation is gone from the sender's own chain the moment
+   the message is produced; transmitting first and crashing before the
+   persist leaves the sender able to reuse that generation, and an AEAD
+   key–nonce pair reused across two plaintexts is a confidentiality break.
+   A privately-framed commit is one such outbound message (rule 3).
 5. Snapshot supersession MUST be replace-not-append: at most one live
    snapshot exists per group. A superseded snapshot is retained key
    material and MUST be destroyed to the storage's ability.
@@ -383,6 +537,14 @@ Therefore:
    a well-formed atomic write still lose one context's consumptions to the
    other's, which re-arms consumed keys exactly as a rollback would (§7),
    without any storage-level rollback having occurred.
+
+An implementation may offer **in-place** send and receive conveniences that
+apply their ratchet consumption to the live group directly, without a deferred
+pending — a mutating `protect` on the send side, a mutating `unprotect` for the
+application-message receive path. Each is a consumption point: it carries rule 4
+(send) or rule 2 (receive) in full — persist before transmitting or before
+acting on the plaintext — and a security review treats both as such, exactly as
+it treats the two-step forms.
 
 ## 7. Security considerations
 

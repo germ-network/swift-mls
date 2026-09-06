@@ -15,19 +15,20 @@ extension MLS.RFC9420 {
 		/// a format-1 value). spec/snapshot.md §5: an unknown `format` is a decode
 		/// error, never a silent reinterpretation.
 		case unsupportedFormat(UInt64)
-		/// A `config` section was present. spec/snapshot.md §4.5: format 1
-		/// defines no config keys, so the section MUST be absent — a group is
+		/// A `config` section was present. spec/snapshot.md §4.5: neither format
+		/// defines config keys, so the section MUST be absent — a group is
 		/// never silently restored under rules it was not persisted under.
 		case unexpectedConfig
 		/// The restoring provider's cipher suite differs from the one named in
-		/// `group_context` (spec/snapshot.md §4.1: `group_context` is the single
+		/// `group_context` (spec/snapshot.md §4.1.1: `group_context` is the single
 		/// source of truth for the suite).
 		case cipherSuiteMismatch
 		/// A length-constrained byte string (spec/snapshot.md §3.1) was the
 		/// wrong length for the suite: `Nh`/`Nk`/`Nn`.
 		case wrongLength(field: String, expected: Int, actual: Int)
 		/// A `{ + uint => ... }` map the schema marks "never empty" was empty
-		/// (spec/snapshot.md §4.1/§4.3).
+		/// (spec/snapshot.md §4.1.1/§4.1.2/§4.3), or `memberships` itself was
+		/// empty (§4.1).
 		case unexpectedlyEmpty(field: String)
 		/// An integer map key exceeded the addressable range (`Int`), so it
 		/// could neither be emitted as a CBOR integer key nor round-tripped.
@@ -47,11 +48,12 @@ extension MLS.RFC9420 {
 		/// consistency failed a spec/snapshot.md §4.3 cross-consistency MUST.
 		case inconsistentStore(String)
 		/// `tree_secret_keys` named a node that is not on the member's own
-		/// direct path, is blank, or is out of range (spec/snapshot.md §4.1
-		/// key 6).
+		/// direct path, is blank, or is out of range (spec/snapshot.md §4.1.2
+		/// key 0).
 		case treeSecretKeyOffDirectPath(node: UInt32)
-		/// `my_leaf_index` did not name a non-blank leaf (spec/snapshot.md §4.1
-		/// key 4 / ratchet_tree).
+		/// A membership's leaf index did not name a non-blank leaf of
+		/// `ratchet_tree` (spec/snapshot.md §4.1; format 1's `my_leaf_index`,
+		/// §4.7).
 		case myLeafIndexBlank(UInt32)
 		/// Retained for compatibility, no longer thrown: format 1 had no
 		/// `pending_updates` field, so `makeSnapshot()` refused a `Group` holding
