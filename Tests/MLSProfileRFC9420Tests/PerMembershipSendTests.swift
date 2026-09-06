@@ -66,8 +66,8 @@ struct PerMembershipSendTests {
 		// distinct send states, keyed to distinct leaves.
 		let aIndex = try f.multi.membershipIndex(of: aliceLeaf)
 		let bIndex = try f.multi.membershipIndex(of: bobLeaf)
-		#expect(f.multi.memberships[aIndex].ownSend.nextGeneration.application == 1)
-		#expect(f.multi.memberships[bIndex].ownSend.nextGeneration.application == 1)
+		#expect(f.multi.memberships[aIndex].ownSend.nextGeneration(isHandshake: false) == 1)
+		#expect(f.multi.memberships[bIndex].ownSend.nextGeneration(isHandshake: false) == 1)
 
 		// Cross-decrypt on the pristine standalone views.
 		let openedByBob = try f.bobView.unprotect(provider, message: aMsg)
@@ -95,7 +95,7 @@ struct PerMembershipSendTests {
 			as: aliceLeaf, provider, applicationData: Data("two".utf8),
 			signingKey: f.alice.signingKey)
 		let aIndex = try f.multi.membershipIndex(of: aliceLeaf)
-		#expect(f.multi.memberships[aIndex].ownSend.nextGeneration.application == 2)
+		#expect(f.multi.memberships[aIndex].ownSend.nextGeneration(isHandshake: false) == 2)
 
 		// Bob's view decrypts both — generation 0 then 1, no reuse.
 		let opened0 = try f.bobView.unprotect(provider, message: first)
@@ -159,8 +159,12 @@ struct PerMembershipSendTests {
 		#expect(restored.memberships.count == 2)
 		let aIndex = try restored.membershipIndex(of: aliceLeaf)
 		let bIndex = try restored.membershipIndex(of: bobLeaf)
-		#expect(restored.memberships[aIndex].ownSend.nextGeneration.application == 2)
-		#expect(restored.memberships[bIndex].ownSend.nextGeneration.application == 1)
+		#expect(
+			restored.memberships[aIndex].ownSend.nextGeneration(isHandshake: false) == 2
+		)
+		#expect(
+			restored.memberships[bIndex].ownSend.nextGeneration(isHandshake: false) == 1
+		)
 
 		// The restored composite continues Alice's ratchet at generation 2 — no
 		// reuse of the two already sent. Bob's pristine view opens all three of

@@ -54,20 +54,28 @@ extension MLS.RFC9420 {
 
 		/// The own-leaf send state for one epoch. Both ratchets are seeded together
 		/// from a single consumed leaf secret (§9.1), so `handshakeChain == nil`
-		/// means neither has been seeded yet. Send is strictly sequential, so each
-		/// `nextGeneration` equals its chain's head generation and no skipped keys
-		/// ever accumulate here (unlike the receive-side chains in `GroupCore`).
+		/// means neither has been seeded yet — the next generation is 0. Send is
+		/// strictly sequential, so the next generation is exactly the chain's head
+		/// generation (own chains never retire — `deriveOwnSendKey` throws at
+		/// `.max`), and no skipped keys ever accumulate here (unlike the
+		/// receive-side chains in `GroupCore`). The chain is the sole consumption
+		/// authority; there is no separate counter to drift from it.
 		struct OwnSendState: Sendable {
 			var epoch: UInt64
 			var handshakeChain: MLS.KeySchedule.RatchetChain?
 			var applicationChain: MLS.KeySchedule.RatchetChain?
-			var nextGeneration: (handshake: UInt32, application: UInt32)
 
 			init(epoch: UInt64) {
 				self.epoch = epoch
 				self.handshakeChain = nil
 				self.applicationChain = nil
-				self.nextGeneration = (0, 0)
+			}
+
+			/// The next generation this ratchet will send — its chain's head, or 0
+			/// before the chain is seeded.
+			func nextGeneration(isHandshake: Bool) -> UInt32 {
+				(isHandshake ? handshakeChain : applicationChain)?.headGeneration
+					?? 0
 			}
 		}
 

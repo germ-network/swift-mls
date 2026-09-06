@@ -283,10 +283,8 @@ extension MLS.RFC9420.Group {
 			memberships[membershipIndex].ownSend = MLS.RFC9420.Membership.OwnSendState(
 				epoch: epoch)
 		}
-		let generation =
-			isHandshake
-			? memberships[membershipIndex].ownSend.nextGeneration.handshake
-			: memberships[membershipIndex].ownSend.nextGeneration.application
+		let generation = memberships[membershipIndex].ownSend.nextGeneration(
+			isHandshake: isHandshake)
 		guard generation != .max else {
 			throw MLS.RFC9420.GroupError.sendGenerationExhausted
 		}
@@ -332,16 +330,15 @@ extension MLS.RFC9420.Group {
 		}
 		let step = try MLS.KeySchedule.ratchetStep(
 			provider, secret: headSecret, generation: generation)
-		chain.headGeneration = generation &+ 1
-		chain.headSecret = generation == .max ? nil : step.nextSecret
+		// Advance the chain (the sole send position): its new head IS the next
+		// generation. `generation != .max` was guarded above, so the head never
+		// wraps and the chain never retires.
+		chain.headGeneration = generation + 1
+		chain.headSecret = step.nextSecret
 		if isHandshake {
 			memberships[membershipIndex].ownSend.handshakeChain = chain
-			memberships[membershipIndex].ownSend.nextGeneration.handshake =
-				generation + 1
 		} else {
 			memberships[membershipIndex].ownSend.applicationChain = chain
-			memberships[membershipIndex].ownSend.nextGeneration.application =
-				generation + 1
 		}
 		return (step.key, step.nonce, generation)
 	}

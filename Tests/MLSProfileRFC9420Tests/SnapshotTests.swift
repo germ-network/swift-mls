@@ -346,10 +346,10 @@ struct SnapshotTests {
 		let epoch = duo.groupA.context.epoch
 		// The own send position is per-membership now (slice 3b).
 		#expect(duo.groupA.memberships[0].ownSend.epoch == epoch)
-		#expect(duo.groupA.memberships[0].ownSend.nextGeneration.application == 1)
+		#expect(duo.groupA.memberships[0].ownSend.nextGeneration(isHandshake: false) == 1)
 
 		var restored = try Group.restore(from: try duo.groupA.archive(), Self.provider)
-		#expect(restored.memberships[0].ownSend.nextGeneration.application == 1)
+		#expect(restored.memberships[0].ownSend.nextGeneration(isHandshake: false) == 1)
 
 		// The restored sender's next message uses generation 1, not a reused 0.
 		let second = try restored.protect(
@@ -578,12 +578,9 @@ struct SnapshotTests {
 			Group.SkippedKeyArchive(key: secret, nonce: Data([0])),
 			["key": .secret, "nonce": .plain])
 
-		assertClassification(
-			Group.OwnNextGenerationArchive(handshake: 0, application: 0),
-			["handshake": .plain, "application": .plain])
-
 		// §4 own send state (slice 3b): the ratchets nest their own secret fields;
-		// at this level each field is a plain sub-struct.
+		// at this level each field is a plain sub-struct. The send positions are
+		// the chains' head generations, not a separate field.
 		assertClassification(
 			Group.OwnSendArchive(
 				handshakeChain: Group.ChainArchive(
@@ -593,13 +590,8 @@ struct SnapshotTests {
 				applicationChain: Group.ChainArchive(
 					headGeneration: 0,
 					headSecret: SecretField(wrappedValue: secret),
-					skipped: MLS.RFC9420.IntegerKeyedMap([:])),
-				nextGeneration: Group.OwnNextGenerationArchive(
-					handshake: 0, application: 0)),
-			[
-				"handshakeChain": .plain, "applicationChain": .plain,
-				"nextGeneration": .plain,
-			])
+					skipped: MLS.RFC9420.IntegerKeyedMap([:]))),
+			["handshakeChain": .plain, "applicationChain": .plain])
 
 		assertClassification(
 			Group.RetentionArchive(
