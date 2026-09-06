@@ -58,7 +58,7 @@ earlier version of this project's plan:
   padding on decode" — this vector is non-normative, not merely non-official.
 - `interop_passive_client_welcome.json` / `interop_passive_client_random.json` /
   `interop_passive_client_handle_commit.json` — do not exist upstream under those
-  names (phase 5/GER-2296). The real files are `passive-client-welcome.json`,
+  names. The real files are `passive-client-welcome.json`,
   `passive-client-random.json`, `passive-client-handling-commit.json`, listed
   above. The likely source of the wrong names: `mlswg/mls-implementations` also
   has an `interop/passive/` directory, but that holds gRPC-harness *configs*
