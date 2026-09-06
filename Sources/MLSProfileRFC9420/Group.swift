@@ -198,11 +198,16 @@ extension MLS.RFC9420.Group {
 	/// attempts at a black-box test passed with this check deleted before
 	/// that was traced — the check is real, the black-box route to it is
 	/// not.
+	/// Returns the verified roster — one `RosterEntry` per non-blank leaf,
+	/// each's signature and §7.3 policy already checked — so `joining` reports
+	/// exactly the leaves this pass validated, in one decode pass (slice 4c). The
+	/// `create` caller discards it.
+	@discardableResult
 	static func validateLeaves(
 		_ tree: MLS.TreeKEM.RatchetTree, groupID: Data,
 		groupExtensions: [MLS.RFC9420.Extension],
 		_ provider: any MLS.CipherSuiteProvider
-	) throws {
+	) throws -> [MLS.RFC9420.RosterEntry] {
 		let groupRequirements = try groupExtensions.requiredCapabilities()
 
 		// Decode every leaf once; the mutual-credential-support check is
@@ -219,6 +224,7 @@ extension MLS.RFC9420.Group {
 		}
 
 		var seenSignatureKeys: Set<MLS.SignaturePublicKey> = []
+		var roster: [MLS.RFC9420.RosterEntry] = []
 		for (leafIndex, leafNode) in leaves {
 			try leafNode.verifySignature(
 				provider,
@@ -236,7 +242,15 @@ extension MLS.RFC9420.Group {
 			guard seenSignatureKeys.insert(leafNode.signatureKey).inserted else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}
+			// Verified-by-construction: this entry's signature was just checked.
+			roster.append(
+				MLS.RFC9420.RosterEntry(
+					leaf: leafIndex,
+					presentation: MLS.RFC9420.CredentialPresentation(
+						credential: leafNode.credential,
+						signatureKey: leafNode.signatureKey)))
 		}
+		return roster
 	}
 
 	/// RFC 9420 §12.4.3.1, reordered so every structural check on the tree
@@ -259,14 +273,24 @@ extension MLS.RFC9420.Group {
 	/// Caller responsibility this function cannot check on its own:
 	/// verifying `group_id` is unique among the groups this client is
 	/// already participating in (RFC 9420 §12.4.3.1) — the library holds
-	/// one `Group` and has no registry of the caller's others.
-	public static func join(
+	/// one `Group` and has no registry of the caller's others. The
+	/// `PendingJoin` exposes `context` (hence `groupID`) for exactly this check,
+	/// before `apply()`.
+	///
+	/// D17 step 1 for a join: run the full §12.4.3.1 Welcome validation and build
+	/// the group, but hand it back as a `PendingJoin` so the application can
+	/// adjudicate the `roster` (the credentials it is about to trust, §5.3.1) and
+	/// `signer` before adopting it with `apply()`. The one-time KeyPackage is
+	/// consumed whether or not the app applies (`consumedKeyPackage`, D17 §2 L5); a
+	/// `joining` that *throws* reports nothing, and the app decides whether to burn
+	/// the KeyPackage on a validation failure. The eager `join(...)` does both steps for callers that adopt immediately.
+	public static func joining(
 		_ provider: any MLS.CipherSuiteProvider,
 		welcome: MLS.RFC9420.Welcome,
 		credentials: JoinerCredentials,
 		externalTree: [MLS.RFC9420.Node?]? = nil,
 		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws -> MLS.RFC9420.Group {
+	) throws -> MLS.RFC9420.PendingJoin {
 		// bullet 1
 		guard welcome.cipherSuite == credentials.keyPackage.cipherSuite else {
 			throw MLS.RFC9420.GroupError.cipherSuiteMismatch
@@ -337,7 +361,11 @@ extension MLS.RFC9420.Group {
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch
 		}
-		try validateLeaves(
+		// The roster the app adjudicates before adopting (slice 4c): every member's
+		// leaf and presentation, each a signature-verified binding by construction
+		// (this pass checks every leaf's own signature). Whether the app *trusts* a
+		// credential is its §5.3.1 judgement, not this library's.
+		let roster = try validateLeaves(
 			tree, groupID: groupInfo.groupContext.groupID,
 			groupExtensions: groupInfo.groupContext.extensions, provider)
 
@@ -414,6 +442,29 @@ extension MLS.RFC9420.Group {
 			encryptionSecret: epoch.encryptionSecret,
 			applicationExportSecret: epoch.applicationExportSecret, tree: tree, provider
 		)
-		return group
+
+		return MLS.RFC9420.PendingJoin(
+			roster: roster, signer: groupInfo.signer,
+			consumedKeyPackage: keyPackageRef, context: group.context,
+			myLeafIndex: group.myLeafIndex, group: group)
+	}
+
+	/// Eager convenience over `joining`: validates and adopts the join in one step
+	/// (the join twin of the eager commit shim). A caller that must adjudicate the
+	/// roster before trusting it — the §5.3.1 Authentication-Service seam — uses
+	/// `joining` and inspects `PendingJoin.roster` before calling `apply()`.
+	/// `join` and this eager shape retire with the other eager shims in the
+	/// migration slice.
+	public static func join(
+		_ provider: any MLS.CipherSuiteProvider,
+		welcome: MLS.RFC9420.Welcome,
+		credentials: JoinerCredentials,
+		externalTree: [MLS.RFC9420.Node?]? = nil,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+	) throws -> MLS.RFC9420.Group {
+		try joining(
+			provider, welcome: welcome, credentials: credentials,
+			externalTree: externalTree, psk: psk
+		).apply().group
 	}
 }
