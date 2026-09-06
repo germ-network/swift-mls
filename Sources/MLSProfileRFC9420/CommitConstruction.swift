@@ -213,7 +213,9 @@ extension MLS.RFC9420.Group {
 				switch stored.proposal {
 				case .update, .remove, .externalInit, .groupContextExtensions:
 					true
-				case .add, .preSharedKey, .reInit: false
+				// §7.2.1 registers app_data_update as Path Required N — it touches
+				// no leaf/tree key, so it never forces a path.
+				case .add, .preSharedKey, .reInit, .appDataUpdate: false
 				}
 			}
 		if !includePath && pathRequired {
@@ -446,7 +448,14 @@ extension MLS.RFC9420.Group {
 				from: context.epoch, to: newContext.epoch, committer: committerLeaf),
 			added: applied.added, updateChanges: updateChanges,
 			committerChange: committerChange, removedLeaves: removedLeaves,
-			localMembershipLeaves: localLeaves)
+			localMembershipLeaves: localLeaves,
+			appDataUpdates: resolved.compactMap {
+				if case .appDataUpdate(let update) = $0.proposal {
+					update
+				} else {
+					nil
+				}
+			})
 		let pending = MLS.RFC9420.PendingCommit(
 			effects: effects, base: context, baseMemberships: localLeaves,
 			newContext: newContext, newTree: newTree,
