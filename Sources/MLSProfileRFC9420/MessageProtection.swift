@@ -560,7 +560,14 @@ extension MLS.RFC9420.Group {
 		let senderData = try MLS.RFC9420.openSenderData(
 			provider, message: message,
 			senderDataSecret: secrets.senderDataSecret)
-		guard senderData.leafIndex != myLeafIndex else {
+		// Own-message guard = sender ∈ any local membership's leaf (D18 §3), not
+		// just `memberships[0]`: at N > 1 a message framed by a non-sole local leaf
+		// is still this device's own, and receiving it must fail the same clean way
+		// as the sole-membership case rather than falling through to a ratchet
+		// derivation that only fails later (its leaf secret was spent by that
+		// membership's own send).
+		guard !memberships.contains(where: { $0.leafIndex == senderData.leafIndex })
+		else {
 			throw MLS.RFC9420.GroupError.cannotDecryptOwnMessage
 		}
 		// `epoch`'s frozen signing key for the sender's leaf: the key the framing

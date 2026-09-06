@@ -109,6 +109,35 @@ struct PerMembershipSendTests {
 		#expect(d1 == Data("two".utf8))
 	}
 
+	@Test(
+		"the composite refuses its own message from any local membership, not just memberships[0]"
+	)
+	func compositeRefusesEveryLocalMembersOwnMessage() throws {
+		let provider = Self.provider
+		var f = try Self.multi()
+		let aliceLeaf = f.aliceView.myLeafIndex  // memberships[0]
+		let bobLeaf = f.bobView.myLeafIndex  // a non-sole local leaf
+
+		let aMsg = try f.multi.protect(
+			as: aliceLeaf, provider, applicationData: Data("from-alice".utf8),
+			signingKey: f.alice.signingKey)
+		let bMsg = try f.multi.protect(
+			as: bobLeaf, provider, applicationData: Data("from-bob".utf8),
+			signingKey: f.bob.signingKey)
+
+		// memberships[0]'s own message is refused, as at N = 1.
+		#expect(throws: MLS.RFC9420.GroupError.cannotDecryptOwnMessage) {
+			_ = try f.multi.unprotect(provider, message: aMsg)
+		}
+		// The non-sole local membership's own message is refused with the SAME
+		// clean error — the guard covers every local leaf (D18 §3), not just
+		// memberships[0]. Before the fix this fell through to the ratchet and
+		// surfaced `generationAlreadyConsumed` instead.
+		#expect(throws: MLS.RFC9420.GroupError.cannotDecryptOwnMessage) {
+			_ = try f.multi.unprotect(provider, message: bMsg)
+		}
+	}
+
 	@Test("a self-Update proposal is per-membership at N > 1")
 	func perMembershipProposeUpdate() throws {
 		let provider = Self.provider
