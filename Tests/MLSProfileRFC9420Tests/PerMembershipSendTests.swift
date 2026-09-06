@@ -204,20 +204,34 @@ struct PerMembershipSendTests {
 		}
 	}
 
-	@Test("committing a Remove of a co-located membership is rejected, not stranded")
-	func committingRemoveOfLocalMembershipRejected() throws {
+	@Test("committing a Remove of a co-located membership evicts it (partial), not a throw")
+	func committingRemoveOfLocalMembershipEvicts() throws {
 		let provider = Self.provider
 		let f = try Self.multi()
 		let aliceLeaf = f.aliceView.myLeafIndex
 		let bobLeaf = f.bobView.myLeafIndex
-		// Alice commits a Remove of Bob — the OTHER local membership. It must reject
-		// (Bob would be blanked and could not decap the path), not surface later as
-		// a decap failure. Per-membership eviction is slice 4b.
-		#expect(throws: MLS.RFC9420.GroupError.removedFromGroup) {
-			_ = try f.multi.committing(
-				as: aliceLeaf, provider,
-				proposals: [.proposal(.remove(bobLeaf))],
-				signingKey: f.alice.signingKey, randomness: .generate(provider))
-		}
+		let baseEpoch = f.multi.context.epoch
+		// Alice commits a Remove of Bob — the OTHER local membership. Slice 4b: a
+		// committer cannot remove itself (§12.2), so this is always a PARTIAL
+		// eviction — Bob is dropped and reported, Alice (the committer) survives
+		// and advances. (Non-mutating `committing` so we can read the pending.)
+		let transition = try f.multi.committing(
+			as: aliceLeaf, provider, proposals: [.proposal(.remove(bobLeaf))],
+			signingKey: f.alice.signingKey, randomness: .generate(provider),
+			framing: .publicMessage)
+		let adopted = transition.group
+		let sent = transition.takeOutput()
+		let effects = sent.pending.effects.events
+		#expect(effects.contains(.removed(leaf: bobLeaf)))
+		#expect(effects.contains(.membershipRemoved(leaf: bobLeaf)))
+		#expect(
+			effects.contains(
+				.epochAdvanced(
+					from: baseEpoch, to: baseEpoch + 1, committer: aliceLeaf)))
+
+		// Applying the pending drops Bob and keeps Alice (the survivor), advanced.
+		let advanced = try sent.takePending().apply(onto: adopted).group
+		#expect(advanced.memberships.map(\.leafIndex) == [aliceLeaf])
+		#expect(advanced.context.epoch == baseEpoch + 1)
 	}
 }

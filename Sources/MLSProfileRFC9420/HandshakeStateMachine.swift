@@ -6,11 +6,13 @@ import MLSTreeKEM
 import MLSTreeMath
 import SecretBytes
 
-// D17 — the handshake state machine expressed in types. Slice 1: the
-// `Transition`/`PendingCommit` foundation (the interleaved-consumption fix). The public
-// two-step entry point for a public-framed commit is `validating(commit:)`
-// (see `CommitProcessing.swift`); private framing, proposals, the send side,
-// eviction, and the credential effects arrive in later slices.
+// D17 — the handshake state machine expressed in types. The
+// `Transition`/`PendingCommit` foundation (the interleaved-consumption fix); the
+// public two-step entry point for a public-framed commit is `validating(commit:)`
+// (see `CommitProcessing.swift`). Private framing, the send side, the
+// per-membership key install, eviction, and the §5.3.1 credential effects were
+// added across the D17/D18 slices; the join-side `PendingJoin` seam is a later
+// slice.
 
 extension MLS.RFC9420 {
 	/// D12b made structural, with a **lazy** snapshot (D17 §2/H2): a state
@@ -57,14 +59,49 @@ extension MLS.RFC9420 {
 		}
 	}
 
+	/// A member's identity as this commit presents it (D17 §5.3.1):
+	/// the credential plus the `signature_key` it is bound to. Surfaced old→new so
+	/// the application — RFC 9420's Authentication Service, an app responsibility
+	/// this library never performs itself — can adjudicate a replacement.
+	public struct CredentialPresentation: Sendable, Equatable {
+		public let credential: MLS.RFC9420.Credential
+		public let signatureKey: MLS.SignaturePublicKey
+	}
+
 	/// One effect a commit had, for the application to adjudicate at the seam
-	/// between validation and apply. Slice 1 emits only `epochAdvanced`; the
-	/// membership and §5.3.1 credential effects (`added`, `credentialReplaced`,
-	/// `updated`, `removed`, `selfRemoved`, …) arrive in a later
-	/// slice.
+	/// between validation and apply (slice 4b surfaces the §5.3.1 membership and
+	/// credential effects). Every non-`epochAdvanced` effect is *reported*, never
+	/// acted on by the library; validating a credential replacement is the
+	/// application's MUST.
 	public enum CommitEffect: Sendable, Equatable {
 		/// The epoch advanced from `from` to `to`, committed by `committer`.
+		/// Absent from a full-eviction commit (no member could derive the epoch).
 		case epochAdvanced(from: UInt64, to: UInt64, committer: MLS.LeafIndex)
+		/// A member was added at `leaf` with `presentation` (§5.3.1 event 3).
+		case added(leaf: MLS.LeafIndex, presentation: CredentialPresentation)
+		/// A member's presentation changed — the credential bytes **or** the
+		/// `signature_key` differ from the replaced leaf's (§5.3.1 events 4/5).
+		/// Firing on a signature-key change with unchanged credential bytes is
+		/// broader than §5.3.1's literal "new credential", but §5.3.1 binds the
+		/// presented identifiers to the `signature_key`, so a new key is a new
+		/// binding the app must validate (this implementation's interpretation).
+		case credentialReplaced(
+			leaf: MLS.LeafIndex, old: CredentialPresentation,
+			new: CredentialPresentation)
+		/// A member's leaf was refreshed with its presentation unchanged — an
+		/// encryption-key-only rotation (an Update or the committer's own path).
+		case updated(leaf: MLS.LeafIndex)
+		/// A member was removed from the roster (every removed leaf, local or not).
+		case removed(leaf: MLS.LeafIndex)
+		/// One of THIS device's local memberships was removed (slice 4b, the D18
+		/// per-membership form of D17's `selfRemoved`). Emitted in addition to
+		/// `removed` for each removed local leaf. When it names *every* local
+		/// membership the commit is a full eviction: the delta is empty and only
+		/// **framing-authenticated, not tag-confirmed** (a fully-removed device
+		/// cannot derive the new epoch to check the confirmation tag), and the
+		/// terminal `apply` records the consumption without advancing — the app
+		/// tears the group down on seeing its last membership removed.
+		case membershipRemoved(leaf: MLS.LeafIndex)
 	}
 
 	/// The effects of one commit, in application order.
@@ -169,15 +206,24 @@ extension MLS.RFC9420 {
 		let newEpoch: Group.EpochSecrets
 		/// The new-epoch HPKE secret keys **per local membership**, keyed by that
 		/// membership's leaf index (slice 4a). Each membership decaps the commit's
-		/// path against its own held keys, so the map has one entry per member of
-		/// `baseMemberships`; `apply` installs each onto its membership. The keys
-		/// were validated to agree on a single `commit_secret` across memberships
-		/// before this delta was built.
+		/// path against its own held keys, so the map has one entry per **surviving**
+		/// membership (`baseMemberships` minus `removedMemberships`); `apply`
+		/// installs each onto its membership. The keys were validated to agree on a
+		/// single `commit_secret` across those memberships before this delta was
+		/// built. Empty for a full eviction (nothing advances).
 		let newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]]
 		let newInterimTranscriptHash: Data
 		let newMessageStore: Group.MessageSecrets
 		let newExporterTree: MLS.KeySchedule.ExporterTree
 		let newResumptionPsk: SecretBytes
+		/// The local memberships this commit removes (slice 4b eviction), by leaf.
+		/// Empty for an ordinary commit. When it equals `baseMemberships` the
+		/// commit is a **full eviction**: `apply` is terminal — the epoch does not
+		/// advance (the delta is empty), the group is returned unchanged with its
+		/// consumption, and the `membershipRemoved` effects tell the app to tear
+		/// down. Otherwise it is a **partial** eviction: `apply` advances and drops
+		/// exactly these memberships from the composite, leaving the survivors.
+		let removedMemberships: Set<MLS.LeafIndex>
 
 		// The memberwise initializer stays `internal` (the delta fields are
 		// internal), so a `PendingCommit` is produced only by the library's
@@ -208,16 +254,32 @@ extension MLS.RFC9420 {
 			else {
 				throw MLS.RFC9420.GroupError.membershipMismatch
 			}
+			// Full eviction (slice 4b): every local membership was removed, so no
+			// member could derive the new epoch — the delta is empty and terminal.
+			// Return `live` unchanged (it already carries any private-frame
+			// consumption); the `membershipRemoved` effects mark the group ended,
+			// and the memberships never shrink to zero (D17 §5 — the app tears down
+			// on the effects, there is no `ended` group state).
+			if !removedMemberships.isEmpty, removedMemberships == baseMemberships {
+				return Transition(group: live, output: effects)
+			}
 			var result = live
 			result.context = newContext
 			result.tree = newTree
 			result.epoch = newEpoch
 			result.interimTranscriptHash = newInterimTranscriptHash
-			// Install each local membership's own new-epoch path keys (slice 4a).
-			// The membership set equals `baseMemberships` (guarded above), so every
-			// membership has an entry. Throw rather than install an empty set: an
-			// empty key map would silently strand the membership at `notAMember` —
-			// the exact silent-loss this per-membership slice exists to remove.
+			// Partial eviction drops exactly the removed memberships, keeping the
+			// survivors (there is at least one, else this would be a full eviction
+			// handled above). For an ordinary commit `removedMemberships` is empty
+			// and this is a no-op.
+			result.memberships = result.memberships.filter {
+				!removedMemberships.contains($0.leafIndex)
+			}
+			// Install each SURVIVING membership's own new-epoch path keys (slice 4a).
+			// Every survivor has an entry (the delta was built for them). Throw
+			// rather than install an empty set: an empty key map would silently
+			// strand the membership at `notAMember` — the exact silent-loss this
+			// per-membership slice exists to remove.
 			for index in result.memberships.indices {
 				guard
 					let keys = newSecretKeysByLeaf[
