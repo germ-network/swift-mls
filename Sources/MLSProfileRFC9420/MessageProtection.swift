@@ -359,8 +359,8 @@ extension MLS.RFC9420.Group {
 		/// `AuthenticatedContent` cannot be re-applied through the public API, and
 		/// a bare `unprotect` has already consumed the ratchet. To *apply* a
 		/// private-framed commit, route by `wireFormat`/`contentType` and call
-		/// `process(privateCommit:)` on the `PrivateMessage` instead of
-		/// `unprotect`.
+		/// `validating(commit:)` on the `PrivateMessage` (then `apply(onto:)`)
+		/// instead of `unprotect`.
 		case commit(MLS.RFC9420.AuthenticatedContent)
 	}
 
@@ -654,9 +654,15 @@ extension MLS.RFC9420.Group {
 			opened, authenticatedData: message.authenticatedData)
 	}
 
-	/// Transitional mutating shim over `unprotecting` (removed in the migration
-	/// slice): adopts the transition's post-consumption `group` into `self` and
-	/// returns the decrypted content. Prefer `unprotecting`.
+	/// Mutating convenience over `unprotecting` for the application-message receive
+	/// hot path: it adopts the transition's post-consumption `group` into `self`
+	/// and returns the decrypted content in one step. It has none of the
+	/// deferred-apply / pending shape a handshake receive carries — the ratchet
+	/// consumption is applied in place — so its only obligation is the one every
+	/// mutating operation carries: persist the mutated group before acting on the
+	/// plaintext (spec/snapshot.md §6), exactly as `protect` does on the send side.
+	/// `unprotecting` is the two-step form for a caller that must interpose that
+	/// persist explicitly.
 	@discardableResult
 	public mutating func unprotect(
 		_ provider: any MLS.CipherSuiteProvider,

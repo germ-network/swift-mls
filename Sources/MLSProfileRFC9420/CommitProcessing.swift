@@ -186,7 +186,7 @@ extension MLS.RFC9420.Group {
 
 	/// Authenticate a `PublicMessage`-framed **proposal** before it enters a
 	/// `ProposalStore` — the proposal-side counterpart to
-	/// `processing(commit:)`, which was `verifyPublic`'s only caller. RFC 9420
+	/// `validating(commit:)`, which is `verifyPublic`'s only other caller. RFC 9420
 	/// §6.1: "Recipients of an MLSMessage MUST verify the signature"; §6.2: a
 	/// `PublicMessage` recipient "MUST check membership_tag and MUST check that
 	/// the FramedContentAuthData is valid." Mirrors the commit path's framing
@@ -365,55 +365,6 @@ extension MLS.RFC9420.Group {
 		return MLS.RFC9420.Transition(group: group, output: output)
 	}
 
-	/// Transitional shim (removed in the D17 migration slice): `validating`
-	/// then an immediate `apply(onto: self)`, since it composes onto the group
-	/// it validated against. Prefer `validating(commit:)`.
-	public func processing(
-		_ provider: any MLS.CipherSuiteProvider,
-		commit message: MLS.RFC9420.PublicMessage,
-		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws -> MLS.RFC9420.Group {
-		let pending = try validating(
-			provider, commit: message, proposals: proposals, psk: psk)
-		return try applyingOrEvicted(pending)
-	}
-
-	/// The eager shims cannot surface effects, so they preserve the pre-4b signal:
-	/// a **full** self-eviction (every local membership removed — the delta is
-	/// empty and terminal) throws `removedFromGroup`, as before slice 4b. A
-	/// partial eviction applies normally (the survivors advance, the removed
-	/// memberships are dropped). The effect-returning `validating(commit:)` API
-	/// packages a full eviction as a `membershipRemoved` effect instead of
-	/// throwing — the app then tears down at the seam (D17 §5).
-	func applyingOrEvicted(_ pending: consuming MLS.RFC9420.PendingCommit) throws
-		-> MLS.RFC9420.Group
-	{
-		if !pending.removedMemberships.isEmpty,
-			pending.removedMemberships == pending.baseMemberships
-		{
-			throw MLS.RFC9420.GroupError.removedFromGroup
-		}
-		return try pending.apply(onto: self).group
-	}
-
-	/// Transitional shim for an already-verified commit — the private path
-	/// routes here via `unprotect`, which mints the `VerifiedCommit` after its
-	/// AEAD-open and framing-signature check. Internal by design (D17 §2.1): the
-	/// only public way to apply a handshake is a `validating` entry, and the
-	/// core is gated on the non-fabricable `VerifiedCommit`, so an
-	/// unauthenticated frame cannot be applied. Removed in the migration slice.
-	func processing(
-		_ provider: any MLS.CipherSuiteProvider,
-		commit verified: consuming MLS.RFC9420.VerifiedCommit,
-		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws -> MLS.RFC9420.Group {
-		let pending = try validatedDelta(
-			provider, commit: verified, proposals: proposals, psk: psk)
-		return try applyingOrEvicted(pending)
-	}
-
 	/// The commit-processing core, on an *already authenticated* frame —
 	/// §12.4.2 from the proposal-validation bullet onward (the framing signature,
 	/// its preceding bullet, is already checked by the caller) — producing the
@@ -474,10 +425,10 @@ extension MLS.RFC9420.Group {
 		return MLS.RFC9420.CommitEffects(events)
 	}
 
-	/// Internal: the public entries are the `validating(commit:)` overloads;
-	/// the transitional `processing` shims below apply this onto `self`. Gated
-	/// on `VerifiedCommit`, not a raw `AuthenticatedContent`, so it cannot be
-	/// reached with an unauthenticated frame (D17 §2.1, M-1).
+	/// Internal: the public entries are the `validating(commit:)` overloads,
+	/// which compose the returned delta onto the live group via `apply(onto:)`.
+	/// Gated on `VerifiedCommit`, not a raw `AuthenticatedContent`, so it cannot
+	/// be reached with an unauthenticated frame (D17 §2.1, M-1).
 	func validatedDelta(
 		_ provider: any MLS.CipherSuiteProvider,
 		commit verified: consuming MLS.RFC9420.VerifiedCommit,
@@ -911,45 +862,6 @@ extension MLS.RFC9420.Group {
 			newMessageStore: newStore, newExporterTree: newExporter,
 			newResumptionPsk: newEpoch.resumptionPsk,
 			removedMemberships: removedLocal)
-	}
-
-	/// Value-semantics convenience over `processing`. Assigns only on
-	/// success, so a throw leaves `self` untouched — see `processing`'s own
-	/// doc comment for why that cannot be achieved by mutating in place.
-	public mutating func process(
-		_ provider: any MLS.CipherSuiteProvider,
-		commit message: MLS.RFC9420.PublicMessage,
-		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws {
-		self = try processing(provider, commit: message, proposals: proposals, psk: psk)
-	}
-
-	/// The private-framed counterpart: `unprotect` authenticates the
-	/// `PrivateMessage` (AEAD open plus framing signature) and hands back
-	/// the `AuthenticatedContent` `processing` takes over from — mirroring
-	/// how `process(commit:)` authenticates a `PublicMessage` first. Unlike
-	/// `process(commit:)`, a throw here may still have advanced `self`'s
-	/// own message-secret ratchet: `unprotect` is itself mutating (§9.2
-	/// consumption on successful decrypt), and that consumption is
-	/// unrelated to whether the *commit* — authenticated by that point —
-	/// goes on to pass `processing`.
-	public mutating func process(
-		_ provider: any MLS.CipherSuiteProvider,
-		privateCommit message: MLS.RFC9420.PrivateMessage,
-		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
-	) throws {
-		let unprotected = try unprotect(provider, message: message)
-		guard case .commit(let authenticated) = unprotected.content else {
-			throw MLS.RFC9420.GroupError.notACommit
-		}
-		// `unprotect` has AEAD-opened and signature-checked the frame, so minting
-		// a `VerifiedCommit` here is sound — this is the private-framing mint site.
-		self = try processing(
-			provider,
-			commit: MLS.RFC9420.VerifiedCommit(verified: authenticated),
-			proposals: proposals, psk: psk)
 	}
 
 	/// What `applyProposals` hands back: the provisional tree plus the two
