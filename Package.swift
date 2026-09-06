@@ -16,6 +16,8 @@ let package = Package(
         .library(name: "MLSCrypto", targets: ["MLSCrypto"]),
         .library(name: "MLSTreeMath", targets: ["MLSTreeMath"]),
         .library(name: "MLSKeySchedule", targets: ["MLSKeySchedule"]),
+        .library(name: "MLSSecretTree", targets: ["MLSSecretTree"]),
+        .library(name: "MLSExtensions", targets: ["MLSExtensions"]),
         .library(name: "MLSFraming", targets: ["MLSFraming"]),
         .library(name: "MLSTreeKEM", targets: ["MLSTreeKEM"]),
         .library(name: "MLSProfileRFC9420", targets: ["MLSProfileRFC9420"]),
@@ -54,9 +56,33 @@ let package = Package(
         ),
         .target(name: "MLSTreeMath", dependencies: ["MLSCodec"]),
         .target(
+            // RFC 9420 §9's deletion-schedule secret tree as a generic
+            // mechanism (ConsumingSecretTree + splitTreeNode). Homed below both
+            // MLSKeySchedule (its message secret tree) and MLSExtensions (its
+            // exporter tree), which each compose it; depends on neither.
+            name: "MLSSecretTree",
+            dependencies: [
+                "MLSCodec", "MLSCrypto", "MLSTreeMath",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .target(
             name: "MLSKeySchedule",
             dependencies: [
                 "MLSCodec", "MLSCrypto", "MLSTreeMath",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .target(
+            // The Safe Extensions substrate (draft-ietf-mls-extensions):
+            // Exporter Tree, ComponentID, application-PSK derivation. Composes
+            // the shared MLSSecretTree mechanism but depends on NEITHER
+            // MLSKeySchedule NOR any profile — the exporter tree takes the
+            // epoch's exporter root as bytes, so the substrate stays cleanly
+            // separable. That dependency rule is the structural proof.
+            name: "MLSExtensions",
+            dependencies: [
+                "MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSSecretTree",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
@@ -94,7 +120,7 @@ let package = Package(
             name: "MLSProfileRFC9420",
             dependencies: [
                 "MLSCodec", "MLSCrypto", "MLSTreeMath", "MLSFraming", "MLSTreeKEM",
-                "MLSKeySchedule",
+                "MLSKeySchedule", "MLSExtensions", "MLSSecretTree",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
@@ -130,6 +156,24 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "MLSSecretTreeTests",
+            dependencies: [
+                // MLSKeySchedule for the stateless `leafSecret` oracle the
+                // consuming walker is differentially tested against.
+                "MLSSecretTree", "MLSKeySchedule", "MLSCrypto",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .testTarget(
+            name: "MLSExtensionsTests",
+            dependencies: [
+                // MLSKeySchedule for `fromEpochSecret` (the exporter root) and
+                // the `leafSecret` oracle — the substrate itself needs neither.
+                "MLSExtensions", "MLSKeySchedule", "MLSCrypto",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .testTarget(
             // Deliberately does not link MLSProfileRFC9420. Framing's
             // mechanisms (TBS/TBM assembly, tags, transcript hashes) take
             // and return Data; this target proves they work against
@@ -159,7 +203,7 @@ let package = Package(
             name: "MLSProfileRFC9420Tests",
             dependencies: [
                 "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
-                "MLSVectorSupport",
+                "MLSExtensions", "MLSSecretTree", "MLSVectorSupport",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),

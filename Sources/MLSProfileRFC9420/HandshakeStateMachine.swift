@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
@@ -285,7 +286,7 @@ extension MLS.RFC9420 {
 		let newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]]
 		let newInterimTranscriptHash: Data
 		let newMessageStore: Group.MessageSecrets
-		let newExporterTree: MLS.KeySchedule.ExporterTree
+		let newExporterTree: MLS.Extensions.ExporterTree
 		let newResumptionPsk: SecretBytes
 		/// The local memberships this commit removes (slice 4b eviction), by leaf.
 		/// Empty for an ordinary commit. When it equals `baseMemberships` the

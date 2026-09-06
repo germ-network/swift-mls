@@ -4,6 +4,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSKeySchedule
+import MLSSecretTree
 import MLSTreeMath
 import SecretBytes
 import Testing
@@ -47,7 +48,7 @@ struct SnapshotTests {
 		let epoch = group.context.epoch
 		// §4.3: node_secrets MAY be empty. Force the fully-consumed state and
 		// confirm the empty CBOR map round-trips (spec/snapshot.md §3).
-		group.messageSecrets[epoch]!.tree = MLS.KeySchedule.ConsumingSecretTree(
+		group.messageSecrets[epoch]!.tree = MLS.SecretTree.ConsumingSecretTree(
 			restoringNodeSecrets: [:], leafCount: group.tree.leafCount)
 		let snapshot = try group.makeSnapshot()
 		#expect(

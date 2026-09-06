@@ -2,6 +2,7 @@ import Crypto
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSKeySchedule
 import SecretBytes
 import Testing
@@ -118,7 +119,7 @@ struct ApplicationPSKTests {
 
 		// Independent exporter secret for the same component + epoch.
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: seed)
-		var tree = try MLS.KeySchedule.ExporterTree(
+		var tree = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: fanOut.applicationExportSecret)
 		let exporter = try tree.safeExportSecret(provider, componentID: 0x8000)
 
@@ -142,7 +143,7 @@ struct ApplicationPSKTests {
 		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
 		_ = try group.deriveApplicationPSK(provider, componentID: 0xFF01)
 		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(
+			throws: MLS.Extensions.ExporterTree.ExportError.componentSecretConsumed(
 				0xFF01)
 		) {
 			try group.deriveApplicationPSK(provider, componentID: 0xFF01)

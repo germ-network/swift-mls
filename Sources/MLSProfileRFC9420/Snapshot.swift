@@ -1,6 +1,8 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
+import MLSSecretTree
 import MLSTreeKEM
 import MLSTreeMath
 import SecretBytes
@@ -380,7 +382,7 @@ extension MLS.RFC9420.Group {
 			throw MLS.RFC9420.GroupError.exporterTreeUnavailable
 		}
 		let exporterTreeArchive = SecretTreeStateArchive(
-			leafCount: MLS.KeySchedule.ExporterTree.leafCount.value,
+			leafCount: MLS.Extensions.ExporterTree.leafCount.value,
 			nodeSecrets: MLS.RFC9420.IntegerKeyedMap(
 				Dictionary(
 					uniqueKeysWithValues: currentExporterTree.frontier.map {
@@ -850,13 +852,13 @@ extension MLS.RFC9420.Group {
 		if let exporterTreeArchive = core.exporterTree {
 			guard
 				exporterTreeArchive.leafCount
-					== MLS.KeySchedule.ExporterTree.leafCount.value
+					== MLS.Extensions.ExporterTree.leafCount.value
 			else {
 				throw MLS.RFC9420.SnapshotError.inconsistentStore(
 					"exporter_tree leaf_count \(exporterTreeArchive.leafCount) is not 2^16"
 				)
 			}
-			let exporterNodeBound = 2 * MLS.KeySchedule.ExporterTree.leafCount.value - 1
+			let exporterNodeBound = 2 * MLS.Extensions.ExporterTree.leafCount.value - 1
 			var exporterFrontier: [UInt32: SecretBytes] = [:]
 			for (node, secret) in exporterTreeArchive.nodeSecrets.entries {
 				try requireLength(
@@ -870,7 +872,7 @@ extension MLS.RFC9420.Group {
 				exporterFrontier[UInt32(node)] = secret.wrappedValue
 			}
 			groupCore.exporterTrees = [
-				context.epoch: MLS.KeySchedule.ExporterTree(
+				context.epoch: MLS.Extensions.ExporterTree(
 					restoringFrontier: exporterFrontier)
 			]
 		}
@@ -1060,7 +1062,7 @@ extension MLS.RFC9420.Group {
 			}
 			nodeSecrets[node] = secret.wrappedValue
 		}
-		let secretTree = MLS.KeySchedule.ConsumingSecretTree(
+		let secretTree = MLS.SecretTree.ConsumingSecretTree(
 			restoringNodeSecrets: nodeSecrets, leafCount: leafCount)
 
 		var chains: [MessageSecrets.ChainKey: MLS.KeySchedule.RatchetChain] = [:]

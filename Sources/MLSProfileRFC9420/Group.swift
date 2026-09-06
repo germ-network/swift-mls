@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
@@ -76,7 +77,7 @@ extension MLS.RFC9420 {
 			get { core.messageSecrets }
 			set { core.messageSecrets = newValue }
 		}
-		var exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] {
+		var exporterTrees: [UInt64: MLS.Extensions.ExporterTree] {
 			get { core.exporterTrees }
 			set { core.exporterTrees = newValue }
 		}
@@ -136,7 +137,7 @@ extension MLS.RFC9420 {
 			secretKeys: [UInt32: MLS.HpkeSecretKey],
 			resumptionPsks: [UInt64: SecretBytes],
 			messageSecrets: [UInt64: MessageSecrets] = [:],
-			exporterTrees: [UInt64: MLS.KeySchedule.ExporterTree] = [:],
+			exporterTrees: [UInt64: MLS.Extensions.ExporterTree] = [:],
 			pendingUpdates: (
 				epoch: UInt64, node: UInt32,
 				updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]

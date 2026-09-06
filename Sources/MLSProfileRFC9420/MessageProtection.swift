@@ -1,8 +1,10 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSFraming
 import MLSKeySchedule
+import MLSSecretTree
 import MLSTreeMath
 import SecretBytes
 
@@ -23,7 +25,7 @@ extension MLS.RFC9420.Group {
 		let groupContext: MLS.RFC9420.GroupContext
 		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
-		var tree: MLS.KeySchedule.ConsumingSecretTree
+		var tree: MLS.SecretTree.ConsumingSecretTree
 		/// **Remote** senders' ratchet chains only (slice 3b). A local
 		/// membership's own send ratchet lives on its `Membership.ownSend`, seeded
 		/// from `tree` but never cached back here — so this map never keys a local
@@ -82,7 +84,7 @@ extension MLS.RFC9420.Group {
 		applicationExportSecret: some ContiguousBytes,
 		tree: MLS.TreeKEM.RatchetTree,
 		_ provider: any MLS.CipherSuiteProvider
-	) throws -> (store: MessageSecrets, exporter: MLS.KeySchedule.ExporterTree) {
+	) throws -> (store: MessageSecrets, exporter: MLS.Extensions.ExporterTree) {
 		var signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey] = [:]
 		// Two decodes per touched leaf: commit processing already decoded the
 		// added/updated/committer LeafNodes for validation, and this decodes
@@ -103,7 +105,7 @@ extension MLS.RFC9420.Group {
 			// epoch, not consumed in-flight.
 			senderDataSecret: SecretBytes(bytes: senderDataSecret),
 			signatureKeys: signatureKeys,
-			tree: MLS.KeySchedule.ConsumingSecretTree(
+			tree: MLS.SecretTree.ConsumingSecretTree(
 				encryptionSecret: encryptionSecret, leafCount: tree.leafCount))
 		// draft-ietf-mls-extensions-08 §4.4: build this epoch's Exporter Tree from
 		// application_export_secret and hold the *consuming tree* — never the raw
@@ -112,7 +114,7 @@ extension MLS.RFC9420.Group {
 		// invokes); retaining the root would re-derive consumed components and
 		// defeat forward secrecy. Matches the deployed fork, which holds
 		// `ExporterTree(SecretTree)`, not the root.
-		let exporter = try MLS.KeySchedule.ExporterTree(
+		let exporter = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: applicationExportSecret)
 		return (store, exporter)
 	}
@@ -173,7 +175,7 @@ extension MLS.RFC9420.Group {
 			let leafSecret: SecretBytes
 			do {
 				leafSecret = try secrets.tree.consumeLeafSecret(for: leaf, provider)
-			} catch MLS.KeySchedule.SecretTreeError.subtreeExhausted {
+			} catch MLS.SecretTree.SecretTreeError.subtreeExhausted {
 				throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
 					generation: 0)
 			}
@@ -302,7 +304,7 @@ extension MLS.RFC9420.Group {
 			let leafSecret: SecretBytes
 			do {
 				leafSecret = try store.tree.consumeLeafSecret(for: leaf, provider)
-			} catch MLS.KeySchedule.SecretTreeError.subtreeExhausted {
+			} catch MLS.SecretTree.SecretTreeError.subtreeExhausted {
 				throw MLS.RFC9420.GroupError.generationAlreadyConsumed(
 					generation: 0)
 			}

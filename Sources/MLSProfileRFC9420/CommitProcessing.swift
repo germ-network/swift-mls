@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSFraming
 import MLSKeySchedule
 import MLSTreeKEM
@@ -630,7 +631,7 @@ extension MLS.RFC9420.Group {
 			}
 			let exporter =
 				core.exporterTrees[context.epoch]
-				?? MLS.KeySchedule.ExporterTree(restoringFrontier: [:])
+				?? MLS.Extensions.ExporterTree(restoringFrontier: [:])
 			let effects = commitMembershipEffects(
 				epochAdvanced: nil, added: [], updateChanges: [],
 				committerChange: nil, removedLeaves: removedLeaves,

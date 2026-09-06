@@ -2,6 +2,7 @@ import Crypto
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSKeySchedule
 import SecretBytes
 import Testing
@@ -31,10 +32,10 @@ struct SafeExportTests {
 	/// The independent oracle: derive the exporter root from `epochSecret` via
 	/// the public `fromEpochSecret`, build a fresh tree, export the component.
 	static func independentExport(
-		epochSecret: Data, _ componentID: MLS.KeySchedule.ComponentID
+		epochSecret: Data, _ componentID: MLS.Extensions.ComponentID
 	) throws -> SecretBytes {
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: epochSecret)
-		var tree = try MLS.KeySchedule.ExporterTree(
+		var tree = try MLS.Extensions.ExporterTree(
 			applicationExportSecret: fanOut.applicationExportSecret)
 		return try tree.safeExportSecret(provider, componentID: componentID)
 	}
@@ -44,7 +45,7 @@ struct SafeExportTests {
 		let provider = Self.provider
 		let seed = Data(repeating: 0x5A, count: provider.hashSize)
 		var group = try Self.soloGroup(epochSecret: seed)
-		for id: MLS.KeySchedule.ComponentID in [
+		for id: MLS.Extensions.ComponentID in [
 			0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF,
 		] {
 			#expect(
@@ -59,7 +60,7 @@ struct SafeExportTests {
 		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
 		_ = try group.safeExportSecret(provider, componentID: 7)
 		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(7)
+			throws: MLS.Extensions.ExporterTree.ExportError.componentSecretConsumed(7)
 		) {
 			try group.safeExportSecret(provider, componentID: 7)
 		}
@@ -165,7 +166,7 @@ struct SafeExportTests {
 
 		// FS: the consumed component is unrecoverable after restore.
 		#expect(
-			throws: MLS.KeySchedule.ExporterTree.ExportError.componentSecretConsumed(
+			throws: MLS.Extensions.ExporterTree.ExportError.componentSecretConsumed(
 				0xFF01)
 		) {
 			try restored.safeExportSecret(provider, componentID: 0xFF01)
@@ -190,5 +191,30 @@ struct SafeExportTests {
 		#expect(throws: MLS.RFC9420.GroupError.exporterTreeUnavailable) {
 			try restored.safeExportSecret(provider, componentID: 0xFF01)
 		}
+	}
+
+	/// The exporter tree's persisted state is its *consumed frontier*, encoded in
+	/// snapshot format 2 and consumed by the mls-rs migration path. Relocating
+	/// `ExporterTree` to `MLSExtensions` must not change those bytes: the frontier
+	/// is a `[UInt32: SecretBytes]` map the profile's snapshot codec owns, and it
+	/// has to decode back to exactly the node secrets it encoded. Consume a spread
+	/// of components first, so the frontier under test is a real multi-node map,
+	/// not just the seeded root. (A raw full-archive byte compare would be flaky —
+	/// the frontier encodes into an order-independent keyed container — so this
+	/// pins the decoded node secrets, which is what the encoding must preserve.)
+	@Test("the exporter tree's consumed frontier round-trips through the snapshot encoding")
+	func exporterFrontierRoundTripsThroughSnapshot() throws {
+		let provider = Self.provider
+		var group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+		for id: MLS.Extensions.ComponentID in [0x0001, 0x8000, 0xFFFF] {
+			_ = try group.safeExportSecret(provider, componentID: id)
+		}
+		let epoch = try #require(group.exporterTrees.keys.first)
+		let before = try #require(group.exporterTrees[epoch]).frontier
+		#expect(!before.isEmpty)  // consumption actually produced a frontier to persist
+
+		let restored = try MLS.RFC9420.Group.restore(from: try group.archive(), provider)
+		let after = try #require(restored.exporterTrees[epoch]).frontier
+		#expect(after == before)
 	}
 }

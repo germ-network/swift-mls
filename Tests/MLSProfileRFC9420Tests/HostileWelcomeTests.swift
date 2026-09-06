@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSExtensions
 import MLSKeySchedule
 import SecretBytes
 import Testing
@@ -198,7 +199,7 @@ struct HostileWelcomeTests {
 					nonce: nonce)
 			default:
 				.application(
-					componentID: MLS.KeySchedule.ComponentID(0xFF01),
+					componentID: MLS.Extensions.ComponentID(0xFF01),
 					pskID: Data(repeating: 9, count: 8), nonce: nonce)
 			}
 		let psks: [MLS.RFC9420.PreSharedKeyIdentifier] = [
