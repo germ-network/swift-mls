@@ -56,7 +56,9 @@ struct UnmergedLeafInstallTests {
 	/// path here has *two* unfiltered entries (nodes 1 and 3), so the install
 	/// walk advances the path-secret chain once — coverage `AddExclusionTests`'
 	/// single-entry walk does not have.
-	@Test("a joiner unmerged at an unfiltered node installs correctly once the commit clears it")
+	@Test(
+		"a joiner unmerged at an unfiltered node installs correctly once the commit clears it"
+	)
 	func unmergedLeafClearedThenInstalledAcrossChain() throws {
 		let provider = try #require(
 			Self.provider.cipherSuiteProvider(for: .curve25519Aes128))
