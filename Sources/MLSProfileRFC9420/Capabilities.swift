@@ -17,6 +17,12 @@ extension MLS.RFC9420 {
 		case reInit = 5
 		case externalInit = 6
 		case groupContextExtensions = 7
+		/// draft-ietf-mls-extensions-09 §7.2.1's `app_data_update` (0x0008). A
+		/// non-default extension proposal type — unlike the seven above it is NOT in
+		/// `defaultProposalTypes`, so a supporting leaf lists it in
+		/// `capabilities.proposals` and a group may require it via
+		/// `required_capabilities`.
+		case appDataUpdate = 8
 	}
 
 	/// `struct { ProtocolVersion versions<V>; CipherSuite cipher_suites<V>;

@@ -64,8 +64,8 @@ extension MLS.RFC9420 {
 		case resumption(ResumptionPSK, nonce: Data)
 		/// draft-ietf-mls-extensions §4.5's application PSK: the `application` select
 		/// arm is `ComponentID component_id; opaque psk_id<V>;`, so on the wire this
-		/// is `component_id` (draft-09's `uint16` by default; a `uint32` under the
-		/// `.uint32` `componentIDWireWidth`) followed by `psk_id`. Like the other
+		/// is `component_id` (draft-09's `uint16` by default; a `uint32` under a
+		/// `.uint32` `ComponentID.componentIDWireWidth`) followed by `psk_id`. Like the other
 		/// arms, `psk_nonce` follows the select. Domain-separates a component's PSKs
 		/// from the core protocol's and from other components'.
 		case application(componentID: MLS.Extensions.ComponentID, pskID: Data, nonce: Data)
@@ -134,6 +134,13 @@ extension MLS.RFC9420 {
 		case reInit(ReInitProposal)
 		case externalInit(ExternalInitProposal)
 		case groupContextExtensions([Extension])
+		/// draft-ietf-mls-extensions-09 §4.7's `AppDataUpdate` (§7.2.1 code point
+		/// 0x0008). The body type is known, so — like every other arm — it decodes
+		/// as a typed struct, never an opaque body: the reject-unknown-proposal-type
+		/// stance is unchanged. The profile carries and surfaces the envelope (as a
+		/// `CommitEffect`); the deferred §4.7 `app_data_dictionary` mutation is not
+		/// implemented here.
+		case appDataUpdate(MLS.Extensions.AppDataUpdate)
 	}
 
 	/// `struct { ProposalOrRefType type; select (ProposalOrRef.type) {
@@ -148,32 +155,22 @@ extension MLS.RFC9420 {
 }
 
 extension MLS.RFC9420.PreSharedKeyIdentifier {
-	/// The on-wire width of an `application` PSK's `component_id`. draft-09 §4.1
-	/// makes `ComponentID` a `uint16`, which swift-mls emits by default; the
-	/// deployed fork (and draft-08) encode it as a `uint32`.
-	public enum ComponentIDWireWidth: Sendable {
-		case uint16
-		case uint32
-	}
-
-	/// The width `encode`/`decode` use for an `application` `component_id`,
-	/// defaulting to the -09 `uint16`. A peer speaks one width for a whole
-	/// session, and the two widths are indistinguishable from the bytes, so this
-	/// is an **ambient session setting**, not a per-message flag.
+	/// An `application` PSK's `component_id` rides the shared
+	/// `MLS.Extensions.ComponentID.componentIDWireWidth` ambient (`uint16` by
+	/// default; `uint32` for a fork/-08 peer) — the *same* ambient the
+	/// `AppDataUpdate` proposal uses, because both encode the one `ComponentID`
+	/// type and a peer tracks one draft revision.
 	///
 	/// The width feeds more than the proposal's wire bytes: `pskSecret` binds each
 	/// PSK by its *encoded* `PreSharedKeyID` inside the `PSKLabel` (RFC 9420 §8.4),
-	/// so a mismatch here diverges the epoch secrets, not just the parse. To
-	/// interoperate with a `uint32` (deployed-fork / -08) peer, scope the **whole**
-	/// operation that encodes or decodes an application id — the entire
-	/// `committing` / `validating` / `joining` call, so the wire encode, the peer's
-	/// decode, and the `PSKLabel` all agree — under
-	/// `$componentIDWireWidth.withValue(.uint32) { … }`. The local
-	/// `applicationStorageID` key is deliberately *not* affected (it pins `uint16`),
-	/// so deriving a PSK outside the scope and resolving it inside still matches.
-	/// Leaving the width at `.uint16` keeps swift-mls draft-09-clean; the fork
-	/// compat is the caller's to opt into.
-	@TaskLocal public static var componentIDWireWidth: ComponentIDWireWidth = .uint16
+	/// so a mismatch diverges the epoch secrets, not just the parse. To interoperate
+	/// with a `uint32` peer, scope the **whole** operation that encodes or decodes
+	/// an application id — the entire `committing` / `validating` / `joining` call,
+	/// so the wire encode, the peer's decode, and the `PSKLabel` all agree — under
+	/// `MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) { … }`.
+	/// The local `applicationStorageID` key is deliberately *not* affected (it pins
+	/// `uint16`), so deriving a PSK outside the scope and resolving it inside still
+	/// matches. Leaving the width at `.uint16` keeps swift-mls draft-09-clean.
 
 	/// The `psk_nonce` common to every arm — RFC 9420 §8.4 requires it "a fresh
 	/// random value of length KDF.Nh" (§12.1.4 validates the length on receipt).
@@ -191,7 +188,8 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 	/// to the ambient wire width for the on-wire encode, but `applicationStorageID`
 	/// pins `.uint16` so the local key stays width-independent.
 	func encodeIdentity(
-		to writer: inout MLS.Writer, componentIDWidth width: ComponentIDWireWidth
+		to writer: inout MLS.Writer,
+		componentIDWidth width: MLS.Extensions.ComponentIDWireWidth
 	) throws {
 		switch self {
 		case .external(let pskID, _):
@@ -235,7 +233,9 @@ extension MLS.RFC9420.PreSharedKeyIdentifier {
 
 extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 	public func encode(to writer: inout MLS.Writer) throws {
-		try encodeIdentity(to: &writer, componentIDWidth: Self.componentIDWireWidth)
+		try encodeIdentity(
+			to: &writer,
+			componentIDWidth: MLS.Extensions.ComponentID.componentIDWireWidth)
 		try writer.writeOpaque(nonce)
 	}
 
@@ -249,7 +249,7 @@ extension MLS.RFC9420.PreSharedKeyIdentifier: MLSCodable {
 			self = .resumption(resumption, nonce: Data(try reader.readOpaque()))
 		case .application:
 			let rawComponentID: UInt16
-			switch Self.componentIDWireWidth {
+			switch MLS.Extensions.ComponentID.componentIDWireWidth {
 			case .uint16:
 				rawComponentID = try reader.readUInt16()
 			case .uint32:
@@ -281,6 +281,7 @@ extension MLS.RFC9420.Proposal {
 		case .reInit: .init(.reInit)
 		case .externalInit: .init(.externalInit)
 		case .groupContextExtensions: .init(.groupContextExtensions)
+		case .appDataUpdate: .init(.appDataUpdate)
 		}
 	}
 }
@@ -296,6 +297,7 @@ extension MLS.RFC9420.Proposal: MLSEncodable {
 		case .reInit(let reInit): try writer.encode(reInit)
 		case .externalInit(let externalInit): try writer.encode(externalInit)
 		case .groupContextExtensions(let extensions): try writer.encodeVector(extensions)
+		case .appDataUpdate(let update): try writer.encode(update)
 		}
 	}
 }
@@ -314,6 +316,8 @@ extension MLS.RFC9420.Proposal: MLSDecodable {
 			self = .externalInit(try MLS.RFC9420.ExternalInitProposal(from: &reader))
 		case .known(.groupContextExtensions):
 			self = .groupContextExtensions(try reader.decodeVector())
+		case .known(.appDataUpdate):
+			self = .appDataUpdate(try MLS.Extensions.AppDataUpdate(from: &reader))
 		case .unknown(let raw): throw MLS.RFC9420.WireError.unknownProposalType(raw)
 		}
 	}

@@ -434,7 +434,7 @@
 					case .update, .remove, .externalInit,
 						.groupContextExtensions:
 						true
-					case .add, .preSharedKey, .reInit: false
+					case .add, .preSharedKey, .reInit, .appDataUpdate: false
 					}
 				}
 			let transition = try state.group.committing(

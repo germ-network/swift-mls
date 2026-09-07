@@ -716,6 +716,21 @@ struct ProposalValidationTests {
 		}
 	}
 
+	/// The same §11.1 enforcement over *proposal* types: draft-ietf-mls-extensions'
+	/// `app_data_update` (0x0008) is not a default proposal type, so a group that
+	/// requires it rejects a leaf whose capabilities don't advertise it — the
+	/// capability plumbing for the new proposal type, via the pre-existing machinery.
+	@Test("required_capabilities: an unmet appDataUpdate proposal type rejects")
+	func requiredAppDataUpdateUnmet() throws {
+		let leaf = Self.policyLeaf()  // capabilities.proposals is empty
+		#expect(throws: MLS.RFC9420.GroupError.requiredCapabilitiesNotMet) {
+			try leaf.validatePolicy(
+				.keyPackage,
+				groupRequirements: .init(proposalTypes: [.init(.appDataUpdate)]),
+				memberCredentialTypes: [], memberCapabilities: [])
+		}
+	}
+
 	@Test("a leaf whose capabilities omit its own credential type is rejected")
 	func ownCredentialCapability() throws {
 		var leaf = Self.policyLeaf()

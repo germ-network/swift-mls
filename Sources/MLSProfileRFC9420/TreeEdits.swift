@@ -50,7 +50,8 @@ extension MLS.TreeKEM.RatchetTree {
 			try blankDirectPath(of: sender)
 		case .remove(let removed):
 			try blankLeafAndDirectPath(removed)
-		case .preSharedKey, .reInit, .externalInit, .groupContextExtensions:
+		case .preSharedKey, .reInit, .externalInit, .groupContextExtensions,
+			.appDataUpdate:
 			throw MLS.RFC9420.TreeEditError.notATreeEditingProposal
 		}
 		truncate()

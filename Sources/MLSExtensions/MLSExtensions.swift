@@ -3,9 +3,9 @@ import MLSCodec
 /// The MLS Safe Extensions substrate — `draft-ietf-mls-extensions` is the
 /// normative authority for everything under `MLS.Extensions`. This is the
 /// profile-independent core (the Exporter Tree and `SafeExportSecret` of §4.4,
-/// the `ComponentID` of §4.1, and the application-PSK derivation an APQ
-/// combiner layers on the exporter); a profile wires it into its own group
-/// state. It composes only `MLSCodec`, `MLSCrypto`, `MLSTreeMath`, and the
+/// the `ComponentID` of §4.1, the application-PSK derivation an APQ combiner
+/// layers on the exporter, and the generic `AppDataUpdate` proposal envelope of
+/// §4.7); a profile wires it into its own group state. It composes only `MLSCodec`, `MLSCrypto`, `MLSTreeMath`, and the
 /// shared `MLSSecretTree` mechanism — deliberately NOT `MLSKeySchedule` or any
 /// profile. The exporter tree takes the epoch's exporter root as bytes, so the
 /// substrate never reaches back into the key schedule; that one-way dependency

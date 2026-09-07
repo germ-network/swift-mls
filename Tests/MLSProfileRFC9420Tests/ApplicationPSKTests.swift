@@ -12,8 +12,8 @@ import Testing
 /// draft-ietf-mls-extensions §4.5 application PSKs and draft-ietf-mls-combiner-02
 /// §6.2's derivation over the Exporter Tree — the mechanism the deployed TwoMLSPQ
 /// APQ combiner binds its groups with. swift-mls emits the -09 `uint16`
-/// `component_id` by default; the `.uint32` `componentIDWireWidth` reproduces the
-/// deployed fork's layout (`germ-network/mls-rs@b43703f`, `psk.rs`).
+/// `component_id` by default; the `.uint32` `ComponentID.componentIDWireWidth`
+/// reproduces the deployed fork's layout (`germ-network/mls-rs@b43703f`, `psk.rs`).
 @Suite("Application PSKs (mls-extensions §4.5 / combiner §6.2)")
 struct ApplicationPSKTests {
 	static let provider = SelfInteropTests.provider
@@ -44,7 +44,7 @@ struct ApplicationPSKTests {
 	/// pins the u32 *encoding* of a valid component instead.
 	@Test("the uint32 compat width widens component_id to four bytes, both directions")
 	func applicationPreSharedKeyIDWireUInt32() throws {
-		try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth.withValue(.uint32) {
+		try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
 			let id = MLS.RFC9420.PreSharedKeyIdentifier.application(
 				componentID: 0xFF01, pskID: Data([7, 8, 9]),
 				nonce: Data([0xAA, 0xBB]))
@@ -77,7 +77,7 @@ struct ApplicationPSKTests {
 		let canonical = Data([3, 0xFF, 0x01, 3, 7, 8, 9])
 
 		#expect(try id.applicationStorageID() == canonical)
-		let underU32 = try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth
+		let underU32 = try MLS.Extensions.ComponentID.$componentIDWireWidth
 			.withValue(.uint32) { try id.applicationStorageID() }
 		#expect(underU32 == canonical)
 	}
@@ -86,7 +86,7 @@ struct ApplicationPSKTests {
 	/// `uint16`, so decode rejects it rather than truncating.
 	@Test("a uint32 component_id at or above 2^16 is rejected on decode")
 	func applicationPreSharedKeyIDUInt32Overflow() throws {
-		try MLS.RFC9420.PreSharedKeyIdentifier.$componentIDWireWidth.withValue(.uint32) {
+		try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
 			// PSKType 3, component_id 0x00010000 (= 2^16), psk_id [], nonce [].
 			var reader = MLS.Reader(Data([3, 0x00, 0x01, 0x00, 0x00, 0, 0]))
 			#expect(
