@@ -397,7 +397,8 @@ extension MLS.RFC9420.Group {
 			new: MLS.RFC9420.CredentialPresentation
 		)?,
 		removedLeaves: [MLS.LeafIndex],
-		localMembershipLeaves: Set<MLS.LeafIndex>
+		localMembershipLeaves: Set<MLS.LeafIndex>,
+		appDataUpdates: [MLS.Extensions.AppDataUpdate]
 	) -> MLS.RFC9420.CommitEffects {
 		// Emitted in §12.3 application order — update, then remove, then add — so
 		// the stream is replayable against a leaf-indexed roster: an Add fills the
@@ -422,6 +423,11 @@ extension MLS.RFC9420.Group {
 		}
 		for entry in added {
 			events.append(.added(leaf: entry.leaf, presentation: entry.presentation))
+		}
+		// App-data effects follow the membership stream, in proposal-list order —
+		// they touch no roster slot, so they carry no §12.3 replay ordering.
+		for update in appDataUpdates {
+			events.append(.appDataUpdate(update))
 		}
 		return MLS.RFC9420.CommitEffects(events)
 	}
@@ -531,7 +537,8 @@ extension MLS.RFC9420.Group {
 			|| resolved.contains { stored in
 				switch stored.proposal {
 				case .update, .remove, .externalInit, .groupContextExtensions: true
-				case .add, .preSharedKey, .reInit: false
+				// app_data_update is Path Required N (§7.2.1) — same class as PSK.
+				case .add, .preSharedKey, .reInit, .appDataUpdate: false
 				}
 			}
 		if pathRequired && commit.path == nil {
@@ -635,7 +642,7 @@ extension MLS.RFC9420.Group {
 			let effects = commitMembershipEffects(
 				epochAdvanced: nil, added: [], updateChanges: [],
 				committerChange: nil, removedLeaves: removedLeaves,
-				localMembershipLeaves: localLeaves)
+				localMembershipLeaves: localLeaves, appDataUpdates: [])
 			return MLS.RFC9420.PendingCommit(
 				effects: effects, base: context, baseMemberships: localLeaves,
 				newContext: context, newTree: tree, newEpoch: epoch,
@@ -853,7 +860,14 @@ extension MLS.RFC9420.Group {
 				from: context.epoch, to: newContext.epoch, committer: senderIndex),
 			added: applied.added, updateChanges: updateChanges,
 			committerChange: committerChange, removedLeaves: removedLeaves,
-			localMembershipLeaves: localLeaves)
+			localMembershipLeaves: localLeaves,
+			appDataUpdates: resolved.compactMap {
+				if case .appDataUpdate(let update) = $0.proposal {
+					update
+				} else {
+					nil
+				}
+			})
 		return MLS.RFC9420.PendingCommit(
 			effects: effects, base: context, baseMemberships: localLeaves,
 			newContext: newContext, newTree: provisionalTree,
@@ -1032,6 +1046,7 @@ extension MLS.RFC9420.Group {
 		var updatedOrRemoved: Set<MLS.LeafIndex> = []
 		var seenPskIDs: Set<Data> = []
 		var seenGroupContextExtensions = false
+		var appDataUpdates: [MLS.Extensions.AppDataUpdate] = []
 
 		for stored in resolved {
 			switch stored.proposal {
@@ -1132,6 +1147,14 @@ extension MLS.RFC9420.Group {
 				}
 				seenGroupContextExtensions = true
 
+			case .appDataUpdate(let update):
+				// §4.7's per-component_id list rule is checked once after the loop
+				// (`validateProposalList`). The two state-dependent §4.7 clauses
+				// (unknown component; removing absent state) and the dictionary
+				// mutation are deferred to the app_data_dictionary layer a profile
+				// owns; this envelope makes no group-state change.
+				appDataUpdates.append(update)
+
 			case .reInit:
 				// Rejected later in `processing` with its own explicit
 				// error (`unsupportedReInit`); list validation has
@@ -1158,6 +1181,12 @@ extension MLS.RFC9420.Group {
 				throw MLS.RFC9420.GroupError.externalInitInRegularCommit
 			}
 		}
+
+		// draft-ietf-mls-extensions-09 §4.7: for a given component_id a proposal
+		// list is valid only if it holds a single remove XOR one-or-more updates.
+		// Runs on send and receive (both callers), so a committer can't build an
+		// invalid list either.
+		try MLS.Extensions.AppDataUpdate.validateProposalList(appDataUpdates)
 
 		// §12.1.7: "A GroupContextExtensions proposal is invalid if it
 		// includes a required_capabilities extension and some members of

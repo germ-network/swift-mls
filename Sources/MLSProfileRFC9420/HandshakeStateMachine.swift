@@ -165,6 +165,12 @@ extension MLS.RFC9420 {
 		/// terminal `apply` records the consumption without advancing — the app
 		/// tears the group down on seeing its last membership removed.
 		case membershipRemoved(leaf: MLS.LeafIndex)
+		/// A commit carried an `AppDataUpdate` proposal (draft-ietf-mls-extensions
+		/// §4.7) — the profile surfaces the envelope for the application to act on;
+		/// the library itself makes no state change for it (the §4.7
+		/// `app_data_dictionary` mutation is the app/profile's, deferred). One event
+		/// per proposal, in proposal-list order.
+		case appDataUpdate(MLS.Extensions.AppDataUpdate)
 	}
 
 	/// The effects of one commit, in application order.
