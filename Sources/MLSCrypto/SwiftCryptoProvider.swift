@@ -424,22 +424,6 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	// which the delegated HPKE path never needed exposed at this level but
 	// this one does.
 
-	/// RFC 9180 §3's `I2OSP(n, w)`: "Convert non-negative integer n to a
-	/// w-length, big-endian byte string." Every use in this file has
-	/// `w == 2`, so the width is pinned to `UInt16` rather than taken as a
-	/// parameter.
-	private func i2osp(_ value: UInt16) -> Data {
-		var bigEndian = value.bigEndian
-		return withUnsafeBytes(of: &bigEndian) { Data($0) }
-	}
-
-	/// RFC 9180 §4.1: `suite_id = concat("KEM", I2OSP(kem_id, 2))`, this
-	/// suite's KEM half only — DeriveKeyPair never touches the combined
-	/// HPKE suite_id (KEM+KDF+AEAD), only the KEM's own.
-	private var kemSuiteID: Data {
-		Data("KEM".utf8) + i2osp(hpkeKemID)
-	}
-
 	private var hpkeKemID: UInt16 {
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha: 0x0020  // DHKEM(X25519, HKDF-SHA256)
@@ -472,23 +456,25 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
-	/// RFC 9180 §4: `LabeledExtract`/`LabeledExpand` scoped to the KEM's own
-	/// suite_id — the general HPKE-level versions (which additionally fold
-	/// in KDF/AEAD ids) live nowhere in this file because nothing else here
-	/// needs them; swift-crypto's own HPKE type does that composition
-	/// internally for `hpkeSeal`/`hpkeOpen`.
+	/// RFC 9180 §4 `LabeledExtract`/`LabeledExpand` scoped to this suite's KEM
+	/// `suite_id`, for DeriveKeyPair. Thin wrappers over the public
+	/// `hpkeLabeledExtract`/`hpkeLabeledExpand` provider-authoring toolkit
+	/// (`HPKEProviderToolkit.swift`) — the same primitives a custom-KEM provider
+	/// reuses. swift-crypto's own HPKE type composes the combined HPKE `suite_id`
+	/// internally for `hpkeSeal`/`hpkeOpen`, so only the KEM scope is needed here.
 	private func kemLabeledExtract(salt: Data, label: String, ikm: Data) throws -> Data {
-		try kdfExtract(
-			salt: salt, ikm: Data("HPKE-v1".utf8) + kemSuiteID + Data(label.utf8) + ikm)
+		try hpkeLabeledExtract(
+			suiteID: MLS.hpkeKEMSuiteID(kemID: hpkeKemID), salt: salt, label: label,
+			ikm: ikm)
 	}
 
 	private func kemLabeledExpand(prk: Data, label: String, info: Data, length: Int) throws
 		-> Data
 	{
-		let labeledInfo =
-			i2osp(UInt16(length)) + Data("HPKE-v1".utf8) + kemSuiteID + Data(label.utf8)
-			+ info
-		return try kdfExpand(prk: prk, info: labeledInfo, length: length)
+		try hpkeLabeledExpand(
+			suiteID: MLS.hpkeKEMSuiteID(kemID: hpkeKemID), prk: prk, label: label,
+			info: info,
+			length: length)
 	}
 
 	/// The public key for a raw private-key byte string, backing
