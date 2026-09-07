@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "MLSFraming", targets: ["MLSFraming"]),
         .library(name: "MLSTreeKEM", targets: ["MLSTreeKEM"]),
         .library(name: "MLSProfileRFC9420", targets: ["MLSProfileRFC9420"]),
+        .library(name: "MLSCombiner", targets: ["MLSCombiner"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
@@ -125,6 +126,24 @@ let package = Package(
             ]
         ),
         .target(
+            // draft-ietf-mls-combiner-02's generic APQ combiner: the {classical,
+            // PQ} CombinerGroup pair, the apq_psk PQ->classical binding, the
+            // APQInfo GroupContext extension, AppDataUpdate epoch attestation, and
+            // the §7 paired structures. An above-profile consumer -- it runs two
+            // RFC 9420 Groups and layers the combiner on MLSExtensions' exporter/
+            // application-PSK/AppDataUpdate substrate; it adds no crypto. Deps are
+            // exactly MLSProfileRFC9420 + MLSExtensions (+ the codec/crypto/secret
+            // primitives they expose), never a downstream/session type -- the
+            // structural proof this stays IETF-generic. The Germ private suites,
+            // wire framing, 2-party rules, and session live downstream
+            // (twomlspq-swift).
+            name: "MLSCombiner",
+            dependencies: [
+                "MLSProfileRFC9420", "MLSExtensions", "MLSCodec", "MLSCrypto",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .target(
             name: "MLSVectorSupport",
             dependencies: [],
             path: "Tests/MLSVectorSupport",
@@ -204,6 +223,14 @@ let package = Package(
             dependencies: [
                 "MLSProfileRFC9420", "MLSFraming", "MLSCrypto", "MLSKeySchedule", "MLSTreeKEM",
                 "MLSExtensions", "MLSSecretTree", "MLSVectorSupport",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
+        ),
+        .testTarget(
+            name: "MLSCombinerTests",
+            dependencies: [
+                "MLSCombiner", "MLSProfileRFC9420", "MLSExtensions", "MLSCrypto",
+                "MLSCodec", "MLSTreeKEM", "MLSFraming",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
