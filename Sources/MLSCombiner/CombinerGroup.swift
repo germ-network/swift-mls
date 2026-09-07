@@ -244,18 +244,41 @@ extension MLS.Combiner.CombinerGroup {
 		else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
+		try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+			classicalInfo: classicalInfo, pqInfo: pqInfo,
+			classicalObserved: (
+				groupID: classical.context.groupID, epoch: classical.context.epoch
+			),
+			pqObserved: (groupID: pq.context.groupID, epoch: pq.context.epoch))
+	}
+
+	/// The pure half of `verifyPair`: identity-fields agreement across the two decoded
+	/// `APQInfo` copies, each naming the group it actually rides in, and each epoch
+	/// field matching the half's observed epoch — split one clause per guard so a
+	/// single-field mismatch (e.g. a stale `pqEpoch`) is independently testable.
+	/// `observed` is `(groupID, epoch)` read off each half's live `GroupContext`, so
+	/// the check itself takes no `Group` and is exercisable against hand-built values.
+	static func checkAPQInfoConsistent(
+		classicalInfo: MLS.Combiner.APQInfo,
+		pqInfo: MLS.Combiner.APQInfo,
+		classicalObserved: (groupID: Data, epoch: UInt64),
+		pqObserved: (groupID: Data, epoch: UInt64)
+	) throws {
 		guard classicalInfo.identityFieldsMatch(pqInfo) else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
-		guard classicalInfo.tSessionGroupID == classical.context.groupID,
-			classicalInfo.pqSessionGroupID == pq.context.groupID
+		guard classicalInfo.tSessionGroupID == classicalObserved.groupID,
+			classicalInfo.pqSessionGroupID == pqObserved.groupID
 		else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
-		guard classicalInfo.tEpoch == classical.context.epoch,
-			pqInfo.pqEpoch == pq.context.epoch,
-			classicalInfo.pqEpoch == pq.context.epoch
-		else {
+		guard classicalInfo.tEpoch == classicalObserved.epoch else {
+			throw MLS.Combiner.Error.apqInfoMismatch
+		}
+		guard pqInfo.pqEpoch == pqObserved.epoch else {
+			throw MLS.Combiner.Error.apqInfoMismatch
+		}
+		guard classicalInfo.pqEpoch == pqObserved.epoch else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
 	}

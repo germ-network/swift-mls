@@ -28,5 +28,10 @@ extension MLS.Combiner {
 
 		/// An establishment or join step produced no Welcome for the added member.
 		case missingWelcome
+
+		/// An invariant the combiner relies on did not hold — a library bug, not
+		/// caller input. Distinct from the input-shaped cases above so a caller never
+		/// mistakes an internal defect for a rejectable peer message.
+		case internalInconsistency
 	}
 }

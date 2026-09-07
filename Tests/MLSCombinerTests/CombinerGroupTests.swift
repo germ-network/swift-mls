@@ -40,6 +40,31 @@ import Testing
 			founder.pq.epoch.epochAuthenticator == peer.pq.epoch.epochAuthenticator)
 	}
 
+	/// Pins the FOUNDER-side `apq_psk` binding directly. `establishAndJoinRoundTrips`
+	/// only shows that the joiner resolves whatever PSK the founder's classical commit
+	/// referenced — not that the founder actually bound one. Here the classical half's
+	/// Welcome is joined in isolation, via the profile's own `Group.joining` with an
+	/// EMPTY psk resolver: it must throw `unresolvedPreSharedKey`, proving the
+	/// founder's creation commit referenced a PSK the joiner is required to resolve.
+	@Test func establishBindsFounderSideApqPsk() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let (_, welcome) = try MLS.Combiner.CombinerGroup.establish(
+			classical: try Support.halfCreation(founder: alice, peer: bob),
+			pq: try Support.halfCreation(founder: alice, peer: bob),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+
+		// establish's default codepoints run at .uint32; decode the Welcome's
+		// PreSharedKeyID at the same ambient width.
+		MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
+			#expect(throws: MLS.RFC9420.GroupError.unresolvedPreSharedKey) {
+				_ = try MLS.RFC9420.Group.joining(
+					Support.provider, welcome: welcome.tWelcome,
+					credentials: bob.joinCredentials, psk: { _ in nil })
+			}
+		}
+	}
+
 	/// `APQInfo` rides both halves' Welcomes: the joiner reads a `0xF0A1` extension out
 	/// of each half's GroupContext, the identity fields agree across halves, each names
 	/// the joined group and epoch — i.e. `verifyPair()` holds for the joiner.
@@ -81,6 +106,57 @@ import Testing
 		var spliced = founder
 		spliced.pq = other.pq
 		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) { try spliced.verifyPair() }
+	}
+
+	/// `verifyPair`'s epoch checks, pinned individually via the pure
+	/// `checkAPQInfoConsistent` core (hand-built `APQInfo`s, no real groups): the two
+	/// halves agree on identity fields and group ids, but each of the three epoch
+	/// clauses in turn — `classicalInfo.tEpoch`, `pqInfo.pqEpoch`, then
+	/// `classicalInfo.pqEpoch` — is made to mismatch the *observed* epoch while the
+	/// other two still agree, so each clause is shown to independently reject.
+	@Test func checkAPQInfoConsistentPinsEachEpochClause() throws {
+		let classicalGroupID = Data([1, 2, 3])
+		let pqGroupID = Data([4, 5, 6])
+		func info(tEpoch: UInt64, pqEpoch: UInt64) -> MLS.Combiner.APQInfo {
+			MLS.Combiner.APQInfo(
+				tSessionGroupID: classicalGroupID, pqSessionGroupID: pqGroupID,
+				mode: 0, tCipherSuite: MLS.CipherSuite(id: 1),
+				pqCipherSuite: MLS.CipherSuite(id: 1), tEpoch: tEpoch,
+				pqEpoch: pqEpoch)
+		}
+		let classicalObserved = (groupID: classicalGroupID, epoch: UInt64(1))
+		let pqObserved = (groupID: pqGroupID, epoch: UInt64(1))
+
+		// A fully-agreeing pair passes.
+		try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+			classicalInfo: info(tEpoch: 1, pqEpoch: 1),
+			pqInfo: info(tEpoch: 1, pqEpoch: 1),
+			classicalObserved: classicalObserved, pqObserved: pqObserved)
+
+		// classicalInfo.tEpoch alone mismatches the observed classical epoch.
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info(tEpoch: 2, pqEpoch: 1),
+				pqInfo: info(tEpoch: 2, pqEpoch: 1),
+				classicalObserved: classicalObserved, pqObserved: pqObserved)
+		}
+
+		// pqInfo.pqEpoch alone mismatches the observed PQ epoch.
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info(tEpoch: 1, pqEpoch: 1),
+				pqInfo: info(tEpoch: 1, pqEpoch: 2),
+				classicalObserved: classicalObserved, pqObserved: pqObserved)
+		}
+
+		// classicalInfo.pqEpoch alone mismatches the observed PQ epoch (pqInfo's own
+		// pqEpoch still agrees).
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info(tEpoch: 1, pqEpoch: 2),
+				pqInfo: info(tEpoch: 1, pqEpoch: 1),
+				classicalObserved: classicalObserved, pqObserved: pqObserved)
+		}
 	}
 
 	/// Membership consistency is set-equality of Basic identifiers, order-independent,

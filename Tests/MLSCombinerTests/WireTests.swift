@@ -66,8 +66,10 @@ import Testing
 	}
 
 	/// The application storage id is `0x03 ‖ component_id(u16) ‖ psk_id<V>`, width-pinned
-	/// to `uint16` regardless of the wire width (a local key), matching apq's
-	/// `ApplicationPsk::storage_id`.
+	/// to `uint16` regardless of the wire width (a local key) — same recipe/shape as
+	/// apq's `ApplicationPsk::storage_id`, but pinned to `uint16` locally (apq's uses
+	/// u32; the storage id is a local key, never on the wire, so this does not affect
+	/// interop).
 	@Test func exportedPskStorageID() throws {
 		let exported = try MLS.Combiner.ExportedPsk.fromParts(
 			componentID: MLS.Extensions.ComponentID(rawValue: 0xFF01),

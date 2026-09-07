@@ -48,7 +48,7 @@ extension MLS.Combiner.ExportedPsk {
 			componentID: componentID, pskID: pskID, nonce: Data())
 		guard let storageID = try identifier.applicationStorageID() else {
 			// Unreachable: `.application` always yields a storage id.
-			throw MLS.Combiner.Error.apqInfoMismatch
+			throw MLS.Combiner.Error.internalInconsistency
 		}
 		return storageID
 	}
@@ -118,6 +118,9 @@ extension MLS.Combiner {
 
 		/// Remove a PSK once the commit that referenced it has been applied (or it has
 		/// been retired), keeping the store bounded by what the caller still vouches for.
+		/// A downstream seam: not exercised within this module, since the store is
+		/// ephemeral — a live `apq_psk` is already folded into the epoch secrets once
+		/// its referencing commit is applied, with nothing left here to forget.
 		public mutating func forget(storageID: Data) {
 			entries[storageID] = nil
 		}
