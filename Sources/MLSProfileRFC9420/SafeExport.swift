@@ -54,11 +54,10 @@ extension MLS.RFC9420.Group {
 	/// wire, inside the proposal the caller assembles as
 	/// `.application(componentID:, pskID:, nonce:)`.
 	///
-	/// `psk` is returned zeroizing, but the only PSK ingress today is the
-	/// `(PreSharedKeyIdentifier) -> Data?` resolver, so a caller must copy it to
-	/// `Data` at that boundary — an unscrubbed hop that bounds the forward secrecy
-	/// until a `SecretBytes`-returning resolver overload lands (a tracked
-	/// follow-up). Hold `psk` in `SecretBytes` and convert only at that call.
+	/// `psk` is returned zeroizing, and the PSK ingress is the
+	/// `(PreSharedKeyIdentifier) -> SecretBytes?` resolver end-to-end, so the
+	/// pair stays in zeroizing storage with no unscrubbed `Data` hop between
+	/// export and resolution.
 	///
 	/// The derivation itself — the combiner-02 Figure 3 labels `"psk_id"`/`"psk"`
 	/// over the exported secret — is `MLS.Extensions.deriveApplicationPSK`; this

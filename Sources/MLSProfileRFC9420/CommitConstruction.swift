@@ -121,7 +121,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		// The bare entry commits as the sole membership; `committing(as:)` names it.
 		try committing(
@@ -150,7 +150,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		let committerLeaf = memberships[committerIndex].leafIndex
 		// Resolve, exactly as the receive side does.
@@ -589,12 +589,11 @@ extension MLS.RFC9420.Group {
 				}
 			}
 
-			// Custody exit at the wire boundary: `joiner_secret` is carried
-			// in the Welcome's `GroupSecrets`, so it is copied out of
-			// zeroizing storage into the plaintext that is then HPKE-sealed
+			// `joiner_secret` stays in zeroizing storage here; GroupSecrets.encode
+			// is where it custody-exits to the plaintext that is then HPKE-sealed
 			// (the encoded, encrypted `GroupSecrets` is what leaves).
 			let groupSecrets = MLS.RFC9420.GroupSecrets(
-				joinerSecret: newEpoch.joinerSecret.withUnsafeBytes { Data($0) },
+				joinerSecret: newEpoch.joinerSecret,
 				pathSecret: pathSecret,
 				psks: pskIDs)
 			let (enc, ciphertext) = try MLS.encryptWithLabel(

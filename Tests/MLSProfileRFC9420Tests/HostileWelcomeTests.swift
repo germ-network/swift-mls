@@ -12,8 +12,11 @@ import Testing
 /// `SecretBytes`, a zero-length secret is unconstructible — `SecretBytes`
 /// **throws** on empty input rather than trapping. This suite pins that the
 /// key schedule and the join path both *reject* such input (a throw, never a
-/// trap), and that the profile surfaces a clean domain error rather than the
-/// dependency's own.
+/// trap). Where the profile owns the boundary (a wire-decoded `joiner_secret`)
+/// it surfaces a clean domain error (`emptyJoinerSecret`); an app-supplied
+/// empty external PSK is now rejected one layer earlier, at the caller's own
+/// `SecretBytes(bytes:)` construction (`SecretBytesError.emptySecret`), which
+/// the join simply propagates.
 @Suite("Hostile/malformed Welcome: empty secrets are rejected, not trapped")
 struct HostileWelcomeTests {
 	static let provider = SwiftCryptoProvider().cipherSuiteProvider(for: .curve25519Aes128)!
@@ -23,11 +26,16 @@ struct HostileWelcomeTests {
 	/// silently deriving from empty input.
 	@Test("fromJoinerSecret rejects a zero-length joiner secret with a throw")
 	func keyScheduleRejectsEmptyJoinerSecret() throws {
-		#expect(throws: (any Error).self) {
+		// Construct the (non-empty) pskSecret outside the expectation so the
+		// throw it pins can only come from `fromJoinerSecret`'s empty-joiner
+		// guard, not from a SecretBytes construction inside the closure.
+		let pskSecret = try SecretBytes(
+			bytes: Data(repeating: 0, count: Self.provider.hashSize))
+		#expect(throws: MLS.CryptoError.self) {
 			_ = try MLS.KeySchedule.fromJoinerSecret(
 				Self.provider,
 				joinerSecret: Data(),
-				pskSecret: Data(repeating: 0, count: Self.provider.hashSize),
+				pskSecret: pskSecret,
 				groupContext: Data("ctx".utf8))
 		}
 	}
@@ -62,12 +70,18 @@ struct HostileWelcomeTests {
 		// Bob's public init key, under the same "Welcome" label and
 		// encrypted_group_info context the real Welcome binds — exactly what
 		// a malicious inviter (who signs the GroupInfo) could produce.
-		let tampered = MLS.RFC9420.GroupSecrets(
-			joinerSecret: Data(), pathSecret: nil, psks: [])
+		// `GroupSecrets` itself cannot represent that shape in Swift --
+		// `SecretBytes` throws on empty input -- so the hostile payload is
+		// hand-encoded directly at the wire level, mirroring
+		// `joinRejectsEmptyPathSecret` below.
+		var writer = MLS.Writer()
+		try writer.writeOpaque(Data())  // empty joiner_secret<V>
+		writer.writeUInt8(0)  // path_secret absent
+		try writer.encodeVector([MLS.RFC9420.PreSharedKeyIdentifier]())  // empty psks
 		let (enc, ciphertext) = try MLS.encryptWithLabel(
 			provider, publicKey: bob.keyPackage.initKey, label: "Welcome",
 			context: welcome.encryptedGroupInfo,
-			plaintext: try tampered.mlsEncoded())
+			plaintext: writer.data)
 		let hostile = MLS.RFC9420.Welcome(
 			cipherSuite: welcome.cipherSuite,
 			secrets: [
@@ -137,11 +151,15 @@ struct HostileWelcomeTests {
 		}
 	}
 
-	/// The external-PSK custody boundary, end to end: a resolver that hands
-	/// back a zero-length PSK for a referenced id is malformed input, mapped
-	/// to `emptyPreSharedKey` at `resolvePsk` rather than folded into the key
-	/// schedule (or surfaced as the dependency's own error).
-	@Test("an empty external PSK is rejected with emptyPreSharedKey at processing")
+	/// The external-PSK custody boundary, end to end: an empty PSK is
+	/// unrepresentable once the resolver hands back `SecretBytes` — its
+	/// initializer throws `SecretBytesError.emptySecret` before the empty
+	/// value can reach `resolvePsk` or fold into the key schedule. The
+	/// rejection is now type-enforced one layer earlier than the old
+	/// `emptyPreSharedKey` domain error; `validating` propagates the
+	/// resolver's own thrown error via `CommitRejection.reason`, so that is
+	/// what surfaces here.
+	@Test("an empty external PSK is rejected by SecretBytes construction at processing")
 	func emptyExternalPskRejectedAtProcessing() throws {
 		let provider = Self.provider
 		let alice = try SelfInteropTests.member("alice")
@@ -160,9 +178,10 @@ struct HostileWelcomeTests {
 		// (non-empty) resolver so the commit itself is well-formed.
 		let pskID = provider.randomBytes(provider.hashSize)
 		let realSecret = Data(repeating: 0xAB, count: provider.hashSize)
-		let goodResolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+		let goodResolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = {
+			id in
 			guard case .external(let id, _) = id, id == pskID else { return nil }
-			return realSecret
+			return try SecretBytes(bytes: realSecret)
 		}
 		let pskCommit = try groupA.commit(
 			provider,
@@ -178,12 +197,13 @@ struct HostileWelcomeTests {
 			includePath: false, psk: goodResolve)
 
 		// Bob processes the same commit, but his resolver hands back an empty
-		// PSK for that id — rejected at the custody boundary before the fold.
-		let emptyResolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+		// PSK for that id — rejected by `SecretBytes(bytes:)` before the fold.
+		let emptyResolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = {
+			id in
 			guard case .external(let id, _) = id, id == pskID else { return nil }
-			return Data()
+			return try SecretBytes(bytes: Data())
 		}
-		#expect(throws: MLS.RFC9420.GroupError.emptyPreSharedKey) {
+		#expect(throws: SecretBytesError.emptySecret) {
 			var b = groupB
 			try SelfInteropTests.processPrivate(
 				&b, provider, pskCommit.commit, psk: emptyResolve)
@@ -297,7 +317,8 @@ struct HostileWelcomeTests {
 		let welcome = try #require(add.welcome)
 
 		let tampered = MLS.RFC9420.GroupSecrets(
-			joinerSecret: Data(repeating: 1, count: provider.hashSize),
+			joinerSecret: try SecretBytes(
+				bytes: Data(repeating: 1, count: provider.hashSize)),
 			pathSecret: nil, psks: psks)
 		let (enc, ciphertext) = try MLS.encryptWithLabel(
 			provider, publicKey: bob.keyPackage.initKey, label: "Welcome",

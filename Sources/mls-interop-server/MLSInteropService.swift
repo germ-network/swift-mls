@@ -270,7 +270,8 @@
 				externalTree: externalTree,
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
-					return externalPsks[pskID]
+					guard let bytes = externalPsks[pskID] else { return nil }
+					return try SecretBytes(bytes: bytes)
 				}
 			).apply().group
 			let id = allocate()
@@ -452,7 +453,8 @@
 				framing: .publicMessage,
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
-					return externalPsks[pskID]
+					guard let bytes = externalPsks[pskID] else { return nil }
+					return try SecretBytes(bytes: bytes)
 				})
 			// Public framing consumes no key, so the transition's group is the old
 			// epoch unchanged and `state.group` needs no adoption before the runner
@@ -535,7 +537,8 @@
 				p, commit: commit, proposals: store,
 				psk: { [externalPsks] id in
 					guard case .external(let pskID, _) = id else { return nil }
-					return externalPsks[pskID]
+					guard let bytes = externalPsks[pskID] else { return nil }
+					return try SecretBytes(bytes: bytes)
 				})
 			let transition = try pending.apply(onto: state.group)
 			let advanced = transition.group

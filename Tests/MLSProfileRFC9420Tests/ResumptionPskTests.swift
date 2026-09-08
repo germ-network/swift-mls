@@ -40,7 +40,7 @@ struct ResumptionPskTests {
 			Self.provider,
 			psks: [(encodedID: try encoded(id), psk: SecretBytes(bytes: psk))])
 		#expect(a == b)
-		#expect(a.count == Self.provider.hashSize)
+		#expect(a.byteCount == Self.provider.hashSize)
 	}
 
 	@Test("resumption and external PSKs with the same nonce/psk bytes derive different secrets")

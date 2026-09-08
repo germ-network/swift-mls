@@ -29,8 +29,8 @@ extension MLS.Combiner {
 		/// `componentIDWireWidth` switch (a PSK derived outside a `.uint32` scope still
 		/// resolves against a fork commit processed inside one).
 		public let storageID: Data
-		/// The PSK value, zeroizing. Copied to `Data` only at the resolver boundary
-		/// (the profile's only PSK ingress is `(PreSharedKeyIdentifier) -> Data?`).
+		/// The PSK value, zeroizing end-to-end: the profile's PSK ingress is
+		/// `(PreSharedKeyIdentifier) -> SecretBytes?`, so this never copies to `Data`.
 		public let psk: SecretBytes
 		// The memberwise initializer is intentionally internal (synthesized): callers
 		// outside the module build an `ExportedPsk` only via `export`/`fromParts`.
@@ -127,17 +127,19 @@ extension MLS.Combiner {
 
 		/// A resolver over a snapshot of this store, for one commit/join/validate call.
 		/// It maps an `application` `PreSharedKeyID` to its value by the same
-		/// `uint16`-pinned `storage_id` `register` keyed it under, copying the
-		/// zeroizing value to `Data` at this boundary (the profile's PSK ingress type).
+		/// `uint16`-pinned `storage_id` `register` keyed it under, handing back the
+		/// zeroizing value directly (the profile's PSK ingress is `SecretBytes?`).
 		/// Non-`application` ids resolve to `nil` — the combiner injects only
 		/// `application` PSKs.
-		public func resolver() -> (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? {
+		public func resolver()
+			-> (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		{
 			let snapshot = entries
 			return { identifier in
 				guard let storageID = try identifier.applicationStorageID(),
 					let secret = snapshot[storageID]
 				else { return nil }
-				return secret.withUnsafeBytes { Data($0) }
+				return secret
 			}
 		}
 	}

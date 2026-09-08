@@ -51,13 +51,14 @@ extension MLS {
 		/// for epoch 0). `commitSecret` is whatever the evolution mechanism
 		/// (TreeKEM, or anything else a profile substitutes) produced for
 		/// this commit. `pskSecret` is `MLS.KeySchedule.pskSecret(_:psks:)`,
-		/// or the all-zero `Nh`-byte value when no PSK is in use — RFC 9420
-		/// never lets this step be skipped, only its input be trivial.
+		/// or its all-zero-input result (`pskSecret(psks: [])`) when no PSK
+		/// is in use — RFC 9420 never lets this step be skipped, only its
+		/// input be trivial.
 		public static func advance(
 			_ provider: any CipherSuiteProvider,
 			initSecret: some ContiguousBytes,
 			commitSecret: SecretBytes,
-			pskSecret: Data,
+			pskSecret: SecretBytes,
 			groupContext: Data
 		) throws -> Epoch {
 			let joinerSeed = try provider.kdfExtractSecret(
@@ -78,15 +79,16 @@ extension MLS {
 		public static func fromJoinerSecret(
 			_ provider: any CipherSuiteProvider,
 			joinerSecret: some ContiguousBytes,
-			pskSecret: Data,
+			pskSecret: SecretBytes,
 			groupContext: Data
 		) throws -> Epoch {
 			// A zero-length joiner secret cannot key the schedule. Reject it
 			// up front rather than running the whole fan-out only to trip on
 			// the empty value when it is packaged into the `Epoch`
-			// (`SecretBytes` rejects empty input). `MLS.RFC9420.Group.join`
-			// rejects this earlier still, with its own `emptyJoinerSecret`;
-			// this guard is the one a direct caller of the component API meets.
+			// (`SecretBytes` rejects empty input). On the profile's join path
+			// `GroupSecrets` wire-decode rejects this earlier still, with its
+			// own `emptyJoinerSecret`; this guard is the one a direct caller of
+			// the component API meets.
 			guard joinerSecret.withUnsafeBytes({ !$0.isEmpty }) else {
 				throw MLS.CryptoError.invalidKey
 			}
@@ -234,22 +236,23 @@ extension MLS {
 		public static func pskSecret(
 			_ provider: any CipherSuiteProvider,
 			psks: [(encodedID: Data, psk: SecretBytes)]
-		) throws -> Data {
+		) throws -> SecretBytes {
 			let zero = Data(repeating: 0, count: provider.hashSize)
 			guard let count = UInt16(exactly: psks.count) else {
 				throw MLS.CryptoError.invalidKey
 			}
 
-			var secret = zero
+			var secret = try SecretBytes(bytes: zero)
 			for (index, entry) in psks.enumerated() {
-				let extracted = try provider.kdfExtract(salt: zero, ikm: entry.psk)
+				let extracted = try provider.kdfExtractSecret(
+					salt: zero, ikm: entry.psk)
 				let label = pskLabel(
 					encodedID: entry.encodedID, index: UInt16(index),
 					count: count)
-				let input = try expandWithLabel(
+				let input = try expandWithLabelSecret(
 					provider, secret: extracted, label: "derived psk",
 					context: label, length: provider.hashSize)
-				secret = try provider.kdfExtract(salt: input, ikm: secret)
+				secret = try provider.kdfExtractSecret(salt: input, ikm: secret)
 			}
 			return secret
 		}

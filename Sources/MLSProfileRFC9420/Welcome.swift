@@ -9,15 +9,16 @@ extension MLS.RFC9420 {
 	/// `struct { opaque joiner_secret<V>; optional<PathSecret> path_secret;
 	/// PreSharedKeyID psks<V>; } GroupSecrets;` — `PathSecret` is `opaque<V>`.
 	public struct GroupSecrets: Sendable, Equatable, MLSCodable {
-		/// Stays `Data` deliberately — a wire transient consumed once at
-		/// join, out of this change's zeroization scope; `pathSecret`
-		/// below is the field that is `SecretBytes`.
-		public var joinerSecret: Data
+		/// Zeroizing, with the same custody bridges as `pathSecret`: it
+		/// copies out to plaintext only at `encode` (the wire boundary) and
+		/// is taken into zeroizing storage immediately at `decode`.
+		public var joinerSecret: SecretBytes
 		public var pathSecret: SecretBytes?
 		public var psks: [PreSharedKeyIdentifier]
 
 		public init(
-			joinerSecret: Data, pathSecret: SecretBytes?, psks: [PreSharedKeyIdentifier]
+			joinerSecret: SecretBytes, pathSecret: SecretBytes?,
+			psks: [PreSharedKeyIdentifier]
 		) {
 			self.joinerSecret = joinerSecret
 			self.pathSecret = pathSecret
@@ -25,16 +26,25 @@ extension MLS.RFC9420 {
 		}
 
 		public func encode(to writer: inout MLS.Writer) throws {
-			try writer.writeOpaque(joinerSecret)
-			// Custody exit: the path secret is copied out of zeroizing storage
-			// only to be written into the wire's opaque<V> field.
+			// Custody exit: joiner_secret and the path secret are each copied
+			// out of zeroizing storage only to be written into the wire's
+			// opaque<V> fields.
+			try writer.writeOpaque(joinerSecret.withUnsafeBytes { Data($0) })
 			try writer.encodeOptional(
 				pathSecret.map { OpaqueField($0.withUnsafeBytes { Data($0) }) })
 			try writer.encodeVector(psks)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {
-			joinerSecret = Data(try reader.readOpaque())
+			// Custody ingress: joiner_secret arrives as wire plaintext — the
+			// terminal `Data` transient this decode produces — and is copied
+			// into zeroizing storage immediately. A zero-length value is
+			// malformed, not merely absent (mirrors `pathSecret` below).
+			let joinerBytes = try reader.readOpaque()
+			guard !joinerBytes.isEmpty else {
+				throw MLS.RFC9420.GroupError.emptyJoinerSecret
+			}
+			joinerSecret = try SecretBytes(bytes: joinerBytes)
 			// Custody ingress: the path secret arrives as wire plaintext —
 			// the terminal `Data` transient this decode produces — and is
 			// copied into zeroizing storage immediately.
@@ -135,7 +145,7 @@ extension MLS.RFC9420.Welcome {
 	/// AAD input, so there is none to pass.
 	public func decryptGroupInfo(
 		_ provider: any MLS.CipherSuiteProvider,
-		joinerSecret: Data, pskSecret: Data
+		joinerSecret: SecretBytes, pskSecret: SecretBytes
 	) throws -> (groupInfo: MLS.RFC9420.GroupInfo, epoch: MLS.KeySchedule.Epoch) {
 		// `epoch_seed` is the parent of the entire epoch fan-out — more
 		// sensitive than any single retained field — so it is derived on the

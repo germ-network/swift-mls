@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSVectorSupport
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -69,7 +70,8 @@ struct PassiveClientJoinTests {
 			externalTree: try Self.decodeExternalTree(record),
 			psk: { id in
 				guard case .external(let pskID, _) = id else { return nil }
-				return externalPsks[pskID]
+				guard let bytes = externalPsks[pskID] else { return nil }
+				return try SecretBytes(bytes: bytes)
 			})
 
 		#expect(group.epoch.epochAuthenticator == record.initialEpochAuthenticator.bytes)

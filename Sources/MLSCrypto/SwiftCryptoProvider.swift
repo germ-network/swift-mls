@@ -98,8 +98,8 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	/// `UnsafeRawBufferPointer` a `withUnsafeBytes` yields satisfies both
 	/// `ContiguousBytes` and the `DataProtocol`/`ContiguousBytes` HKDF wants,
 	/// so this borrows rather than copies on the way in. The `Data` result is
-	/// for the outputs that genuinely become `Data` (a `mac` tag, a PSK-fold
-	/// accumulator); the retained-secret path uses `kdfExtractSecret`.
+	/// for outputs that genuinely become `Data` (a `mac` tag); the
+	/// retained-secret path uses `kdfExtractSecret`.
 	func kdfExtract(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws -> Data {
 		try salt.withUnsafeBytes { salt in
 			try ikm.withUnsafeBytes { ikm in
