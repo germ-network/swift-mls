@@ -89,7 +89,7 @@ struct KeyScheduleTests {
 				label: epoch.exporter.label,
 				context: epoch.exporter.context.bytes, length: epoch.exporter.length
 			)
-			#expect(exported == epoch.exporter.secret.bytes)
+			try expectSecret(exported, equals: epoch.exporter.secret.bytes, "exported")
 
 			initSecret = result.initSecret
 		}

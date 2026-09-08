@@ -23,11 +23,11 @@ extension MLS {
 	// make "accidentally serialize a secret key" a type-checkable
 	// mistake instead of an impossible one.
 	//
-	// The private half is held in zeroizing storage. The
-	// `some ContiguousBytes` init throws only for empty input, which no
-	// real HPKE private key is; a `SecretBytes` passes through it too
-	// (it conforms to `ContiguousBytes`), so a caller already holding one
-	// needs no separate spelling.
+	// The private halves (HPKE and signature) are held in zeroizing
+	// storage. The `some ContiguousBytes` init throws only for empty
+	// input, which no real private key is; a `SecretBytes` passes
+	// through it too (it conforms to `ContiguousBytes`), so a caller
+	// already holding one needs no separate spelling.
 	public struct HpkeSecretKey: Sendable {
 		public var data: SecretBytes
 		public init(_ bytes: some ContiguousBytes) throws {
@@ -47,8 +47,10 @@ extension MLS {
 	}
 
 	public struct SignatureSecretKey: Sendable {
-		public var data: Data
-		public init(_ data: Data) { self.data = data }
+		public var data: SecretBytes
+		public init(_ bytes: some ContiguousBytes) throws {
+			self.data = try SecretBytes(bytes: bytes)
+		}
 	}
 
 	/// `struct { opaque kem_output<V>; opaque ciphertext<V>; } HPKECiphertext;`

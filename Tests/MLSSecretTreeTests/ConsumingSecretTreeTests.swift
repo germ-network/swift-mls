@@ -33,7 +33,7 @@ struct ConsumingSecretTreeTests {
 			let oracle = try MLS.KeySchedule.leafSecret(
 				provider, encryptionSecret: encryptionSecret,
 				leafIndex: UInt32(leaf), numLeaves: leafCount)
-			#expect(consumed.withUnsafeBytes { Data($0) } == oracle, "leaf \(leaf)")
+			#expect(consumed == oracle, "leaf \(leaf)")
 		}
 		// And the root is long gone: no leaf can be derived twice.
 		#expect(throws: MLS.SecretTree.SecretTreeError.self) {

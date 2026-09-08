@@ -212,11 +212,11 @@ extension MLS {
 			label: String,
 			context: Data,
 			length: Int
-		) throws -> Data {
+		) throws -> SecretBytes {
 			let secret = try deriveSecret(
 				provider, secret: exporterSecret, label: label)
 			let contextHash = try provider.hash(context)
-			return try expandWithLabel(
+			return try expandWithLabelSecret(
 				provider, secret: secret, label: "exported", context: contextHash,
 				length: length)
 		}

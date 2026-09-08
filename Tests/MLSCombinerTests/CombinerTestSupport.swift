@@ -35,17 +35,17 @@ enum CombinerTestSupport {
 		}
 	}
 
-	static func signingKeyPair() -> (MLS.SignatureSecretKey, MLS.SignaturePublicKey) {
+	static func signingKeyPair() throws -> (MLS.SignatureSecretKey, MLS.SignaturePublicKey) {
 		let key = Curve25519.Signing.PrivateKey()
 		return (
-			MLS.SignatureSecretKey(key.rawRepresentation),
+			try MLS.SignatureSecretKey(key.rawRepresentation),
 			MLS.SignaturePublicKey(key.publicKey.rawRepresentation)
 		)
 	}
 
 	static func member(_ name: String) throws -> Member {
 		let provider = Self.provider
-		let (signingKey, signatureKey) = signingKeyPair()
+		let (signingKey, signatureKey) = try signingKeyPair()
 		let (leafSecret, leafPublic) = try provider.hpkeGenerateKeyPair()
 		let (initSecret, initPublic) = try provider.hpkeGenerateKeyPair()
 		var leaf = MLS.RFC9420.LeafNode(
@@ -104,8 +104,9 @@ enum CombinerTestSupport {
 
 	/// A minimal `RosterEntry` for a Basic identity — for the membership-consistency
 	/// checks, which read only `presentation.credential`.
-	static func rosterEntry(_ identity: String, leaf: UInt32) -> MLS.RFC9420.RosterEntry {
-		let (_, signatureKey) = signingKeyPair()
+	static func rosterEntry(_ identity: String, leaf: UInt32) throws -> MLS.RFC9420.RosterEntry
+	{
+		let (_, signatureKey) = try signingKeyPair()
 		return MLS.RFC9420.RosterEntry(
 			leaf: MLS.LeafIndex(value: leaf),
 			presentation: MLS.RFC9420.CredentialPresentation(

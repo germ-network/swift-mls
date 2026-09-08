@@ -90,7 +90,7 @@ struct GroupMutationTests {
 		MLS.SignatureSecretKey, MLS.SignaturePublicKey
 	) {
 		let key = Curve25519.Signing.PrivateKey()
-		let signingKey = MLS.SignatureSecretKey(key.rawRepresentation)
+		let signingKey = try MLS.SignatureSecretKey(key.rawRepresentation)
 		let signatureKey = MLS.SignaturePublicKey(key.publicKey.rawRepresentation)
 
 		let probe = Data("probe".utf8)
