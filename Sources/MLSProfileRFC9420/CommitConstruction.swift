@@ -13,12 +13,12 @@ extension MLS.RFC9420.Group {
 	/// the caller owns randomness, so construction is deterministic and
 	/// testable byte-for-byte; `generate` is the production convenience.
 	public struct CommitRandomness: Sendable {
-		public var firstPathSecret: Data
+		public var firstPathSecret: SecretBytes
 		public var leafEncryptionSecretKey: MLS.HpkeSecretKey
 		public var leafEncryptionPublicKey: MLS.HpkePublicKey
 
 		public init(
-			firstPathSecret: Data, leafEncryptionSecretKey: MLS.HpkeSecretKey,
+			firstPathSecret: SecretBytes, leafEncryptionSecretKey: MLS.HpkeSecretKey,
 			leafEncryptionPublicKey: MLS.HpkePublicKey
 		) {
 			self.firstPathSecret = firstPathSecret
@@ -31,7 +31,7 @@ extension MLS.RFC9420.Group {
 		{
 			let (secretKey, publicKey) = try provider.hpkeGenerateKeyPair()
 			return CommitRandomness(
-				firstPathSecret: provider.randomBytes(provider.hashSize),
+				firstPathSecret: SecretBytes(randomByteCount: provider.hashSize),
 				leafEncryptionSecretKey: secretKey,
 				leafEncryptionPublicKey: publicKey)
 		}
@@ -58,7 +58,7 @@ extension MLS.RFC9420.Group {
 		leafNode: MLS.RFC9420.LeafNode,
 		leafSecretKey: MLS.HpkeSecretKey,
 		extensions: [MLS.RFC9420.Extension] = [],
-		epochSecret: Data
+		epochSecret: SecretBytes
 	) throws -> MLS.RFC9420.Group {
 		let tree = MLS.TreeKEM.RatchetTree(singleLeaf: try leafNode.record)
 		let context = MLS.RFC9420.GroupContext(
@@ -244,7 +244,7 @@ extension MLS.RFC9420.Group {
 		let senderLeaf = try MLS.RFC9420.LeafNode(mlsEncoded: senderRecord.encoded)
 
 		var updatePath: MLS.RFC9420.UpdatePath?
-		let commitSecret: Data
+		let commitSecret: SecretBytes
 		var stage: MLS.TreeKEM.CommitPathStage?
 		var unfilteredNodeIndices: [UInt32] = []
 		// The context the path secrets are encrypted against — kept for the
@@ -331,7 +331,11 @@ extension MLS.RFC9420.Group {
 			commitSecret = derivedCommitSecret
 			stage = pathStage
 		} else {
-			commitSecret = Data(repeating: 0, count: provider.hashSize)
+			// RFC 9420 §12.4.1: a pathless commit's commit_secret is "the
+			// all-zero vector of length KDF.Nh" — not random, but still held
+			// the same way every other commit_secret is.
+			commitSecret = try SecretBytes(
+				bytes: Data(repeating: 0, count: provider.hashSize))
 		}
 
 		// No trailing-blank check on the send side: the tree is serialized
@@ -573,7 +577,7 @@ extension MLS.RFC9420.Group {
 			// The path secret at the LCA of the committer and this new
 			// member — nil for pathless commits, and nil when the LCA is
 			// a filtered position (no secret was derived there).
-			var pathSecret: Data?
+			var pathSecret: SecretBytes?
 			if let stage {
 				let addedPath = Set(
 					MLS.TreeMath.directPath(

@@ -21,7 +21,7 @@ struct SafeExportTests {
 
 	/// A solo group created from a *known* epoch secret, so an independent
 	/// derivation can be compared against it.
-	static func soloGroup(epochSecret: Data) throws -> MLS.RFC9420.Group {
+	static func soloGroup(epochSecret: SecretBytes) throws -> MLS.RFC9420.Group {
 		let founder = try SelfInteropTests.member("solo")
 		return try MLS.RFC9420.Group.create(
 			provider, groupID: provider.randomBytes(provider.hashSize),
@@ -32,7 +32,7 @@ struct SafeExportTests {
 	/// The independent oracle: derive the exporter root from `epochSecret` via
 	/// the public `fromEpochSecret`, build a fresh tree, export the component.
 	static func independentExport(
-		epochSecret: Data, _ componentID: MLS.Extensions.ComponentID
+		epochSecret: SecretBytes, _ componentID: MLS.Extensions.ComponentID
 	) throws -> SecretBytes {
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(provider, epochSecret: epochSecret)
 		var tree = try MLS.Extensions.ExporterTree(
@@ -43,7 +43,7 @@ struct SafeExportTests {
 	@Test("a group's export matches an independent derivation from the same epoch secret")
 	func groupExportMatchesIndependentDerivation() throws {
 		let provider = Self.provider
-		let seed = Data(repeating: 0x5A, count: provider.hashSize)
+		let seed = try SecretBytes(bytes: Data(repeating: 0x5A, count: provider.hashSize))
 		var group = try Self.soloGroup(epochSecret: seed)
 		for id: MLS.Extensions.ComponentID in [
 			0, 1, 0x00FF, 0x5555, 0xAAAA, 0xBEEF, 0x8000, 0xFFFF,
@@ -132,7 +132,7 @@ struct SafeExportTests {
 	@Test("a restored group exports the same as an independent derivation")
 	func restoredExportMatchesIndependentDerivation() throws {
 		let provider = Self.provider
-		let seed = Data(repeating: 0x2B, count: provider.hashSize)
+		let seed = try SecretBytes(bytes: Data(repeating: 0x2B, count: provider.hashSize))
 		let group = try Self.soloGroup(epochSecret: seed)
 		var restored = try MLS.RFC9420.Group.restore(from: try group.archive(), provider)
 		#expect(

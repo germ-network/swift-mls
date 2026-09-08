@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.TreeKEM.RatchetTree {
 	/// A joiner processing a `Welcome`, RFC 9420 §12.4.3.1: "Identify the
@@ -28,7 +29,8 @@ extension MLS.TreeKEM.RatchetTree {
 	/// no chain advance, exactly `beginCommitPath`/`decapCommitPath`'s own
 	/// unfiltered-entries-only semantics.
 	public func installPathSecrets(
-		forLeaf leafIndex: MLS.LeafIndex, from signer: MLS.LeafIndex, pathSecret: Data,
+		forLeaf leafIndex: MLS.LeafIndex, from signer: MLS.LeafIndex,
+		pathSecret: SecretBytes,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> [(node: UInt32, secretKey: MLS.HpkeSecretKey)] {
 		let signerPath = MLS.TreeMath.directPath(

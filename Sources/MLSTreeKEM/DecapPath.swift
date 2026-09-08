@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.TreeKEM {
 	/// What a receiver gets out of decap: the `commit_secret` for the key
@@ -16,7 +17,7 @@ extension MLS.TreeKEM {
 	/// unfiltered direct-path position from the decrypt level up to and
 	/// including the root.
 	public struct DecapResult: Sendable {
-		public let commitSecret: Data
+		public let commitSecret: SecretBytes
 		public let nodeSecretKeys: [(node: UInt32, secretKey: MLS.HpkeSecretKey)]
 	}
 }
@@ -98,10 +99,14 @@ extension MLS.TreeKEM.RatchetTree {
 				actual: pathNodes[decryptLevel].encryptedPathSecrets.count)
 		}
 		let ciphertext = pathNodes[decryptLevel].encryptedPathSecrets[position]
-		var secret = try MLS.decryptWithLabel(
-			provider, privateKey: heldKey, label: "UpdatePathNode",
-			context: groupContext, enc: ciphertext.kemOutput,
-			ciphertext: ciphertext.ciphertext)
+		// Custody ingress: the path secret arrives HPKE-opened from the wire
+		// as plaintext `Data` here, and is moved into zeroizing storage
+		// immediately.
+		var secret = try SecretBytes(
+			bytes: MLS.decryptWithLabel(
+				provider, privateKey: heldKey, label: "UpdatePathNode",
+				context: groupContext, enc: ciphertext.kemOutput,
+				ciphertext: ciphertext.ciphertext))
 
 		var nodeSecretKeys: [(node: UInt32, secretKey: MLS.HpkeSecretKey)] = []
 		for level in decryptLevel..<pathNodes.count {

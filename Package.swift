@@ -96,7 +96,7 @@ let package = Package(
             // schedule is the anchor every evolution mechanism lands on,
             // and TreeKEM is one such mechanism among several a profile
             // might substitute (SlimMLS's non-tree KEM is exactly this).
-            // It produces a commit_secret as plain Data -- MLS.KeySchedule
+            // It produces a commit_secret as `SecretBytes` -- MLS.KeySchedule
             // .advance's `commitSecret` parameter -- and consumes nothing
             // from it.
             //
@@ -106,7 +106,10 @@ let package = Package(
             // so MLS.Slim can reuse the tree unchanged. See
             // Sources/MLSTreeKEM/LeafRecord.swift.
             name: "MLSTreeKEM",
-            dependencies: ["MLSCodec", "MLSCrypto", "MLSTreeMath"]
+            dependencies: [
+                "MLSCodec", "MLSCrypto", "MLSTreeMath",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
         ),
         .target(
             // The wire structures and codecs in this target are
@@ -216,7 +219,10 @@ let package = Package(
             // path-secret chain, and the structural mutation tests that
             // need no wire format at all.
             name: "MLSTreeKEMTests",
-            dependencies: ["MLSTreeKEM", "MLSCrypto", "MLSTreeMath", "MLSVectorSupport"]
+            dependencies: [
+                "MLSTreeKEM", "MLSCrypto", "MLSTreeMath", "MLSVectorSupport",
+                .product(name: "SecretBytes", package: "swift-secret-bytes"),
+            ]
         ),
         .testTarget(
             name: "MLSProfileRFC9420Tests",

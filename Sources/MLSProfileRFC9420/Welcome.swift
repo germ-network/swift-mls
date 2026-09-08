@@ -3,16 +3,19 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSKeySchedule
+import SecretBytes
 
 extension MLS.RFC9420 {
 	/// `struct { opaque joiner_secret<V>; optional<PathSecret> path_secret;
 	/// PreSharedKeyID psks<V>; } GroupSecrets;` — `PathSecret` is `opaque<V>`.
 	public struct GroupSecrets: Sendable, Equatable, MLSCodable {
 		public var joinerSecret: Data
-		public var pathSecret: Data?
+		public var pathSecret: SecretBytes?
 		public var psks: [PreSharedKeyIdentifier]
 
-		public init(joinerSecret: Data, pathSecret: Data?, psks: [PreSharedKeyIdentifier]) {
+		public init(
+			joinerSecret: Data, pathSecret: SecretBytes?, psks: [PreSharedKeyIdentifier]
+		) {
 			self.joinerSecret = joinerSecret
 			self.pathSecret = pathSecret
 			self.psks = psks
@@ -20,13 +23,20 @@ extension MLS.RFC9420 {
 
 		public func encode(to writer: inout MLS.Writer) throws {
 			try writer.writeOpaque(joinerSecret)
-			try writer.encodeOptional(pathSecret.map(OpaqueField.init))
+			// Custody exit: the path secret is copied out of zeroizing storage
+			// only to be written into the wire's opaque<V> field.
+			try writer.encodeOptional(
+				pathSecret.map { OpaqueField($0.withUnsafeBytes { Data($0) }) })
 			try writer.encodeVector(psks)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {
 			joinerSecret = Data(try reader.readOpaque())
-			pathSecret = try reader.decodeOptional(OpaqueField.self)?.data
+			// Custody ingress: the path secret arrives as wire plaintext and is
+			// moved into zeroizing storage immediately.
+			pathSecret = try reader.decodeOptional(OpaqueField.self).map {
+				try SecretBytes(bytes: $0.data)
+			}
 			psks = try reader.decodeVector()
 		}
 	}

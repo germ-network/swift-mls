@@ -80,7 +80,7 @@ enum CombinerTestSupport {
 			leafNode: founder.keyPackage.leafNode,
 			leafSecretKey: founder.leafSecretKey,
 			signingKey: founder.signingKey,
-			epochSecret: provider.randomBytes(provider.hashSize),
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
 			randomness: try .generate(provider),
 			peerKeyPackage: peer.keyPackage)
 	}

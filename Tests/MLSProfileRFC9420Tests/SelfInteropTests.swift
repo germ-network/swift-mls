@@ -4,6 +4,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -69,7 +70,7 @@ struct SelfInteropTests {
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: founder.keyPackage.leafNode,
 			leafSecretKey: founder.leafSecretKey,
-			epochSecret: provider.randomBytes(provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
 	}
 
 	/// The convergence assertion: everything two members' views must agree

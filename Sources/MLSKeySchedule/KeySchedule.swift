@@ -56,7 +56,7 @@ extension MLS {
 		public static func advance(
 			_ provider: any CipherSuiteProvider,
 			initSecret: some ContiguousBytes,
-			commitSecret: Data,
+			commitSecret: SecretBytes,
 			pskSecret: Data,
 			groupContext: Data
 		) throws -> Epoch {

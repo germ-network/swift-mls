@@ -664,7 +664,7 @@ extension MLS.RFC9420.Group {
 		// or take the pathless commit_secret. `newSecretKeysByLeaf` is the per-
 		// membership install the D17 delta carries.
 		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [:]
-		let commitSecret: Data
+		let commitSecret: SecretBytes
 
 		if let path = commit.path {
 			// 9a: §12.4.2's path bullet is two sentences, and both bind:
@@ -758,7 +758,7 @@ extension MLS.RFC9420.Group {
 			// root — so a divergence means the memberships decapped inconsistent
 			// path material and the commit is rejected, never applied.
 			let provisionalContextEncoded = try provisionalContext.mlsEncoded()
-			var agreedCommitSecret: Data?
+			var agreedCommitSecret: SecretBytes?
 			for membership in survivingMemberships {
 				let (keys, derived) = try installKeysForMembership(
 					membership, path: path, provisionalTree: provisionalTree,
@@ -788,7 +788,8 @@ extension MLS.RFC9420.Group {
 			// all-zero commit_secret of the hash's own length, not an
 			// absent one. No decap: each membership only sheds keys for the
 			// nodes this commit blanked, off its own path.
-			commitSecret = Data(repeating: 0, count: provider.hashSize)
+			commitSecret = try SecretBytes(
+				bytes: Data(repeating: 0, count: provider.hashSize))
 			for membership in survivingMemberships {
 				newSecretKeysByLeaf[membership.leafIndex] = prunedSecretKeys(
 					heldSecretKeys: membership.secretKeys,
@@ -1320,7 +1321,7 @@ extension MLS.RFC9420.Group {
 		blankedNodes: Set<UInt32>,
 		addedLeaves: Set<MLS.LeafIndex>,
 		_ provider: any MLS.CipherSuiteProvider
-	) throws -> (keys: [UInt32: MLS.HpkeSecretKey], commitSecret: Data) {
+	) throws -> (keys: [UInt32: MLS.HpkeSecretKey], commitSecret: SecretBytes) {
 		// Stale keys go before the fresh ones arrive (the prune-before-merge order
 		// is this layer's — a stale entry would otherwise overwrite a fresh one at
 		// the same node; §7.5's MUST is the deletion itself, see `prunedSecretKeys`),

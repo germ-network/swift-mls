@@ -18,7 +18,7 @@ extension MLS.Combiner {
 		public var leafNode: MLS.RFC9420.LeafNode
 		public var leafSecretKey: MLS.HpkeSecretKey
 		public var signingKey: MLS.SignatureSecretKey
-		public var epochSecret: Data
+		public var epochSecret: SecretBytes
 		public var randomness: MLS.RFC9420.Group.CommitRandomness
 		public var peerKeyPackage: MLS.RFC9420.KeyPackage
 
@@ -27,7 +27,7 @@ extension MLS.Combiner {
 			leafNode: MLS.RFC9420.LeafNode,
 			leafSecretKey: MLS.HpkeSecretKey,
 			signingKey: MLS.SignatureSecretKey,
-			epochSecret: Data,
+			epochSecret: SecretBytes,
 			randomness: MLS.RFC9420.Group.CommitRandomness,
 			peerKeyPackage: MLS.RFC9420.KeyPackage
 		) {

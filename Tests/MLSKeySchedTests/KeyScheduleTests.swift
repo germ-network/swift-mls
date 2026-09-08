@@ -46,7 +46,7 @@ struct KeyScheduleTests {
 			let result = try MLS.KeySchedule.advance(
 				provider,
 				initSecret: initSecret,
-				commitSecret: epoch.commitSecret.bytes,
+				commitSecret: try SecretBytes(bytes: epoch.commitSecret.bytes),
 				pskSecret: epoch.pskSecret.bytes,
 				groupContext: epoch.groupContext.bytes
 			)

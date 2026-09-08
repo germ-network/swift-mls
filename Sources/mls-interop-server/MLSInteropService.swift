@@ -9,6 +9,7 @@
 	import MLSProfileRFC9420
 	import MLSTreeKEM
 	import MLSTreeMath
+	import SecretBytes
 
 	/// The mlswg `MLSClient` service backed by `MLS.RFC9420`.
 	///
@@ -208,7 +209,7 @@
 			let group = try MLS.RFC9420.Group.create(
 				p, groupID: request.groupID, leafNode: creds.keyPackage.leafNode,
 				leafSecretKey: creds.encryptionKey,
-				epochSecret: p.randomBytes(p.hashSize))
+				epochSecret: SecretBytes(randomByteCount: p.hashSize))
 			let id = allocate()
 			entries[id] = .group(
 				ClientState(group: group, credentials: creds))

@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSTreeKEM
@@ -39,7 +40,8 @@ struct UpdatePathTests {
 		var tree = try MLS.TreeKEM.RatchetTree(nodes: nodes)
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0xAB, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0xAB, count: provider.hashSize))
 		let stage = try tree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
@@ -100,7 +102,8 @@ struct UpdatePathTests {
 				encryptionKey: publicKey, parentHash: nil, encoded: Data([0])))
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0x11, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0x11, count: provider.hashSize))
 		let stage = try tree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
@@ -149,7 +152,8 @@ struct UpdatePathTests {
 		var receiverTree = committerTree
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0xCD, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0xCD, count: provider.hashSize))
 		let stage = try committerTree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
