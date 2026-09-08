@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSTreeKEM
@@ -103,7 +104,8 @@ struct UnmergedLeafInstallTests {
 		// 9420 §7.5 merge step 2. The install below reads only tree state, so
 		// the leaf-signing / `finishCommitPath` ceremony `AddExclusionTests`
 		// performs is deliberately elided.
-		let firstPathSecret = Data(repeating: 0x42, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0x42, count: provider.hashSize))
 		_ = try tree.beginCommitPath(
 			sender: committer, firstPathSecret: firstPathSecret, provider)
 

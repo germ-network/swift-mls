@@ -29,6 +29,13 @@ extension MLS.TreeKEM {
 		/// this is exactly the validation `Commit.path`'s wire types were
 		/// split out to require.
 		case wrongCiphertextCount(pathIndex: Int, expected: Int, actual: Int)
+		/// A decrypted path secret was present but zero-length.
+		/// `SecretBytes` cannot represent an empty secret, so a hostile or
+		/// corrupted `UpdatePathNode` ciphertext is rejected here with a
+		/// clean domain error rather than surfacing the dependency's own
+		/// `SecretBytesError`. This component's wire-decode twin of
+		/// `MLS.RFC9420.GroupError.emptyPathSecret`.
+		case emptyPathSecret
 		/// A derived HPKE public key didn't match the key it was checked
 		/// against -- the wire `UpdatePathNode.encryptionKey` during
 		/// decap, or the tree's own stored key while installing a

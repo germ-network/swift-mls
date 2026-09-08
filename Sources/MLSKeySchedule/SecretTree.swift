@@ -18,10 +18,10 @@ extension MLS.KeySchedule {
 	/// split, the root already is the only leaf.
 	public static func leafSecret(
 		_ provider: any MLS.CipherSuiteProvider,
-		encryptionSecret: Data,
+		encryptionSecret: some ContiguousBytes,
 		leafIndex: UInt32,
 		numLeaves: MLS.LeafCount
-	) throws -> Data {
+	) throws -> SecretBytes {
 		// An empty path (no derivation loop) would otherwise silently hand
 		// back `encryptionSecret` itself — the tree's root secret.
 		guard leafIndex < numLeaves.value else { throw MLS.CryptoError.invalidKey }
@@ -31,10 +31,10 @@ extension MLS.KeySchedule {
 			MLS.TreeMath.directPath(from: leafNode, leafCount: numLeaves).reversed()
 			.map(\.path) + [leafNode]
 
-		var secret = encryptionSecret
+		var secret = try SecretBytes(bytes: encryptionSecret)
 		for i in 1..<nodes.count {
 			let goingLeft = MLS.TreeMath.left(nodes[i - 1]) == nodes[i]
-			secret = try MLS.expandWithLabel(
+			secret = try MLS.expandWithLabelSecret(
 				provider, secret: secret, label: "tree",
 				context: Data((goingLeft ? "left" : "right").utf8),
 				length: provider.hashSize)

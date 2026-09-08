@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSTreeKEM
@@ -35,7 +36,7 @@ struct AddExclusionTests {
 	struct Scenario {
 		var committerTree: MLS.TreeKEM.RatchetTree
 		var pathNodes: [MLS.TreeKEM.PathNode]
-		var commitSecret: Data
+		var commitSecret: SecretBytes
 		var groupContext: Data
 		var sender: MLS.LeafIndex
 		var joiner: MLS.LeafIndex
@@ -47,7 +48,7 @@ struct AddExclusionTests {
 		/// `firstPathSecret` itself, unadvanced -- `CommitPathStage` is
 		/// deliberately opaque (a matched pair with `finishCommitPath`),
 		/// so this is derived by that reasoning rather than read out of it.
-		var lcaPathSecret: Data
+		var lcaPathSecret: SecretBytes
 	}
 
 	static func buildScenario() throws -> Scenario {
@@ -84,7 +85,8 @@ struct AddExclusionTests {
 			try tree.addUnmergedLeaf(joiner, to: step.path)
 		}
 
-		let firstPathSecret = Data(repeating: 0x42, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0x42, count: provider.hashSize))
 		let stage = try tree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 

@@ -4,6 +4,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -225,7 +226,7 @@ struct ConstructedRejectionTests {
 			leafNode: alice.keyPackage.leafNode,
 			leafSecretKey: alice.leafSecretKey,
 			extensions: [requirement],
-			epochSecret: provider.randomBytes(provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
 		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))

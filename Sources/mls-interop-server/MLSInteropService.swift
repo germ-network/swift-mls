@@ -9,6 +9,7 @@
 	import MLSProfileRFC9420
 	import MLSTreeKEM
 	import MLSTreeMath
+	import SecretBytes
 
 	/// The mlswg `MLSClient` service backed by `MLS.RFC9420`.
 	///
@@ -90,31 +91,31 @@
 		/// because RFC 9420's core protocol never needs signature keygen, so
 		/// `CipherSuiteProvider` deliberately exposes none.
 		private static func signingKeyPair(for suite: MLS.CipherSuite)
-			-> (MLS.SignatureSecretKey, MLS.SignaturePublicKey)
+			throws -> (MLS.SignatureSecretKey, MLS.SignaturePublicKey)
 		{
 			switch suite.id {
 			case 2:
 				let k = P256.Signing.PrivateKey()
 				return (
-					.init(k.rawRepresentation),
+					try .init(k.rawRepresentation),
 					.init(k.publicKey.x963Representation)
 				)
 			case 7:
 				let k = P384.Signing.PrivateKey()
 				return (
-					.init(k.rawRepresentation),
+					try .init(k.rawRepresentation),
 					.init(k.publicKey.x963Representation)
 				)
 			case 5:
 				let k = P521.Signing.PrivateKey()
 				return (
-					.init(k.rawRepresentation),
+					try .init(k.rawRepresentation),
 					.init(k.publicKey.x963Representation)
 				)
 			default:  // 1, 3 -- Ed25519
 				let k = Curve25519.Signing.PrivateKey()
 				return (
-					.init(k.rawRepresentation),
+					try .init(k.rawRepresentation),
 					.init(k.publicKey.rawRepresentation)
 				)
 			}
@@ -125,7 +126,7 @@
 			suite: MLS.CipherSuite, identity: Data,
 			_ p: any MLS.CipherSuiteProvider
 		) throws -> Credentials {
-			let (signingKey, signatureKey) = Self.signingKeyPair(for: suite)
+			let (signingKey, signatureKey) = try Self.signingKeyPair(for: suite)
 			let (leafSecret, leafPublic) = try p.hpkeGenerateKeyPair()
 			let (initSecret, initPublic) = try p.hpkeGenerateKeyPair()
 			var leaf = MLS.RFC9420.LeafNode(
@@ -208,7 +209,7 @@
 			let group = try MLS.RFC9420.Group.create(
 				p, groupID: request.groupID, leafNode: creds.keyPackage.leafNode,
 				leafSecretKey: creds.encryptionKey,
-				epochSecret: p.randomBytes(p.hashSize))
+				epochSecret: SecretBytes(randomByteCount: p.hashSize))
 			let id = allocate()
 			entries[id] = .group(
 				ClientState(group: group, credentials: creds))
@@ -235,7 +236,7 @@
 			// exposure is bounded to the harness.
 			r.initPriv = creds.initKey.data.withUnsafeBytes { Data($0) }
 			r.encryptionPriv = creds.encryptionKey.data.withUnsafeBytes { Data($0) }
-			r.signaturePriv = creds.signingKey.data
+			r.signaturePriv = creds.signingKey.data.withUnsafeBytes { Data($0) }
 			return r
 		}
 

@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 import Testing
 
 @testable import MLSTreeKEM
@@ -39,7 +40,8 @@ struct UpdatePathTests {
 		var tree = try MLS.TreeKEM.RatchetTree(nodes: nodes)
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0xAB, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0xAB, count: provider.hashSize))
 		let stage = try tree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
@@ -100,7 +102,8 @@ struct UpdatePathTests {
 				encryptionKey: publicKey, parentHash: nil, encoded: Data([0])))
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0x11, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0x11, count: provider.hashSize))
 		let stage = try tree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
@@ -149,7 +152,8 @@ struct UpdatePathTests {
 		var receiverTree = committerTree
 
 		let sender = MLS.LeafIndex(value: 0)
-		let firstPathSecret = Data(repeating: 0xCD, count: provider.hashSize)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0xCD, count: provider.hashSize))
 		let stage = try committerTree.beginCommitPath(
 			sender: sender, firstPathSecret: firstPathSecret, provider)
 
@@ -167,5 +171,76 @@ struct UpdatePathTests {
 			sender: sender, leaf: newLeaf, pathNodes: pathNodes, provider)
 
 		#expect(receiverTree == committerTree)
+	}
+
+	/// The decap-side counterpart to `MLSProfileRFC9420Tests`'
+	/// `HostileWelcomeTests.joinRejectsEmptyPathSecret`: a receiver
+	/// decrypting a genuine `UpdatePathNode` ciphertext that HPKE-opens to
+	/// zero bytes. `SecretBytes` cannot represent that, so `decapCommitPath`
+	/// must reject it with `emptyPathSecret` rather than trapping in the
+	/// dependency.
+	@Test(
+		"decapCommitPath rejects an UpdatePathNode ciphertext that opens to an empty path secret"
+	)
+	func decapRejectsEmptyPathSecret() throws {
+		let provider = try #require(
+			Self.provider.cipherSuiteProvider(for: .curve25519Aes128))
+
+		var leafKeys:
+			[MLS.LeafIndex: (secret: MLS.HpkeSecretKey, public: MLS.HpkePublicKey)] =
+				[:]
+		var nodes: [MLS.TreeKEM.TreeNode?] = []
+		for i in 0..<2 {
+			let (secretKey, publicKey) = try provider.hpkeGenerateKeyPair()
+			leafKeys[.init(value: UInt32(i))] = (secretKey, publicKey)
+			nodes.append(
+				.leaf(
+					.init(
+						encryptionKey: publicKey, parentHash: nil,
+						encoded: Data([UInt8(i)]))))
+			if i < 1 { nodes.append(nil) }
+		}
+		var tree = try MLS.TreeKEM.RatchetTree(nodes: nodes)
+
+		let sender = MLS.LeafIndex(value: 0)
+		let receiver = MLS.LeafIndex(value: 1)
+		let firstPathSecret = try SecretBytes(
+			bytes: Data(repeating: 0xAB, count: provider.hashSize))
+		let stage = try tree.beginCommitPath(
+			sender: sender, firstPathSecret: firstPathSecret, provider)
+
+		let (_, senderPublicKey) = try provider.hpkeGenerateKeyPair()
+		try tree.setLeaf(
+			sender,
+			to: .init(
+				encryptionKey: senderPublicKey, parentHash: stage.leafParentHash,
+				encoded: Data([0xFF])))
+
+		let groupContext = try tree.treeHash(provider)
+		let (pathNodes, _) = try tree.finishCommitPath(
+			stage, groupContext: groupContext, excluding: [], provider)
+
+		// Tamper: reseal the sole path-node entry (encrypted to the
+		// receiver's own leaf key) so it HPKE-opens to zero bytes -- exactly
+		// what `decapCommitPath`'s new guard exists to catch, not a trap in
+		// `SecretBytes`.
+		let (enc, ciphertext) = try MLS.encryptWithLabel(
+			provider, publicKey: leafKeys[receiver]!.public, label: "UpdatePathNode",
+			context: groupContext, plaintext: Data())
+		let tamperedPathNodes = [
+			MLS.TreeKEM.PathNode(
+				encryptionKey: pathNodes[0].encryptionKey,
+				encryptedPathSecrets: [
+					.init(kemOutput: enc, ciphertext: ciphertext)
+				])
+		]
+
+		let heldKeys = [2 * receiver.value: leafKeys[receiver]!.secret]
+		#expect(throws: MLS.TreeKEM.TreeError.emptyPathSecret) {
+			_ = try tree.decapCommitPath(
+				heldSecretKeys: heldKeys, sender: sender,
+				pathNodes: tamperedPathNodes,
+				groupContext: groupContext, provider)
+		}
 	}
 }

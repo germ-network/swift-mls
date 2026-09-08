@@ -164,23 +164,26 @@ import Testing
 	/// is downstream policy, deliberately absent here).
 	@Test func membershipConsistentIsSetEqualityWithoutCount() throws {
 		let a2 = [
-			Support.rosterEntry("alice", leaf: 0), Support.rosterEntry("bob", leaf: 1),
+			try Support.rosterEntry("alice", leaf: 0),
+			try Support.rosterEntry("bob", leaf: 1),
 		]
 		let b2 = [
-			Support.rosterEntry("bob", leaf: 3), Support.rosterEntry("alice", leaf: 7),
+			try Support.rosterEntry("bob", leaf: 3),
+			try Support.rosterEntry("alice", leaf: 7),
 		]
 		// Equal sets, shuffled order and different leaf indices — consistent.
 		try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a2, b2)
 
 		// Three equal members — passes (no ==2 restriction).
 		let a3 = [
-			Support.rosterEntry("alice", leaf: 0), Support.rosterEntry("bob", leaf: 1),
-			Support.rosterEntry("carol", leaf: 2),
+			try Support.rosterEntry("alice", leaf: 0),
+			try Support.rosterEntry("bob", leaf: 1),
+			try Support.rosterEntry("carol", leaf: 2),
 		]
 		let b3 = [
-			Support.rosterEntry("carol", leaf: 5),
-			Support.rosterEntry("alice", leaf: 6),
-			Support.rosterEntry("bob", leaf: 9),
+			try Support.rosterEntry("carol", leaf: 5),
+			try Support.rosterEntry("alice", leaf: 6),
+			try Support.rosterEntry("bob", leaf: 9),
 		]
 		try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a3, b3)
 	}
@@ -188,16 +191,17 @@ import Testing
 	/// Divergent rosters (different identity sets, or different sizes) are rejected.
 	@Test func membershipInconsistentRejects() throws {
 		let a = [
-			Support.rosterEntry("alice", leaf: 0), Support.rosterEntry("bob", leaf: 1),
+			try Support.rosterEntry("alice", leaf: 0),
+			try Support.rosterEntry("bob", leaf: 1),
 		]
 		let bDifferent = [
-			Support.rosterEntry("alice", leaf: 0),
-			Support.rosterEntry("mallory", leaf: 1),
+			try Support.rosterEntry("alice", leaf: 0),
+			try Support.rosterEntry("mallory", leaf: 1),
 		]
 		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a, bDifferent)
 		}
-		let bShorter = [Support.rosterEntry("alice", leaf: 0)]
+		let bShorter = [try Support.rosterEntry("alice", leaf: 0)]
 		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a, bShorter)
 		}

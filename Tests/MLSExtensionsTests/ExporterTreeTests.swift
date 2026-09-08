@@ -148,7 +148,7 @@ struct ExporterTreeTests {
 			let oracle = try MLS.KeySchedule.leafSecret(
 				cs, encryptionSecret: root, leafIndex: id,
 				numLeaves: MLS.Extensions.ExporterTree.leafCount)
-			#expect(Self.bytes(consumed) == oracle, "component \(id)")
+			#expect(consumed == oracle, "component \(id)")
 		}
 	}
 

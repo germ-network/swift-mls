@@ -46,7 +46,7 @@ struct KeyScheduleTests {
 			let result = try MLS.KeySchedule.advance(
 				provider,
 				initSecret: initSecret,
-				commitSecret: epoch.commitSecret.bytes,
+				commitSecret: try SecretBytes(bytes: epoch.commitSecret.bytes),
 				pskSecret: epoch.pskSecret.bytes,
 				groupContext: epoch.groupContext.bytes
 			)
@@ -89,7 +89,7 @@ struct KeyScheduleTests {
 				label: epoch.exporter.label,
 				context: epoch.exporter.context.bytes, length: epoch.exporter.length
 			)
-			#expect(exported == epoch.exporter.secret.bytes)
+			try expectSecret(exported, equals: epoch.exporter.secret.bytes, "exported")
 
 			initSecret = result.initSecret
 		}

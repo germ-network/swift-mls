@@ -64,8 +64,9 @@ struct MessageProtectionTests {
 		.init(record.signaturePub.bytes)
 	}
 
-	private func signingKey(_ record: MessageProtectionVector) -> MLS.SignatureSecretKey {
-		.init(record.signaturePriv.bytes)
+	private func signingKey(_ record: MessageProtectionVector) throws -> MLS.SignatureSecretKey
+	{
+		try .init(record.signaturePriv.bytes)
 	}
 
 	private func decodeMessage(_ data: Data) throws -> MLS.RFC9420.Message {
@@ -134,7 +135,8 @@ struct MessageProtectionTests {
 		let reprotected = try MLS.RFC9420.protectPublic(
 			provider, content: framedContent, groupContext: context,
 			confirmationTag: confirmationTag,
-			signingKey: signingKey(record), membershipKey: record.membershipKey.bytes)
+			signingKey: try signingKey(record),
+			membershipKey: record.membershipKey.bytes)
 		#expect(
 			try MLS.RFC9420.verifyPublic(
 				provider, message: reprotected, groupContext: context,
@@ -156,7 +158,7 @@ struct MessageProtectionTests {
 		let reprivate = try MLS.RFC9420.protectPrivate(
 			provider, keySource: keySource, content: framedContent,
 			groupContext: context, generation: 0,
-			confirmationTag: confirmationTag, signingKey: signingKey(record),
+			confirmationTag: confirmationTag, signingKey: try signingKey(record),
 			senderDataSecret: record.senderDataSecret.bytes,
 			reuseGuard: MLS.Framing.ReuseGuard(Data([1, 2, 3, 4])), paddingLength: 0)
 		let reopened = try MLS.RFC9420.unprotectPrivate(
@@ -181,7 +183,7 @@ struct MessageProtectionTests {
 			_ = try MLS.RFC9420.protectPublic(
 				provider, content: framedContent, groupContext: context,
 				confirmationTag: nil,
-				signingKey: signingKey(record),
+				signingKey: try signingKey(record),
 				membershipKey: record.membershipKey.bytes)
 		}
 
@@ -198,7 +200,7 @@ struct MessageProtectionTests {
 		let reprivate = try MLS.RFC9420.protectPrivate(
 			provider, keySource: keySource, content: framedContent,
 			groupContext: context, generation: 0,
-			confirmationTag: nil, signingKey: signingKey(record),
+			confirmationTag: nil, signingKey: try signingKey(record),
 			senderDataSecret: record.senderDataSecret.bytes,
 			reuseGuard: MLS.Framing.ReuseGuard(Data([5, 6, 7, 8])), paddingLength: 0)
 		let reopened = try MLS.RFC9420.unprotectPrivate(

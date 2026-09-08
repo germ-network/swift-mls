@@ -3,6 +3,7 @@ import MLSCodec
 import MLSCrypto
 import MLSTreeKEM
 import MLSVectorSupport
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -70,7 +71,9 @@ struct TreeKemTests {
 				]
 				for entry in lp.pathSecrets {
 					let secretKey = try MLS.TreeKEM.nodeKeyPair(
-						provider, pathSecret: entry.pathSecret.bytes
+						provider,
+						pathSecret: SecretBytes(
+							bytes: entry.pathSecret.bytes)
 					).secretKey
 					keys[entry.node] = secretKey
 				}
@@ -94,7 +97,8 @@ struct TreeKemTests {
 					pathNodes: pathNodes,
 					groupContext: groupContext, provider)
 				#expect(
-					result.commitSecret == update.commitSecret.bytes,
+					try result.commitSecret
+						== SecretBytes(bytes: update.commitSecret.bytes),
 					"leaf \(leafIndex.value) decapsulating sender \(sender.value)'s path"
 				)
 			}

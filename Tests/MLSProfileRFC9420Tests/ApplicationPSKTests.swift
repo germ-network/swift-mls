@@ -113,7 +113,7 @@ struct ApplicationPSKTests {
 	@Test("deriveApplicationPSK uses the psk_id/psk labels over the exported secret")
 	func deriveApplicationPSKLabels() throws {
 		let provider = Self.provider
-		let seed = Data(repeating: 0x11, count: provider.hashSize)
+		let seed = try SecretBytes(bytes: Data(repeating: 0x11, count: provider.hashSize))
 		var group = try SafeExportTests.soloGroup(epochSecret: seed)
 		let (pskID, psk) = try group.deriveApplicationPSK(provider, componentID: 0x8000)
 

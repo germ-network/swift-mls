@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSTreeMath
+import SecretBytes
 
 extension MLS.TreeKEM {
 	/// This component's own name for RFC 9420's `UpdatePathNode` — the
@@ -31,12 +32,12 @@ extension MLS.TreeKEM {
 		/// "root path secret" fallback when every direct-path entry was
 		/// filtered (empty copath resolution everywhere), since then the
 		/// chain never advances past it at all.
-		fileprivate let firstPathSecret: Data
+		fileprivate let firstPathSecret: SecretBytes
 		/// One entry per *unfiltered* direct-path position, leaf-to-root
 		/// order — no entry for the committer's own leaf, since its HPKE
 		/// key comes from the profile signing a fresh `LeafNode` (step 3
 		/// of encap), not from this component.
-		fileprivate let unfilteredPathSecrets: [Data]
+		fileprivate let unfilteredPathSecrets: [SecretBytes]
 		/// The committer's own private half of every unfiltered
 		/// direct-path node's fresh key pair — index `i` corresponds to
 		/// `unfilteredPathSecrets[i]` (and, after `finishCommitPath`, to
@@ -61,7 +62,7 @@ extension MLS.TreeKEM {
 		/// `GroupSecrets`, and nothing else can recover it — a node
 		/// secret key is one-way from its path secret, and the derivation
 		/// chain is this component's own.
-		public func pathSecret(atNode node: UInt32) -> Data? {
+		public func pathSecret(atNode node: UInt32) -> SecretBytes? {
 			var unfilteredIndex = 0
 			for (step, isFiltered) in zip(path, filtered) where !isFiltered {
 				if step.path == node {
@@ -92,14 +93,14 @@ extension MLS.TreeKEM.RatchetTree {
 	/// caller owns randomness, matching how `MLSFraming`'s `ReuseGuard`
 	/// takes bytes rather than generating them.
 	public mutating func beginCommitPath(
-		sender: MLS.LeafIndex, firstPathSecret: Data,
+		sender: MLS.LeafIndex, firstPathSecret: SecretBytes,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.TreeKEM.CommitPathStage {
 		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
 
 		var secret = firstPathSecret
-		var pathSecrets: [Data] = []
+		var pathSecrets: [SecretBytes] = []
 		var secretKeys: [MLS.HpkeSecretKey] = []
 
 		for (step, isFiltered) in zip(path, filtered) where !isFiltered {
@@ -140,7 +141,7 @@ extension MLS.TreeKEM.RatchetTree {
 		_ stage: MLS.TreeKEM.CommitPathStage, groupContext: Data,
 		excluding: Set<MLS.LeafIndex>,
 		_ provider: any MLS.CipherSuiteProvider
-	) throws -> (pathNodes: [MLS.TreeKEM.PathNode], commitSecret: Data) {
+	) throws -> (pathNodes: [MLS.TreeKEM.PathNode], commitSecret: SecretBytes) {
 		let excludedNodeIndices = Set(excluding.map { 2 * $0.value })
 		var pathNodes: [MLS.TreeKEM.PathNode] = []
 		var pathIndex = 0
@@ -156,12 +157,17 @@ extension MLS.TreeKEM.RatchetTree {
 			let recipients = resolution(of: step.sibling).filter {
 				!excludedNodeIndices.contains($0)
 			}
+			// Custody exit: the path secret is HPKE-sealed to the wire here,
+			// so it is copied out of zeroizing storage into the plaintext
+			// every recipient's seal needs — once per path secret, not once
+			// per recipient.
+			let plaintext = pathSecret.withUnsafeBytes { Data($0) }
 			let ciphertexts = try recipients.map {
 				recipientNode -> MLS.HpkeCiphertext in
 				let recipientKey = try recipientKey(at: recipientNode)
 				let (enc, ciphertext) = try MLS.encryptWithLabel(
 					provider, publicKey: recipientKey, label: "UpdatePathNode",
-					context: groupContext, plaintext: pathSecret)
+					context: groupContext, plaintext: plaintext)
 				return MLS.HpkeCiphertext(kemOutput: enc, ciphertext: ciphertext)
 			}
 			pathNodes.append(
@@ -175,7 +181,7 @@ extension MLS.TreeKEM.RatchetTree {
 		// the commit secret, not one derivation past it (mirrors mls-rs's
 		// `PathSecretGenerator`: its first `next_secret()` call, wherever
 		// it lands, returns the seed unadvanced).
-		let commitSecret: Data
+		let commitSecret: SecretBytes
 		if let lastUsed = stage.unfilteredPathSecrets.last {
 			commitSecret = try MLS.TreeKEM.commitSecret(
 				provider, rootPathSecret: lastUsed)
