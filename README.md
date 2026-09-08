@@ -72,11 +72,7 @@ say so in its own words, in `spec/`.
 Where [`spec/`](spec/) and the code disagree, the specification is right and the
 code has a bug. Report it as one.
 
-## What this repository does not decide
-
-Group policy. Who may join, when to rotate, how many members a group may hold,
-how messages reach their recipients — none of that is here. This is the protocol
-machinery and the wire format; the decisions belong to whatever is built on top.
+## Out of scope
 
 **This library implements no Authentication Service.** RFC 9420 §5.3.1 defines
 the AS as whichever part of the system validates credentials — that a credential
@@ -88,7 +84,7 @@ into the application.
 
 Because the application is the AS, the library *surfaces* every §5.3.1-relevant
 event rather than judging it. The two-step handshake API (issue #32) is that
-seam: validating a commit returns a pending value whose effects report each
+interface: validating a commit returns a pending value whose effects report each
 credential replacement — old and new credential together — alongside every add,
 update, and removal, before anything is applied; joining from a Welcome returns
 the roster it is about to trust, for the same adjudication. The application
