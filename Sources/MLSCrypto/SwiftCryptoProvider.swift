@@ -558,11 +558,11 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	/// This is a deliberate plaintext exit for a P-521 private key: the
 	/// padded value is a `Data`, and there is no portable way to prepend
 	/// bytes into zeroizing storage at this project's floor. It is the one
-	/// place `HpkeSecretKey.data` (now `SecretBytes`) is copied out — swift
+	/// place a private key's `SecretBytes` is copied out — swift
 	/// -crypto's fixed-width requirement forces it, and the result is
 	/// consumed immediately by the `PrivateKey` init it feeds. `some
-	/// ContiguousBytes` so both an `HpkeSecretKey`'s `SecretBytes` and a
-	/// `SignatureSecretKey`'s `Data` pass through the one helper.
+	/// ContiguousBytes` so both an `HpkeSecretKey`'s and a
+	/// `SignatureSecretKey`'s `SecretBytes` pass through the one helper.
 	private func p521Padded(_ raw: some ContiguousBytes) -> Data {
 		let raw = raw.withUnsafeBytes { Data($0) }
 		return raw.count >= 66 ? raw : Data(repeating: 0, count: 66 - raw.count) + raw

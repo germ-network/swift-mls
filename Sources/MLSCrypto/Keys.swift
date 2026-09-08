@@ -2,8 +2,9 @@ import Foundation
 import MLSCodec
 import SecretBytes
 
-/// Thin `Data` wrappers, distinct per key kind so an HPKE ciphertext can
-/// never be passed where a public key is expected, and vice versa. All are
+/// Thin wrappers, distinct per key kind so an HPKE ciphertext can never be
+/// passed where a public key is expected, and vice versa. Public halves are
+/// `Data`; private halves are zeroizing `SecretBytes`. All are
 /// profile-independent — every profile and every `CryptoProvider` shares
 /// these, so they sit at the top level rather than nested under either.
 extension MLS {

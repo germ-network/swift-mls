@@ -55,7 +55,7 @@ The open questions that exist today are about *coverage*, not specification,
 and live in [`conformance.md`](conformance.md):
 
 - Zeroization: the retained secrets (the key-schedule epoch fan-out, retained
-  resumption PSKs, HPKE private keys, the per-message secret store, and the KDF
+  resumption PSKs, HPKE and signature private keys, the per-message secret store, and the KDF
   derivation seam) are held in zeroizing storage, and so are caller-supplied
   seeds and in-flight TreeKEM material — the epoch-secret seed, the
   commit-path secret chain, and a Welcome's path secret; what remains in

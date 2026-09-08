@@ -59,8 +59,8 @@ the path-secret chain carried through `beginCommitPath`/`finishCommitPath`/
   transient, out of this pass's scope. So do `pskSecret` and the
   `(PreSharedKeyIdentifier) -> Data?` resolver it is built from — a tracked
   follow-up, not yet in zeroizing storage. Application-supplied signature
-  private keys (`SignatureSecretKey`) are also `Data`; the group never retains
-  one, so their custody is the application's.
+  private keys (`SignatureSecretKey`) are held in zeroizing storage, like the
+  HPKE private key; the group never retains one.
 
 A provable, testable companion to this ships alongside it: per-epoch key
 material is dropped as soon as it can no longer be needed, and the
