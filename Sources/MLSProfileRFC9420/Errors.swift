@@ -68,6 +68,11 @@ extension MLS.RFC9420 {
 		/// here rather than deriving garbage that only fails later at the
 		/// confirmation tag.
 		case emptyJoinerSecret
+		/// A Welcome's `GroupSecrets.path_secret` was present but
+		/// zero-length. `SecretBytes` cannot represent an empty secret, so
+		/// this is rejected at wire-decode time with a clean domain error
+		/// rather than surfacing the dependency's own `SecretBytesError`.
+		case emptyPathSecret
 		/// The capability gate for `reinit`/`branch` resumption PSKs: ReInit
 		/// and branching are deferred project-wide, so any resumption PSK with
 		/// usage `reinit` or `branch` is rejected outright rather than silently

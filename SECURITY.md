@@ -30,8 +30,13 @@ consuming secret tree, its ratchet chains, and the skipped-key cache), and the
 KDF Extract/Expand seam that derives them — is held in zeroizing storage
 (swift-crypto's `SymmetricKey`, via the `swift-secret-bytes` package), so a
 derived secret is born and kept in a buffer that scrubs on release rather than
-an ordinary `Data`. This is **defense-in-depth with an unprovable ceiling**,
-not a guarantee:
+an ordinary `Data`. Caller-supplied seeds and in-flight TreeKEM material are
+`SecretBytes` too, not only what is retained: the epoch-secret seed
+(`Group.create`, `Combiner.HalfCreation`), `CommitRandomness.firstPathSecret`,
+the path-secret chain carried through `beginCommitPath`/`finishCommitPath`/
+`decapCommitPath`/`installPathSecrets`, the `commit_secret` fed to
+`KeySchedule.advance`, and a Welcome's `GroupSecrets.path_secret`. This is
+**defense-in-depth with an unprovable ceiling**, not a guarantee:
 
 - It narrows the *same-process* exposure window (a heap over-read, a core
   dump, swap, a hibernation image). It does **not** defend against another
@@ -47,9 +52,15 @@ not a guarantee:
   transients at wire decode/encode are ordinary `Data` — a secret must
   materialize as `Data` to cross those provider/wire seams, so custody ends
   there by construction; several are marked in the source as deliberate custody
-  exits. Application-supplied signature private keys (`SignatureSecretKey`) are
-  also `Data`; the group never retains one, so their custody is the
-  application's.
+  exits. Four such bridges carry path-secret material specifically: the
+  HPKE-seal plaintext in `UpdatePath.swift`, the HPKE-open plaintext in
+  `DecapPath.swift`, and `GroupSecrets`'s wire encode and decode, both in
+  `Welcome.swift`. `GroupSecrets.joinerSecret` itself stays `Data` — a wire
+  transient, out of this pass's scope. So do `pskSecret` and the
+  `(PreSharedKeyIdentifier) -> Data?` resolver it is built from — a tracked
+  follow-up, not yet in zeroizing storage. Application-supplied signature
+  private keys (`SignatureSecretKey`) are also `Data`; the group never retains
+  one, so their custody is the application's.
 
 A provable, testable companion to this ships alongside it: per-epoch key
 material is dropped as soon as it can no longer be needed, and the

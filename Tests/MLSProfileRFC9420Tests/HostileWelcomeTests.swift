@@ -85,6 +85,58 @@ struct HostileWelcomeTests {
 		}
 	}
 
+	/// The path-secret counterpart to `joinRejectsEmptyJoinerSecret`: build a
+	/// real Welcome (Alice adds Bob), then re-seal a `GroupSecrets` payload
+	/// whose `path_secret` is present but zero-length. `GroupSecrets` itself
+	/// cannot represent that shape in Swift -- `SecretBytes` throws on empty
+	/// input -- so the hostile payload is hand-encoded directly at the wire
+	/// level, exactly what a malicious inviter (who controls the plaintext
+	/// sealed into `GroupSecrets`) could produce. `join` must reject it with
+	/// `emptyPathSecret`, thrown at decode, not a trap and not some later
+	/// failure that would mask it.
+	@Test("join rejects a re-sealed Welcome carrying a present-but-empty path secret")
+	func joinRejectsEmptyPathSecret() throws {
+		let provider = Self.provider
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+
+		var groupA = try SelfInteropTests.createGroup(alice)
+		let add = try groupA.commit(
+			provider,
+			proposals: [.proposal(.add(bob.keyPackage))],
+			signingKey: alice.signingKey,
+			randomness: .generate(provider))
+		let welcome = try #require(add.welcome)
+
+		// Hand-encode the `GroupSecrets` wire bytes with a present (presence
+		// byte 1) but zero-length `path_secret`.
+		var writer = MLS.Writer()
+		try writer.writeOpaque(Data(repeating: 1, count: provider.hashSize))
+		writer.writeUInt8(1)
+		try writer.writeOpaque(Data())
+		try writer.encodeVector([MLS.RFC9420.PreSharedKeyIdentifier]())
+
+		let (enc, ciphertext) = try MLS.encryptWithLabel(
+			provider, publicKey: bob.keyPackage.initKey, label: "Welcome",
+			context: welcome.encryptedGroupInfo,
+			plaintext: writer.data)
+		let hostile = MLS.RFC9420.Welcome(
+			cipherSuite: welcome.cipherSuite,
+			secrets: [
+				.init(
+					newMember: try bob.keyPackage.reference(provider),
+					encryptedGroupSecrets: .init(
+						kemOutput: enc, ciphertext: ciphertext))
+			],
+			encryptedGroupInfo: welcome.encryptedGroupInfo)
+
+		#expect(throws: MLS.RFC9420.GroupError.emptyPathSecret) {
+			_ = try MLS.RFC9420.Group.join(
+				provider, welcome: hostile,
+				credentials: bob.joinCredentials, psk: { _ in nil })
+		}
+	}
+
 	/// The external-PSK custody boundary, end to end: a resolver that hands
 	/// back a zero-length PSK for a referenced id is malformed input, mapped
 	/// to `emptyPreSharedKey` at `resolvePsk` rather than folded into the key

@@ -100,13 +100,17 @@ extension MLS.TreeKEM.RatchetTree {
 		}
 		let ciphertext = pathNodes[decryptLevel].encryptedPathSecrets[position]
 		// Custody ingress: the path secret arrives HPKE-opened from the wire
-		// as plaintext `Data` here, and is moved into zeroizing storage
+		// as plaintext `Data` here — the terminal transient the HPKE-open
+		// boundary produces — and is copied into zeroizing storage
 		// immediately.
-		var secret = try SecretBytes(
-			bytes: MLS.decryptWithLabel(
-				provider, privateKey: heldKey, label: "UpdatePathNode",
-				context: groupContext, enc: ciphertext.kemOutput,
-				ciphertext: ciphertext.ciphertext))
+		let decrypted = try MLS.decryptWithLabel(
+			provider, privateKey: heldKey, label: "UpdatePathNode",
+			context: groupContext, enc: ciphertext.kemOutput,
+			ciphertext: ciphertext.ciphertext)
+		guard !decrypted.isEmpty else {
+			throw MLS.TreeKEM.TreeError.emptyPathSecret
+		}
+		var secret = try SecretBytes(bytes: decrypted)
 
 		var nodeSecretKeys: [(node: UInt32, secretKey: MLS.HpkeSecretKey)] = []
 		for level in decryptLevel..<pathNodes.count {

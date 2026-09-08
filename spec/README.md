@@ -56,10 +56,12 @@ and live in [`conformance.md`](conformance.md):
 
 - Zeroization: the retained secrets (the key-schedule epoch fan-out, retained
   resumption PSKs, HPKE private keys, the per-message secret store, and the KDF
-  derivation seam) are held in zeroizing storage; what remains in `Data` is the
-  terminal AEAD/HPKE/wire material a secret must become to cross those seams. No
-  test vector can detect either state. See `SECURITY.md` for the ceiling this
-  buys and what it does not.
+  derivation seam) are held in zeroizing storage, and so are caller-supplied
+  seeds and in-flight TreeKEM material — the epoch-secret seed, the
+  commit-path secret chain, and a Welcome's path secret; what remains in
+  `Data` is the terminal AEAD/HPKE/wire material a secret must become to cross
+  those seams. No test vector can detect either state. See `SECURITY.md` for
+  the ceiling this buys and what it does not.
 - Rejection-path coverage bounded by the absence of a committer's signing key
   in any official vector.
 

@@ -9,6 +9,9 @@ extension MLS.RFC9420 {
 	/// `struct { opaque joiner_secret<V>; optional<PathSecret> path_secret;
 	/// PreSharedKeyID psks<V>; } GroupSecrets;` — `PathSecret` is `opaque<V>`.
 	public struct GroupSecrets: Sendable, Equatable, MLSCodable {
+		/// Stays `Data` deliberately — a wire transient consumed once at
+		/// join, out of this change's zeroization scope; `pathSecret`
+		/// below is the field that is `SecretBytes`.
 		public var joinerSecret: Data
 		public var pathSecret: SecretBytes?
 		public var psks: [PreSharedKeyIdentifier]
@@ -32,10 +35,14 @@ extension MLS.RFC9420 {
 
 		public init(from reader: inout MLS.Reader) throws {
 			joinerSecret = Data(try reader.readOpaque())
-			// Custody ingress: the path secret arrives as wire plaintext and is
-			// moved into zeroizing storage immediately.
+			// Custody ingress: the path secret arrives as wire plaintext —
+			// the terminal `Data` transient this decode produces — and is
+			// copied into zeroizing storage immediately.
 			pathSecret = try reader.decodeOptional(OpaqueField.self).map {
-				try SecretBytes(bytes: $0.data)
+				guard !$0.data.isEmpty else {
+					throw MLS.RFC9420.GroupError.emptyPathSecret
+				}
+				return try SecretBytes(bytes: $0.data)
 			}
 			psks = try reader.decodeVector()
 		}

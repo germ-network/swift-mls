@@ -157,16 +157,17 @@ extension MLS.TreeKEM.RatchetTree {
 			let recipients = resolution(of: step.sibling).filter {
 				!excludedNodeIndices.contains($0)
 			}
+			// Custody exit: the path secret is HPKE-sealed to the wire here,
+			// so it is copied out of zeroizing storage into the plaintext
+			// every recipient's seal needs — once per path secret, not once
+			// per recipient.
+			let plaintext = pathSecret.withUnsafeBytes { Data($0) }
 			let ciphertexts = try recipients.map {
 				recipientNode -> MLS.HpkeCiphertext in
 				let recipientKey = try recipientKey(at: recipientNode)
-				// Custody exit: the path secret is HPKE-sealed to the wire here,
-				// so it is copied out of zeroizing storage into the plaintext
-				// this one call needs.
 				let (enc, ciphertext) = try MLS.encryptWithLabel(
 					provider, publicKey: recipientKey, label: "UpdatePathNode",
-					context: groupContext,
-					plaintext: pathSecret.withUnsafeBytes { Data($0) })
+					context: groupContext, plaintext: plaintext)
 				return MLS.HpkeCiphertext(kemOutput: enc, ciphertext: ciphertext)
 			}
 			pathNodes.append(
