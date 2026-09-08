@@ -95,6 +95,12 @@ the roster it is about to trust, for the same adjudication. The application
 inspects the report, applies its identity policy, and only then adopts the
 pending — or declines it.
 
+Inspecting a pending changes nothing: the state-advancing Transition an
+application persists atomically arises only when it adopts the pending, never at
+validation. That persistence contract is normative in
+[`spec/snapshot.md`](spec/snapshot.md) §6 — the two-step API is what lets the
+spec state it structurally, and it is where future profiles and callers honor it.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

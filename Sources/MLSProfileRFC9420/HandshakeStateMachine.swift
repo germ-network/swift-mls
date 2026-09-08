@@ -173,7 +173,15 @@ extension MLS.RFC9420 {
 		case appDataUpdate(MLS.Extensions.AppDataUpdate)
 	}
 
-	/// The effects of one commit, in application order.
+	/// The effects of one commit, in application order — the **complete** record
+	/// of which proposals it resolved. There is deliberately no per-proposal
+	/// `proposalResolved` effect (issue #32): the events already convey *which*
+	/// proposals resolved — each Add/Remove/Update/credential change/AppDataUpdate
+	/// is one — and *by whom* — the committer via `epochAdvanced(committer:)`, and
+	/// each by-reference proposal's own framer via `VerifiedProposal.sender`,
+	/// surfaced at proposal receipt. A per-proposal echo would be a second source
+	/// of truth for the same facts, so it is not emitted; future work adding an
+	/// effect keeps this the sole record.
 	public struct CommitEffects: Sendable, Equatable {
 		public let events: [CommitEffect]
 		init(_ events: [CommitEffect]) { self.events = events }
