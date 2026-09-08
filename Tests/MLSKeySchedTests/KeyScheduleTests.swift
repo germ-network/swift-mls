@@ -47,7 +47,7 @@ struct KeyScheduleTests {
 				provider,
 				initSecret: initSecret,
 				commitSecret: try SecretBytes(bytes: epoch.commitSecret.bytes),
-				pskSecret: epoch.pskSecret.bytes,
+				pskSecret: try SecretBytes(bytes: epoch.pskSecret.bytes),
 				groupContext: epoch.groupContext.bytes
 			)
 

@@ -55,12 +55,14 @@ the path-secret chain carried through `beginCommitPath`/`finishCommitPath`/
   exits. Four such bridges carry path-secret material specifically: the
   HPKE-seal plaintext in `UpdatePath.swift`, the HPKE-open plaintext in
   `DecapPath.swift`, and `GroupSecrets`'s wire encode and decode, both in
-  `Welcome.swift`. `GroupSecrets.joinerSecret` itself stays `Data` — a wire
-  transient, out of this pass's scope. So do `pskSecret` and the
-  `(PreSharedKeyIdentifier) -> Data?` resolver it is built from — a tracked
-  follow-up, not yet in zeroizing storage. Application-supplied signature
-  private keys (`SignatureSecretKey`) are held in zeroizing storage, like the
-  HPKE private key; the group never retains one.
+  `Welcome.swift`. `GroupSecrets`'s encode and decode carry `joiner_secret`
+  too, the same custody bridge. `pskSecret` (the §8.4 fold), the
+  `(PreSharedKeyIdentifier) -> SecretBytes?` resolver it is built from, and
+  `joiner_secret` are all now held in zeroizing storage — the resolver
+  returns `SecretBytes?` directly, so no PSK secret or joiner secret passes
+  through `Data` except at the wire boundaries above. Application-supplied
+  signature private keys (`SignatureSecretKey`) are held in zeroizing
+  storage, like the HPKE private key; the group never retains one.
 
 A provable, testable companion to this ships alongside it: per-epoch key
 material is dropped as soon as it can no longer be needed, and the

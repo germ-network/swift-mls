@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSFraming
+import SecretBytes
 
 @testable import MLSProfileRFC9420
 
@@ -39,7 +40,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> CommitOutput {
 		try commit(
 			committerIndex: try soleMembershipIndex(), provider,
@@ -63,7 +64,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> CommitOutput {
 		try commit(
 			committerIndex: try membershipIndex(of: leaf), provider,
@@ -89,7 +90,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> CommitOutput {
 		let transition = try committing(
 			committerIndex: committerIndex, provider, proposals: proposalList,
@@ -129,7 +130,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws {
 		let pending = try validating(
 			provider, commit: message, proposals: proposals, psk: psk)
@@ -143,7 +144,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.Group {
 		var advanced = self
 		try advanced.process(
@@ -161,7 +162,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		privateCommit message: MLS.RFC9420.PrivateMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws {
 		let transition = try validating(
 			provider, commit: message, proposals: proposals, psk: psk)
@@ -182,7 +183,7 @@ extension MLS.RFC9420.Group {
 		welcome: MLS.RFC9420.Welcome,
 		credentials: JoinerCredentials,
 		externalTree: [MLS.RFC9420.Node?]? = nil,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.Group {
 		try joining(
 			provider, welcome: welcome, credentials: credentials,

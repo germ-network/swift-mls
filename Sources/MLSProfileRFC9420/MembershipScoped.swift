@@ -3,6 +3,7 @@ import MLSCodec
 import MLSCrypto
 import MLSFraming
 import MLSTreeMath
+import SecretBytes
 
 // D18 — the membership-scoped entry points. Operations that depend on *which*
 // local client acts (committing, sending, proposing a self-Update) name the
@@ -58,7 +59,7 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		try committing(
 			committerIndex: try membershipIndex(of: leaf), provider,

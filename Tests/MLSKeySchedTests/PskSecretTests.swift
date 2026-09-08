@@ -35,6 +35,6 @@ struct PskSecretTests {
 				)
 			}
 		)
-		#expect(secret == record.pskSecret.bytes)
+		#expect(secret == (try SecretBytes(bytes: record.pskSecret.bytes)))
 	}
 }

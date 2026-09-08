@@ -58,10 +58,12 @@ extension MLS.RFC9420 {
 		/// S13: a `GroupSecrets`/commit PSK proposal named an id the
 		/// caller's `psk` closure couldn't resolve.
 		case unresolvedPreSharedKey
-		/// A resolved PSK (external or resumption) was zero-length. Distinct
-		/// from `unresolvedPreSharedKey` (the resolver returned nothing): an
-		/// empty-but-present PSK is malformed input, so it is rejected at the
-		/// custody boundary rather than folded into the key schedule.
+		/// Unused by the library today: an empty-but-present PSK is now
+		/// unrepresentable — both the resumption path and the external `psk`
+		/// resolver hand back `SecretBytes`, whose initializer throws
+		/// `SecretBytesError.emptySecret` before an empty PSK can reach the
+		/// key schedule. Kept as a non-breaking enum case; distinct from
+		/// `unresolvedPreSharedKey` (the resolver returned nothing).
 		case emptyPreSharedKey
 		/// A Welcome's decrypted `joiner_secret` was zero-length — it cannot
 		/// key the schedule, so a hostile or malformed Welcome is rejected

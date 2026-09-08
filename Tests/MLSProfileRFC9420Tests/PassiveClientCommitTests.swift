@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSVectorSupport
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -43,9 +44,11 @@ enum PassiveClientRunner {
 			uniqueKeysWithValues: record.externalPsks.map {
 				($0.pskID.bytes, $0.psk.bytes)
 			})
-		let resolveExternal: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+		let resolveExternal: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = {
+			id in
 			guard case .external(let pskID, _) = id else { return nil }
-			return externalPsks[pskID]
+			guard let bytes = externalPsks[pskID] else { return nil }
+			return try SecretBytes(bytes: bytes)
 		}
 
 		var externalTree: [MLS.RFC9420.Node?]?

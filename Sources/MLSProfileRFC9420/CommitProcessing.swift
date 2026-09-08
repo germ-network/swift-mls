@@ -281,7 +281,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.PendingCommit {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
@@ -338,7 +338,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PrivateMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.CommitValidation> {
 		// Refuse a non-commit before decrypting (content type is in the cleartext
 		// header), so this throws with nothing consumed.
@@ -440,7 +440,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit verified: consuming MLS.RFC9420.VerifiedCommit,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.PendingCommit {
 		let message = verified.content
 		// slice 4a: the delta now installs path keys per local membership — each
@@ -1234,19 +1234,14 @@ extension MLS.RFC9420.Group {
 	/// support, which this project defers project-wide.
 	/// Returns `SecretBytes?` so a resumption PSK never leaves zeroizing
 	/// storage: the resumption branch hands back the retained `SecretBytes`
-	/// directly, and the external branch takes custody of the app-supplied
-	/// `Data` on the way in. The external callback keeps its `Data?` shape —
-	/// the adopter API is unchanged.
+	/// directly, and the external branch's callback is `SecretBytes?` too,
+	/// so no PSK secret passes through `Data` on the way in.
 	func resolvePsk(
 		_ id: MLS.RFC9420.PreSharedKeyIdentifier,
-		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		_ external: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> SecretBytes? {
 		guard case .resumption(let resumption, _) = id else {
-			guard let bytes = try external(id) else { return nil }
-			guard !bytes.isEmpty else {
-				throw MLS.RFC9420.GroupError.emptyPreSharedKey
-			}
-			return try SecretBytes(bytes: bytes)
+			return try external(id)
 		}
 		guard resumption.usage == .application else {
 			throw MLS.RFC9420.GroupError.unsupportedResumptionUsage

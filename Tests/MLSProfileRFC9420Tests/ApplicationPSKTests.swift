@@ -180,8 +180,8 @@ struct ApplicationPSKTests {
 		// Resolve by the wire id (its `applicationStorageID`) rather than blindly,
 		// so the closure proves it received the `.application` id it expects.
 		let storageID = try #require(try appID.applicationStorageID())
-		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
-			(try id.applicationStorageID()) == storageID ? Self.bytes(pskA) : nil
+		let resolveA: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { id in
+			(try id.applicationStorageID()) == storageID ? pskA : nil
 		}
 		let commit = try groupA.commit(
 			provider, proposals: [.proposal(.preSharedKey(appID))],
@@ -189,8 +189,8 @@ struct ApplicationPSKTests {
 		)
 		groupA = commit.group
 
-		let resolveB: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
-			(try id.applicationStorageID()) == storageID ? Self.bytes(pskB) : nil
+		let resolveB: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { id in
+			(try id.applicationStorageID()) == storageID ? pskB : nil
 		}
 		try SelfInteropTests.processPrivate(
 			&groupB, provider, commit.commit, psk: resolveB)

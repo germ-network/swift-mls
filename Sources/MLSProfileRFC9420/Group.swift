@@ -290,7 +290,7 @@ extension MLS.RFC9420.Group {
 		welcome: MLS.RFC9420.Welcome,
 		credentials: JoinerCredentials,
 		externalTree: [MLS.RFC9420.Node?]? = nil,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
 	) throws -> MLS.RFC9420.PendingJoin {
 		// bullet 1
 		guard welcome.cipherSuite == credentials.keyPackage.cipherSuite else {
@@ -336,22 +336,14 @@ extension MLS.RFC9420.Group {
 			guard let secret = try psk(id) else {
 				throw MLS.RFC9420.GroupError.unresolvedPreSharedKey
 			}
-			// Take custody of the app-supplied PSK bytes on the way in.
-			// An empty one is malformed, not merely unresolved.
-			guard !secret.isEmpty else {
-				throw MLS.RFC9420.GroupError.emptyPreSharedKey
-			}
-			let held = try SecretBytes(bytes: secret)
-			resolvedPsks.append((try id.mlsEncoded(), held))
+			resolvedPsks.append((try id.mlsEncoded(), secret))
 		}
 		let pskSecret = try MLS.KeySchedule.pskSecret(provider, psks: resolvedPsks)
 
 		// bullet 4. A zero-length joiner_secret cannot key the schedule --
-		// reject a hostile/malformed Welcome here rather than deriving
-		// garbage that only fails later at the confirmation tag.
-		guard !groupSecrets.joinerSecret.isEmpty else {
-			throw MLS.RFC9420.GroupError.emptyJoinerSecret
-		}
+		// GroupSecrets decode already rejects it (SecretBytes non-empty by
+		// construction), so a hostile/malformed Welcome fails before it
+		// reaches this point.
 		let (groupInfo, epoch) = try welcome.decryptGroupInfo(
 			provider, joinerSecret: groupSecrets.joinerSecret, pskSecret: pskSecret)
 

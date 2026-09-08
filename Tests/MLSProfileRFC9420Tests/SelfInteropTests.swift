@@ -103,7 +103,7 @@ struct SelfInteropTests {
 		_ group: inout MLS.RFC9420.Group, _ provider: any MLS.CipherSuiteProvider,
 		_ commit: MLS.RFC9420.Message,
 		proposals: MLS.RFC9420.ProposalStore = .init(),
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in nil },
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
 		_ location: SourceLocation = #_sourceLocation
 	) throws {
 		guard case .privateMessage(let privateCommit) = commit else {
@@ -164,9 +164,9 @@ struct SelfInteropTests {
 		// Epoch 3 -> 4: an external PSK, committed pathlessly by Bob.
 		let pskID = Data("interop-psk".utf8)
 		let pskSecret = provider.randomBytes(provider.hashSize)
-		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { id in
+		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { id in
 			guard case .external(let id, _) = id, id == pskID else { return nil }
-			return pskSecret
+			return try SecretBytes(bytes: pskSecret)
 		}
 		let psk = try groupB.commit(
 			provider,
@@ -235,8 +235,8 @@ struct SelfInteropTests {
 		// Alice goes pathless (an external PSK is the cheapest carrier).
 		let pskID = Data("p".utf8)
 		let secret = provider.randomBytes(provider.hashSize)
-		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> Data? = { _ in
-			secret
+		let resolve: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in
+			try SecretBytes(bytes: secret)
 		}
 		let pathless = try groupA.commit(
 			provider,
