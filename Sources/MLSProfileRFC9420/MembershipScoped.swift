@@ -59,7 +59,8 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		try committing(
 			committerIndex: try membershipIndex(of: leaf), provider,
@@ -67,7 +68,7 @@ extension MLS.RFC9420.Group {
 			sign: sign, randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
-			psk: psk)
+			psk: psk, newIdentity: newIdentity)
 	}
 
 	/// `signingKey:` sugar over the closure form above (ADR 0002).
@@ -83,7 +84,8 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		try committing(
 			as: leaf, provider, proposals: proposalList, proposalStore: proposalStore,
@@ -92,7 +94,7 @@ extension MLS.RFC9420.Group {
 			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
-			psk: psk)
+			psk: psk, newIdentity: newIdentity)
 	}
 
 	/// Propose a self-Update for the local membership occupying `leaf` (D18) —
@@ -102,11 +104,12 @@ extension MLS.RFC9420.Group {
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		sign: MLS.RFC9420.SigningClosure,
-		framing: HandshakeFraming = .privateMessage
+		framing: HandshakeFraming = .privateMessage,
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposeUpdate(
 			membershipIndex: try membershipIndex(of: leaf), provider,
-			sign: sign, framing: framing)
+			sign: sign, framing: framing, newIdentity: newIdentity)
 	}
 
 	/// `signingKey:` sugar over the closure form above (ADR 0002).
@@ -114,11 +117,12 @@ extension MLS.RFC9420.Group {
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		signingKey: MLS.SignatureSecretKey,
-		framing: HandshakeFraming = .privateMessage
+		framing: HandshakeFraming = .privateMessage,
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposingUpdate(
 			as: leaf, provider, sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			framing: framing)
+			framing: framing, newIdentity: newIdentity)
 	}
 
 	/// Send an application message as the local membership occupying `leaf` (D18),

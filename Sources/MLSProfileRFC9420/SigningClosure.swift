@@ -9,8 +9,19 @@ extension MLS.RFC9420 {
 	/// this today, so long as it does not do so exhaustively.
 	@nonexhaustive
 	public enum SignatureRole: Sendable, Equatable, Hashable {
+		/// The leaf's own signature (§7.3): the key the leaf's own
+		/// `signature_key` field names — the NEW key when this operation is a
+		/// rotation (`NewSigningIdentity`), else the signer's current one.
 		case leafNode
+		/// The enclosing `FramedContent`'s signature: the sender's CURRENT,
+		/// pre-commit key. Receivers verify it against the sender's leaf as it
+		/// stood BEFORE this operation, so this role never routes to a
+		/// rotation's new key — not even on the commit that installs it.
 		case framedContent
+		/// `GroupInfo`'s signature: the key of the POST-commit tree's `signer`
+		/// leaf. `Group.joining` verifies it against the tree AFTER the
+		/// commit applies, so a rotating commit's Welcome MUST sign this with
+		/// the NEW key or every join from it fails signature verification.
 		case groupInfo
 	}
 
@@ -37,11 +48,40 @@ extension MLS.RFC9420 {
 	public typealias SigningClosure = (SigningRequest) throws -> Data
 
 	/// The `signingKey:` sugar's adapter: a stateless key, wrapped as the
-	/// trivial closure that ignores `role` and signs with that one key.
-	static func signingClosure(
+	/// trivial closure that ignores `role` and signs with that one key. A
+	/// signature-KEY rotation is incoherent under this adapter — the leaf
+	/// would declare `NewSigningIdentity.signatureKey` but every role signs
+	/// with the same OLD key — so `committing`/`proposeUpdate`'s self-verify
+	/// guard is what catches a rotation mistakenly attempted through
+	/// `signingKey:` (a credential-only rotation, same key, still works: see
+	/// `NewSigningIdentity`).
+	public static func signingClosure(
 		_ provider: any MLS.CipherSuiteProvider, _ key: MLS.SignatureSecretKey
 	) -> SigningClosure {
 		{ request in try provider.sign(privateKey: key, content: request.signContent) }
+	}
+
+	/// A rotation's signing ring: `.framedContent` stays on `current` (the
+	/// enclosing commit/proposal keeps verifying against the sender's
+	/// pre-commit leaf); `.leafNode` and `.groupInfo` route to `new` (the
+	/// identity `NewSigningIdentity` installs). Library-side so the `switch`
+	/// over `SignatureRole` is exhaustive here — a future role added to that
+	/// `@nonexhaustive` enum is a compile error in this file, never a silent
+	/// fallback to `current`. The ring is for the rotation operation only:
+	/// once the commit is affirmed, the app retires it and goes back to the
+	/// one-key adapter above with `current := new`.
+	public static func signingClosure(
+		_ provider: any MLS.CipherSuiteProvider, current: MLS.SignatureSecretKey,
+		new: MLS.SignatureSecretKey
+	) -> SigningClosure {
+		{ request in
+			switch request.role {
+			case .framedContent:
+				try provider.sign(privateKey: current, content: request.signContent)
+			case .leafNode, .groupInfo:
+				try provider.sign(privateKey: new, content: request.signContent)
+			}
+		}
 	}
 
 	/// The sink helper every authoring site funnels through: encode

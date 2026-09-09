@@ -1,5 +1,5 @@
 ---
-status: accepted; implementation pending
+status: accepted; seam + rotation shipped
 ---
 
 # Identity custody and the signing seam
@@ -115,13 +115,18 @@ closure's implementation differs. The demonstration test
 (`Tests/MLSProfileRFC9420Tests/IdentityCustodianTests.swift`) exercises the
 pre-persisted-ticket form against the real API.
 
-**Rotation stays single-actor via a key ring.** A commit that rotates the
-committer's signature key signs its own leaf and GroupInfo with the *new* key
-while the enclosing FramedContent stays on the *old* key (the credential-rotation
-authoring API). Because that is two identities' state in one operation, the actor
-is the *principal* holding a ring (`current`, `next`) and the `role` selects the
-ring slot; rotation is intra-actor and retires `current` after the commit is
-affirmed.
+**Rotation stays single-actor via a key ring.** A commit or Update proposal that
+rotates the signer's credential/signature key (`MLS.RFC9420.NewSigningIdentity`)
+signs its own leaf and GroupInfo with the *new* key while the enclosing
+FramedContent stays on the *old* key — `MLS.RFC9420.signingClosure(_:current:new:)`
+is the shipped ring: `.framedContent → current`, `.leafNode`/`.groupInfo → new`.
+Because that is two identities' state in one operation, the actor is the
+*principal* holding the ring and the `role` selects the slot; rotation is
+intra-actor and the app retires `current` (sets `current := new`) after the
+commit is affirmed. A credential-only rotation (same key, new credential) needs
+no ring at all and stays coherent on the single-key `signingKey:` sugar; a
+signature-KEY rotation attempted through that sugar is caught by the same
+self-verify guard that checks every authored leaf against its own declared key.
 
 ## The two-store ordering contract
 
