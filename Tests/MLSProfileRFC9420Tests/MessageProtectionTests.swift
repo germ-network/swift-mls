@@ -124,8 +124,10 @@ struct MessageProtectionTests {
 		#expect(decodedPub.content.content == content)
 
 		// Re-protecting the raw content produces a PublicMessage that
-		// verifies with the same keys (not byte-identical: ECDSA
-		// signatures are randomized for 3 of our 5 suites).
+		// verifies with the same keys (not byte-identical: signatures are
+		// randomized under CryptoKit on every suite here, though
+		// swift-crypto's BoringSSL backend on Linux signs Ed25519
+		// deterministically).
 		let framedContent = MLS.RFC9420.FramedContent(
 			groupID: record.groupID.bytes, epoch: record.epoch,
 			sender: .member(Self.senderIndex),

@@ -127,6 +127,15 @@ extension MLS {
 			provider, secret: secret, label: label, context: context, length: length)
 	}
 
+	/// `Encode(SignContent)` alone, with no provider — the pure encoding half
+	/// of `signWithLabel`/`verifyWithLabel`, exposed so a caller that must
+	/// hand the to-be-signed bytes to something other than a
+	/// `CipherSuiteProvider` (a signer closure routed through `role`, not a
+	/// raw key) can still produce the exact bytes `SignWithLabel` signs.
+	public static func signContentBytes(label: String, content: Data) throws -> Data {
+		try SignContent(label: label, content: content).mlsEncoded()
+	}
+
 	/// `SignWithLabel(SignatureKey, Label, Content) = Sign(SignatureKey,
 	/// Encode(SignContent))`.
 	public static func signWithLabel(
@@ -135,7 +144,7 @@ extension MLS {
 	) throws -> Data {
 		try provider.sign(
 			privateKey: privateKey,
-			content: try SignContent(label: label, content: content).mlsEncoded())
+			content: try signContentBytes(label: label, content: content))
 	}
 
 	/// `VerifyWithLabel(VerificationKey, Label, Content, Signature) =
@@ -146,7 +155,7 @@ extension MLS {
 	) throws -> Bool {
 		try provider.verify(
 			publicKey: publicKey,
-			content: try SignContent(label: label, content: content).mlsEncoded(),
+			content: try signContentBytes(label: label, content: content),
 			signature: signature
 		)
 	}

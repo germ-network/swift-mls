@@ -114,7 +114,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
@@ -127,7 +127,31 @@ extension MLS.RFC9420.Group {
 		try committing(
 			committerIndex: try soleMembershipIndex(), provider,
 			proposals: proposalList, proposalStore: proposalStore,
-			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			sign: sign, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
+			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
+	}
+
+	/// `signingKey:` sugar over the closure form above — a stateless key
+	/// adapted to `MLS.RFC9420.SigningClosure` (ADR 0002).
+	public func committing(
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
+		try committing(
+			provider, proposals: proposalList, proposalStore: proposalStore,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			randomness: randomness,
+			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
 			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
 	}
@@ -143,7 +167,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
@@ -284,18 +308,19 @@ extension MLS.RFC9420.Group {
 				source: .commit(parentHash: pathStage.leafParentHash),
 				extensions: senderLeaf.extensions,
 				signature: Data())
-			newLeaf.signature = try MLS.signWithLabel(
-				provider, privateKey: signingKey, label: "LeafNodeTBS",
+			newLeaf.signature = try MLS.RFC9420.sign(
+				sign, role: .leafNode, label: "LeafNodeTBS",
 				content: try newLeaf.toBeSigned(
 					placement: .inGroup(
 						groupID: context.groupID, leafIndex: committerLeaf))
 			)
 			// The new leaf carries the committer's OWN signature key, so verifying
-			// the signature we just produced fails loudly when `signingKey` is not
-			// the committer's private key (at N > 1, `as:` and `signingKey:` are two
-			// independent parameters that must agree — a mismatch would otherwise
-			// fork the composite locally against a commit every remote member
-			// rejects). Harmless at N = 1, where there is only one key to pass.
+			// the signature we just produced fails loudly when `sign` does not
+			// answer with the committer's own signature (at N > 1, `as:` and
+			// `sign:`/`signingKey:` are independent parameters that must agree — a
+			// mismatch would otherwise fork the composite locally against a commit
+			// every remote member rejects). Harmless at N = 1, where there is only
+			// one key to pass.
 			try newLeaf.verifySignature(
 				provider,
 				placement: .inGroup(
@@ -353,11 +378,9 @@ extension MLS.RFC9420.Group {
 		let (signedContent, signature) =
 			try framing == .publicMessage
 			? MLS.RFC9420.signPublic(
-				provider, content: framed, groupContext: context,
-				signingKey: signingKey)
+				provider, content: framed, groupContext: context, sign: sign)
 			: MLS.RFC9420.signPrivate(
-				provider, content: framed, groupContext: context,
-				signingKey: signingKey)
+				provider, content: framed, groupContext: context, sign: sign)
 		var signatureWriter = MLS.Writer()
 		try signatureWriter.encode(signature)
 		let confirmedTranscriptHash = try MLS.Framing.confirmedTranscriptHash(
@@ -474,7 +497,7 @@ extension MLS.RFC9420.Group {
 			provider, committer: committerLeaf, resolved: resolved, applied: applied,
 			stage: stage, newTree: newTree, newContext: newContext,
 			confirmationTag: confirmationTag, newEpoch: newEpoch,
-			pskIDs: pskIDs, signingKey: signingKey,
+			pskIDs: pskIDs, sign: sign,
 			includeRatchetTreeExtension: includeRatchetTreeExtension)
 
 		// Seal in the OLD epoch. A private commit spends the committer's own next
@@ -530,7 +553,7 @@ extension MLS.RFC9420.Group {
 		confirmationTag: MLS.ConfirmationTag,
 		newEpoch: MLS.KeySchedule.Epoch,
 		pskIDs: [MLS.RFC9420.PreSharedKeyIdentifier],
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		includeRatchetTreeExtension: Bool
 	) throws -> MLS.RFC9420.Welcome? {
 		guard !applied.addedLeaves.isEmpty else { return nil }
@@ -546,8 +569,8 @@ extension MLS.RFC9420.Group {
 			groupContext: newContext, extensions: groupInfoExtensions,
 			confirmationTag: confirmationTag, signer: committer,
 			signature: Data())
-		groupInfo.signature = try MLS.signWithLabel(
-			provider, privateKey: signingKey, label: "GroupInfoTBS",
+		groupInfo.signature = try MLS.RFC9420.sign(
+			sign, role: .groupInfo, label: "GroupInfoTBS",
 			content: try groupInfo.toBeSigned())
 
 		let (welcomeKey, welcomeNonce) = try MLS.KeySchedule.welcomeKeyNonce(

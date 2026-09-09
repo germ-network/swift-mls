@@ -71,14 +71,32 @@ then the confirmation tag; the GroupInfo signature needs the welcome secret. A
 post-hoc "report the new signer state" seam cannot carry a consumption the library
 never performed, and the library must never see the advanced state.
 
-**Decision.** The authoring APIs take a **synchronous, non-escaping signer
-closure** in place of the raw key, at the one crypto choke point all signing
-already funnels through (`MLS.signWithLabel` → `CipherSuiteProvider.sign`):
+**Decision.** The authoring APIs take a **synchronous signer closure**,
+`MLS.RFC9420.SigningClosure`, alongside the raw key, at the one crypto choke
+point all signing already funnels through (`MLS.signWithLabel` →
+`CipherSuiteProvider.sign`, via the pure `MLS.signContentBytes` encoder the
+closure form and `signWithLabel` now share):
 
 ```
-sign: (SigningRequest) throws -> Signature      //  SigningRequest = { label, tbs, role }
+public typealias SigningClosure = (SigningRequest) throws -> Data
+public struct SigningRequest { public let role: SignatureRole; public let signContent: Data }
 role ∈ { leafNode, framedContent, groupInfo }
 ```
+
+`signContent` is already `MLS.signContentBytes(label:content:)`'s output — the
+full `Encode(SignContent)` bytes `CipherSuiteProvider.sign` expects — not a
+separate `(label, tbs)` pair the closure would have to re-assemble itself.
+Named `SigningClosure`, not `Signer`: `GroupInfo.signer: LeafIndex` is a wire
+field set in the very function that gains this parameter, and the
+near-identical name would be a standing trap.
+
+**`signingKey:` stays first-class, as sugar over the closure — not replaced
+by it.** Every authoring entry point keeps its existing `signingKey:
+MLS.SignatureSecretKey` overload; it adapts the key into a trivial closure
+(`{ req in try provider.sign(privateKey: key, content: req.signContent) }`)
+and calls straight into the `sign:` form. A stateless caller never touches
+`SigningRequest`; a stateful custodian is the only caller who needs the
+`sign:` overload at all.
 
 The application calls the operation from inside its identity actor, so the closure
 runs on the identity's executor with the consumable in reach; the library names no
@@ -172,9 +190,17 @@ gains from keeping the key out of the group.
 ## Consequences
 
 - The authoring entry points (`committing` and its `as:` form, `proposeUpdate` /
-  `proposingUpdate`, `protect`) and the public `sign*`/`protect*` statics take a
-  synchronous signer closure with a `role`, in place of `signingKey:`. A stateless
-  key becomes a trivial closure; existing callers adapt at the call site.
+  `proposingUpdate`, `protect`) and the public `sign*`/`protect*` statics gain a
+  `sign: MLS.RFC9420.SigningClosure` overload alongside `signingKey:`, which
+  stays as sugar over it (a stateless key becomes a trivial closure via the
+  same adapter every `signingKey:` call site now shares). Existing callers are
+  unaffected; only a caller that needs the closure's `role` reaches for the
+  new overload.
+- `SignatureRole` is `@nonexhaustive` (SE-0487), so the library can add a role
+  later without an exhaustive external `switch` breaking — which raises this
+  project's minimum Swift to 6.2.3 (from 6.1) in CI; `Package.swift`'s
+  `swift-tools-version` is unaffected, `@nonexhaustive` being a compiler
+  feature rather than a tools-version-gated one.
 - A signature is no longer a `SecretBytes`-only affair: a one-time signer's ticket
   (a leaf key + index + auth path) is a distinct shape, so a signer/ticket type is
   introduced rather than widening `SignatureSecretKey`.

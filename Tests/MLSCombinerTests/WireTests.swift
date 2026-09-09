@@ -161,7 +161,8 @@ import Testing
 		return try group.protectContent(
 			membershipIndex: 0, Support.provider,
 			content: .application(Data("hi".utf8)),
-			authenticatedData: Data(), signingKey: signingKey,
+			authenticatedData: Data(),
+			sign: MLS.RFC9420.signingClosure(Support.provider, signingKey),
 			reuseGuard: MLS.Framing.ReuseGuard(Support.provider.randomBytes(4)),
 			paddingLength: 0
 		).message

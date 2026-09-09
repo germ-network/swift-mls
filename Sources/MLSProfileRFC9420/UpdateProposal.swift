@@ -23,7 +23,7 @@ extension MLS.RFC9420.Group {
 	/// is also the eventual committer needs nothing else to reference it by.
 	public mutating func proposeUpdate(
 		_ provider: any MLS.CipherSuiteProvider,
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		// Proposes for the sole local membership; `ambiguousMembership` at N ≠ 1,
@@ -31,13 +31,24 @@ extension MLS.RFC9420.Group {
 		// and the seal are both per-membership now, so this is N > 1-correct).
 		try proposeUpdate(
 			membershipIndex: try soleMembershipIndex(), provider,
-			signingKey: signingKey, framing: framing)
+			sign: sign, framing: framing)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public mutating func proposeUpdate(
+		_ provider: any MLS.CipherSuiteProvider,
+		signingKey: MLS.SignatureSecretKey,
+		framing: HandshakeFraming = .privateMessage
+	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
+		try proposeUpdate(
+			provider, sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			framing: framing)
 	}
 
 	mutating func proposeUpdate(
 		membershipIndex: Int,
 		_ provider: any MLS.CipherSuiteProvider,
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		let leaf = memberships[membershipIndex].leafIndex
@@ -51,8 +62,8 @@ extension MLS.RFC9420.Group {
 		updateLeaf.encryptionKey = newPublicKey
 		updateLeaf.source = .update
 		updateLeaf.signature = Data()
-		updateLeaf.signature = try MLS.signWithLabel(
-			provider, privateKey: signingKey, label: "LeafNodeTBS",
+		updateLeaf.signature = try MLS.RFC9420.sign(
+			sign, role: .leafNode, label: "LeafNodeTBS",
 			content: try updateLeaf.toBeSigned(
 				placement: .inGroup(
 					groupID: context.groupID, leafIndex: leaf)))
@@ -67,8 +78,7 @@ extension MLS.RFC9420.Group {
 		switch framing {
 		case .publicMessage:
 			let (signedContent, signature) = try MLS.RFC9420.signPublic(
-				provider, content: framed, groupContext: context,
-				signingKey: signingKey)
+				provider, content: framed, groupContext: context, sign: sign)
 			let sealed = try MLS.RFC9420.sealPublic(
 				provider, content: framed, signedContent: signedContent,
 				signature: signature, confirmationTag: nil,
@@ -85,7 +95,7 @@ extension MLS.RFC9420.Group {
 			let (sealed, signature) = try protectContent(
 				membershipIndex: membershipIndex, provider,
 				content: .proposal(.update(updateLeaf)),
-				authenticatedData: Data(), signingKey: signingKey,
+				authenticatedData: Data(), sign: sign,
 				reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 				paddingLength: 0)
 			message = .privateMessage(sealed)
