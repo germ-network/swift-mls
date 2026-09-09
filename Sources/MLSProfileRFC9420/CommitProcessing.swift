@@ -738,6 +738,26 @@ extension MLS.RFC9420.Group {
 				sender: senderIndex, leaf: try path.leafNode.record,
 				pathNodes: path.nodes.map(\.pathNode), provider)
 
+			// §12.4.2/§7.6: "Verify that the following fields are unique among the
+			// members of the group: signature_key" -- the whole-tree half of that
+			// rule for the path leaf specifically. `applyProposals`'s own sweep
+			// (Add/Update leaves, run before this block) cannot see this leaf, since
+			// it does not exist in the tree until `applyUpdatePath` just above
+			// merged it -- so a committer rotating into a signature key some other
+			// leaf already holds would otherwise be accepted here and only wedge a
+			// future join's `validateLeaves`. Checked on the POST-merge tree
+			// deliberately: a commit that removes the colliding member in the same
+			// commit leaves no collision. Harmless on the non-rotating path, where
+			// the committer's kept key was already unique.
+			for (leafIndex, record) in provisionalTree.nonBlankLeaves()
+			where leafIndex != senderIndex {
+				let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+				guard leaf.signatureKey != path.leafNode.signatureKey else {
+					throw MLS.RFC9420.GroupError.duplicateSignatureKey(
+						leaf: leafIndex)
+				}
+			}
+
 			// 9e: the provisional GroupContext the sender encrypted path
 			// secrets against -- new epoch, POST-merge tree hash, OLD
 			// confirmed transcript hash, new extensions. Every one of those

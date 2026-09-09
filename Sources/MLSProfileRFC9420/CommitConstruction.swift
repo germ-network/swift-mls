@@ -121,7 +121,8 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		// The bare entry commits as the sole membership; `committing(as:)` names it.
 		try committing(
@@ -129,11 +130,16 @@ extension MLS.RFC9420.Group {
 			proposals: proposalList, proposalStore: proposalStore,
 			sign: sign, randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
-			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
+			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
+			newIdentity: newIdentity)
 	}
 
 	/// `signingKey:` sugar over the closure form above — a stateless key
-	/// adapted to `MLS.RFC9420.SigningClosure` (ADR 0002).
+	/// adapted to `MLS.RFC9420.SigningClosure` (ADR 0002). `newIdentity:` is
+	/// legitimate here too for a credential-only rotation (M1, RFC 9420
+	/// §5.3.1: same signature key, new credential) — the self-verify guard
+	/// below is what rejects a signature-KEY rotation attempted through this
+	/// single-key sugar.
 	public func committing(
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
@@ -145,7 +151,8 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		try committing(
 			provider, proposals: proposalList, proposalStore: proposalStore,
@@ -153,7 +160,8 @@ extension MLS.RFC9420.Group {
 			randomness: randomness,
 			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
-			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk)
+			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
+			newIdentity: newIdentity)
 	}
 
 	/// The committer-scoped core (slice 4a). `committerIndex` names the local
@@ -174,7 +182,8 @@ extension MLS.RFC9420.Group {
 		framing: HandshakeFraming = .privateMessage,
 		reuseGuard: MLS.Framing.ReuseGuard? = nil,
 		paddingLength: Int = 0,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil },
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
 		let committerLeaf = memberships[committerIndex].leafIndex
 		// Resolve, exactly as the receive side does.
@@ -230,9 +239,14 @@ extension MLS.RFC9420.Group {
 		}
 
 		// §12.4's sender-side rule is the same predicate the receive side
-		// checks — the same expression, deliberately.
+		// checks — the same expression, deliberately. A committer credential/
+		// signature-key rotation is carried in the UpdatePath leaf, so it
+		// forces a path too: without this, `committing(newIdentity:,
+		// includePath: false)` would silently drop the rotation the caller
+		// asked for.
 		let pathRequired =
-			resolved.isEmpty
+			newIdentity != nil
+			|| resolved.isEmpty
 			|| resolved.contains { stored in
 				switch stored.proposal {
 				case .update, .remove, .externalInit, .groupContextExtensions:
@@ -275,8 +289,10 @@ extension MLS.RFC9420.Group {
 		// other local memberships to decap the same path (slice 4a).
 		var provisionalContextEncoded: Data?
 		// The committer's own path-leaf refresh, for the credential effects (slice
-		// 4b). The new leaf keeps the committer's credential and signature key, so
-		// this is always an `updated` (encryption-key-only) effect; nil if pathless.
+		// 4b). The new leaf usually keeps the committer's credential and signature
+		// key (an `updated`, encryption-key-only effect); `newIdentity` carries a
+		// caller-authored rotation instead, which reports as `credentialReplaced`.
+		// nil if pathless.
 		var committerChange:
 			(
 				leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
@@ -302,25 +318,74 @@ extension MLS.RFC9420.Group {
 
 			var newLeaf = MLS.RFC9420.LeafNode(
 				encryptionKey: randomness.leafEncryptionPublicKey,
-				signatureKey: senderLeaf.signatureKey,
-				credential: senderLeaf.credential,
+				signatureKey: newIdentity?.signatureKey ?? senderLeaf.signatureKey,
+				credential: newIdentity?.credential ?? senderLeaf.credential,
 				capabilities: senderLeaf.capabilities,
 				source: .commit(parentHash: pathStage.leafParentHash),
 				extensions: senderLeaf.extensions,
 				signature: Data())
+
+			if let newIdentity {
+				// S1: policy + the uniqueness sweep run BEFORE signing, so a
+				// rejected rotation never requests a `.leafNode` signature — a
+				// ticket a stateful signer (ADR 0002) may not be able to
+				// un-consume. The receive side validates every path leaf the
+				// same way (`validatePolicy(.commitUpdatePath, ...)` in
+				// `CommitProcessing.swift`); an honest caller authoring a
+				// rotation gets the same scrutiny before it ever leaves.
+				var pathMemberCapabilities: [MLS.RFC9420.Capabilities] = []
+				var pathMemberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
+				for (index, record) in newTree.nonBlankLeaves()
+				where index != committerLeaf {
+					let leaf = try MLS.RFC9420.LeafNode(
+						mlsEncoded: record.encoded)
+					pathMemberCapabilities.append(leaf.capabilities)
+					pathMemberCredentialTypes.insert(
+						leaf.credential.credentialType)
+				}
+				try newLeaf.validatePolicy(
+					.commitUpdatePath,
+					groupRequirements:
+						try provisionalExtensions
+						.requiredCapabilities(),
+					memberCredentialTypes: pathMemberCredentialTypes,
+					memberCapabilities: pathMemberCapabilities)
+				// §12.4.2/§7.6 whole-tree signature-key uniqueness, from the
+				// authoring side: `applyProposals`'s own sweep (Add/Update leaves)
+				// already ran and cannot see this leaf, which doesn't exist until
+				// `setLeaf` below -- so this is the send-side twin of the
+				// receive-side sweep in `CommitProcessing.swift`, catching a
+				// rotation into a key some other post-commit leaf already holds
+				// before an honest caller ever wedges its own group.
+				for (index, record) in newTree.nonBlankLeaves()
+				where index != committerLeaf {
+					let leaf = try MLS.RFC9420.LeafNode(
+						mlsEncoded: record.encoded)
+					guard leaf.signatureKey != newIdentity.signatureKey else {
+						throw MLS.RFC9420.GroupError.duplicateSignatureKey(
+							leaf: index)
+					}
+				}
+			}
+
 			newLeaf.signature = try MLS.RFC9420.sign(
 				sign, role: .leafNode, label: "LeafNodeTBS",
 				content: try newLeaf.toBeSigned(
 					placement: .inGroup(
 						groupID: context.groupID, leafIndex: committerLeaf))
 			)
-			// The new leaf carries the committer's OWN signature key, so verifying
-			// the signature we just produced fails loudly when `sign` does not
-			// answer with the committer's own signature (at N > 1, `as:` and
-			// `sign:`/`signingKey:` are independent parameters that must agree — a
-			// mismatch would otherwise fork the composite locally against a commit
-			// every remote member rejects). Harmless at N = 1, where there is only
-			// one key to pass.
+			// The new leaf carries its own `signatureKey` (`newIdentity`'s when
+			// rotating, else the committer's current one), so verifying the
+			// signature we just produced fails loudly when `sign` does not answer
+			// `.leafNode` with that exact key -- a `signingKey:`/`as:` mismatch on
+			// the no-rotation path (at N > 1 the two are independent parameters
+			// that must agree); a `newIdentity` whose declared `signatureKey`
+			// disagrees with the closure's actual `.leafNode` reply; or M1's
+			// enforcement point: a signature-KEY rotation attempted through the
+			// single-key `signingKey:` sugar, which answers every role with the
+			// SAME old key while the leaf declares the new one. Either way,
+			// catching it here keeps the composite from forking itself locally
+			// against a commit every remote member would reject.
 			try newLeaf.verifySignature(
 				provider,
 				placement: .inGroup(
@@ -381,6 +446,19 @@ extension MLS.RFC9420.Group {
 				provider, content: framed, groupContext: context, sign: sign)
 			: MLS.RFC9420.signPrivate(
 				provider, content: framed, groupContext: context, sign: sign)
+		// SC-1: self-verify the commit envelope's signature against the
+		// COMMITTER'S CURRENT leaf key -- the pre-commit sender leaf a receiver
+		// checks `.framedContent` against (never the `newIdentity` leaf a
+		// rotating path installs: that key is what `.leafNode`/`.groupInfo`
+		// route to, and `.framedContent` never does). Catches a closure that
+		// mis-routes `.framedContent` before ever sealing a commit every peer
+		// would reject.
+		guard
+			try MLS.verifyWithLabel(
+				provider, publicKey: senderLeaf.signatureKey,
+				label: "FramedContentTBS",
+				content: signedContent.toBeSigned(), signature: signature.data)
+		else { throw MLS.CryptoError.signatureVerificationFailed }
 		var signatureWriter = MLS.Writer()
 		try signatureWriter.encode(signature)
 		let confirmedTranscriptHash = try MLS.Framing.confirmedTranscriptHash(
@@ -542,6 +620,14 @@ extension MLS.RFC9420.Group {
 	/// GroupInfo as context (the splice-prevention binding `joining`'s
 	/// decrypt side documents), which is why the GroupInfo must be sealed
 	/// first.
+	///
+	/// GroupInfo signs via `sign`'s `.groupInfo` role, which — rotation or
+	/// not — must answer with the POST-commit `newTree` leaf at `committer`'s
+	/// own key: a joiner verifies GroupInfo against exactly that leaf
+	/// (`Group.joining`), so on a rotating commit this MUST be the NEW key or
+	/// every join from this Welcome fails signature verification. The
+	/// self-verify right after signing (M2) catches a closure that
+	/// mis-routes `.groupInfo` here before it ever wedges a joiner.
 	private func makeWelcome(
 		_ provider: any MLS.CipherSuiteProvider,
 		committer: MLS.LeafIndex,
@@ -572,6 +658,17 @@ extension MLS.RFC9420.Group {
 		groupInfo.signature = try MLS.RFC9420.sign(
 			sign, role: .groupInfo, label: "GroupInfoTBS",
 			content: try groupInfo.toBeSigned())
+		// M2: verify against the POST-commit tree's own leaf for `signer` --
+		// the same key `Group.joining` checks GroupInfo against -- so a
+		// closure that mis-routes `.groupInfo` to the wrong key is caught at
+		// authoring, not left to wedge every joiner using this Welcome.
+		guard let committerRecord = newTree.leaf(at: committer) else {
+			throw MLS.RFC9420.GroupError.ownLeafNotFound
+		}
+		let committerLeafNode = try MLS.RFC9420.LeafNode(
+			mlsEncoded: committerRecord.encoded)
+		try groupInfo.verifySignature(
+			provider, signatureKey: committerLeafNode.signatureKey)
 
 		let (welcomeKey, welcomeNonce) = try MLS.KeySchedule.welcomeKeyNonce(
 			provider, welcomeSecret: newEpoch.welcomeSecret)
