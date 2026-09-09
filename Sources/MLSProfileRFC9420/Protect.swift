@@ -42,29 +42,43 @@ extension MLS.RFC9420 {
 	public static func protectPublic(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
 		groupContext: GroupContext,
-		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
+		confirmationTag: MLS.ConfirmationTag?, sign: SigningClosure,
 		membershipKey: some ContiguousBytes
 	) throws -> PublicMessage {
 		let (signedContent, signature) = try signPublic(
-			provider, content: content, groupContext: groupContext,
-			signingKey: signingKey)
+			provider, content: content, groupContext: groupContext, sign: sign)
 		return try sealPublic(
 			provider, content: content, signedContent: signedContent,
 			signature: signature, confirmationTag: confirmationTag,
 			membershipKey: membershipKey)
 	}
 
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public static func protectPublic(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		groupContext: GroupContext,
+		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
+		membershipKey: some ContiguousBytes
+	) throws -> PublicMessage {
+		try protectPublic(
+			provider, content: content, groupContext: groupContext,
+			confirmationTag: confirmationTag,
+			sign: signingClosure(provider, signingKey), membershipKey: membershipKey)
+	}
+
 	/// The signing half of `protectPublic`, split out because commit
 	/// construction cannot use the whole: RFC 9420 §12.4.1's confirmation
 	/// tag is computed over a transcript hash that *includes this
 	/// signature*, so the tag does not exist yet when the signature is
-	/// made — and signing twice is not an option, since ECDSA signatures
-	/// are randomized on three of the five supported suites. A committer
-	/// signs here, chains the transcript, derives the new epoch and its
-	/// tag, then seals with `sealPublic`.
+	/// made — and signing twice is not an option, since signatures are
+	/// randomized under CryptoKit (ECDSA on every curve, and Ed25519 via
+	/// CryptoKit's own hedged signing) even though swift-crypto's
+	/// BoringSSL backend on Linux signs Ed25519 deterministically (RFC
+	/// 8032). A committer signs here, chains the transcript, derives the
+	/// new epoch and its tag, then seals with `sealPublic`.
 	public static func signPublic(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
-		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+		groupContext: GroupContext, sign: SigningClosure
 	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
 		if case .application = content.content {
 			throw MLS.FramingError.applicationContentMustNotBePublic
@@ -76,10 +90,20 @@ extension MLS.RFC9420 {
 			encodedGroupContext: content.sender.bindsGroupContext
 				? try groupContext.mlsEncoded() : nil)
 		let signature = MLS.Signature(
-			try MLS.signWithLabel(
-				provider, privateKey: signingKey, label: "FramedContentTBS",
+			try MLS.RFC9420.sign(
+				sign, role: .framedContent, label: "FramedContentTBS",
 				content: try signedContent.toBeSigned()))
 		return (signedContent, signature)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public static func signPublic(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
+		try signPublic(
+			provider, content: content, groupContext: groupContext,
+			sign: signingClosure(provider, signingKey))
 	}
 
 	/// The tagging half — see `signPublic`.
@@ -157,7 +181,7 @@ extension MLS.RFC9420 {
 	/// exact signature that seals the proposal, not a second one.
 	public static func signPrivate(
 		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
-		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+		groupContext: GroupContext, sign: SigningClosure
 	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
 		let signedContent = MLS.Framing.SignedContent(
 			protocolVersion: .mls10, wireFormat: .privateMessage,
@@ -165,10 +189,20 @@ extension MLS.RFC9420 {
 			encodedGroupContext: content.sender.bindsGroupContext
 				? try groupContext.mlsEncoded() : nil)
 		let signature = MLS.Signature(
-			try MLS.signWithLabel(
-				provider, privateKey: signingKey, label: "FramedContentTBS",
+			try MLS.RFC9420.sign(
+				sign, role: .framedContent, label: "FramedContentTBS",
 				content: try signedContent.toBeSigned()))
 		return (signedContent, signature)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public static func signPrivate(
+		_ provider: any MLS.CipherSuiteProvider, content: FramedContent,
+		groupContext: GroupContext, signingKey: MLS.SignatureSecretKey
+	) throws -> (signedContent: MLS.Framing.SignedContent, signature: MLS.Signature) {
+		try signPrivate(
+			provider, content: content, groupContext: groupContext,
+			sign: signingClosure(provider, signingKey))
 	}
 
 	/// The encryption half for private framing — see `signPrivate`. Takes an
@@ -231,18 +265,34 @@ extension MLS.RFC9420 {
 	public static func protectPrivate(
 		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
 		content: FramedContent, groupContext: GroupContext, generation: UInt32,
-		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
+		confirmationTag: MLS.ConfirmationTag?, sign: SigningClosure,
 		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> PrivateMessage {
 		let (_, signature) = try signPrivate(
-			provider, content: content, groupContext: groupContext,
-			signingKey: signingKey)
+			provider, content: content, groupContext: groupContext, sign: sign)
 		return try sealPrivate(
 			provider, keySource: keySource, content: content, signature: signature,
 			generation: generation, confirmationTag: confirmationTag,
 			senderDataSecret: senderDataSecret, reuseGuard: reuseGuard,
 			paddingLength: paddingLength)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public static func protectPrivate(
+		_ provider: any MLS.CipherSuiteProvider, keySource: MessageKeySource,
+		content: FramedContent, groupContext: GroupContext, generation: UInt32,
+		confirmationTag: MLS.ConfirmationTag?, signingKey: MLS.SignatureSecretKey,
+		senderDataSecret: some ContiguousBytes, reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int
+	) throws -> PrivateMessage {
+		try protectPrivate(
+			provider, keySource: keySource, content: content,
+			groupContext: groupContext,
+			generation: generation, confirmationTag: confirmationTag,
+			sign: signingClosure(provider, signingKey),
+			senderDataSecret: senderDataSecret,
+			reuseGuard: reuseGuard, paddingLength: paddingLength)
 	}
 
 	/// The sender-data half of unprotecting, on its own. RFC 9420 §9.2's

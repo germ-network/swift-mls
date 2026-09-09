@@ -94,7 +94,8 @@ extension MLS.RFC9420.Group {
 	) throws -> CommitOutput {
 		let transition = try committing(
 			committerIndex: committerIndex, provider, proposals: proposalList,
-			proposalStore: proposalStore, signingKey: signingKey,
+			proposalStore: proposalStore,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
 			randomness: randomness, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,

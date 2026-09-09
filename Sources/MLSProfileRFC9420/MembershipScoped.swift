@@ -52,7 +52,7 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
@@ -64,7 +64,32 @@ extension MLS.RFC9420.Group {
 		try committing(
 			committerIndex: try membershipIndex(of: leaf), provider,
 			proposals: proposalList, proposalStore: proposalStore,
-			signingKey: signingKey, randomness: randomness, includePath: includePath,
+			sign: sign, randomness: randomness, includePath: includePath,
+			includeRatchetTreeExtension: includeRatchetTreeExtension,
+			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
+			psk: psk)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public func committing(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		proposals proposalList: [MLS.RFC9420.ProposalOrRef],
+		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
+		signingKey: MLS.SignatureSecretKey,
+		randomness: CommitRandomness,
+		includePath: Bool = true,
+		includeRatchetTreeExtension: Bool = true,
+		framing: HandshakeFraming = .privateMessage,
+		reuseGuard: MLS.Framing.ReuseGuard? = nil,
+		paddingLength: Int = 0,
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = { _ in nil }
+	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.SentCommit> {
+		try committing(
+			as: leaf, provider, proposals: proposalList, proposalStore: proposalStore,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			randomness: randomness,
+			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
 			psk: psk)
@@ -76,12 +101,24 @@ extension MLS.RFC9420.Group {
 	public mutating func proposingUpdate(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposeUpdate(
 			membershipIndex: try membershipIndex(of: leaf), provider,
-			signingKey: signingKey, framing: framing)
+			sign: sign, framing: framing)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public mutating func proposingUpdate(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		signingKey: MLS.SignatureSecretKey,
+		framing: HandshakeFraming = .privateMessage
+	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
+		try proposingUpdate(
+			as: leaf, provider, sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			framing: framing)
 	}
 
 	/// Send an application message as the local membership occupying `leaf` (D18),
@@ -92,19 +129,53 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		applicationData: Data,
 		authenticatedData: Data = Data(),
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int = 0
 	) throws -> MLS.RFC9420.PrivateMessage {
 		try protectContent(
 			membershipIndex: try membershipIndex(of: leaf), provider,
 			content: .application(applicationData),
-			authenticatedData: authenticatedData, signingKey: signingKey,
+			authenticatedData: authenticatedData, sign: sign,
 			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength)
 		).message
 	}
 
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public mutating func protect(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		signingKey: MLS.SignatureSecretKey,
+		reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protect(
+			as: leaf, provider, applicationData: applicationData,
+			authenticatedData: authenticatedData,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			reuseGuard: reuseGuard,
+			paddingLength: max(0, paddingLength))
+	}
+
 	/// Convenience: fresh reuse-guard bytes from the provider.
+	public mutating func protect(
+		as leaf: MLS.LeafIndex,
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		sign: MLS.RFC9420.SigningClosure,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protect(
+			as: leaf, provider, applicationData: applicationData,
+			authenticatedData: authenticatedData, sign: sign,
+			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+			paddingLength: paddingLength)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
 	public mutating func protect(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
@@ -115,7 +186,8 @@ extension MLS.RFC9420.Group {
 	) throws -> MLS.RFC9420.PrivateMessage {
 		try protect(
 			as: leaf, provider, applicationData: applicationData,
-			authenticatedData: authenticatedData, signingKey: signingKey,
+			authenticatedData: authenticatedData,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
 			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 			paddingLength: paddingLength)
 	}

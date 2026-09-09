@@ -411,19 +411,51 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		applicationData: Data,
 		authenticatedData: Data = Data(),
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int = 0
 	) throws -> MLS.RFC9420.PrivateMessage {
 		try protectContent(
 			membershipIndex: try soleMembershipIndex(), provider,
 			content: .application(applicationData),
-			authenticatedData: authenticatedData, signingKey: signingKey,
+			authenticatedData: authenticatedData, sign: sign,
 			reuseGuard: reuseGuard, paddingLength: max(0, paddingLength)
 		).message
 	}
 
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	public mutating func protect(
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		signingKey: MLS.SignatureSecretKey,
+		reuseGuard: MLS.Framing.ReuseGuard,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protect(
+			provider, applicationData: applicationData,
+			authenticatedData: authenticatedData,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
+			reuseGuard: reuseGuard,
+			paddingLength: max(0, paddingLength))
+	}
+
 	/// Convenience: fresh reuse-guard bytes from the provider.
+	public mutating func protect(
+		_ provider: any MLS.CipherSuiteProvider,
+		applicationData: Data,
+		authenticatedData: Data = Data(),
+		sign: MLS.RFC9420.SigningClosure,
+		paddingLength: Int = 0
+	) throws -> MLS.RFC9420.PrivateMessage {
+		try protect(
+			provider, applicationData: applicationData,
+			authenticatedData: authenticatedData, sign: sign,
+			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
+			paddingLength: paddingLength)
+	}
+
+	/// `signingKey:` sugar over the closure form above (ADR 0002).
 	public mutating func protect(
 		_ provider: any MLS.CipherSuiteProvider,
 		applicationData: Data,
@@ -433,7 +465,8 @@ extension MLS.RFC9420.Group {
 	) throws -> MLS.RFC9420.PrivateMessage {
 		try protect(
 			provider, applicationData: applicationData,
-			authenticatedData: authenticatedData, signingKey: signingKey,
+			authenticatedData: authenticatedData,
+			sign: MLS.RFC9420.signingClosure(provider, signingKey),
 			reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 			paddingLength: paddingLength)
 	}
@@ -441,17 +474,26 @@ extension MLS.RFC9420.Group {
 	/// Returns the signature alongside the sealed message — not needed by
 	/// `protect`'s own callers, but `proposeUpdate` computes a `ProposalRef`
 	/// over exactly this framing, and the ref must be built from the SAME
-	/// signature that sealed the message, not a second one: three of the
-	/// five supported suites randomize ECDSA, so signing the same content
-	/// twice produces two different signatures, and a ref built from the
-	/// wrong one would never match what a receiver's own `unprotect` +
-	/// `ProposalStore.insert` computes.
+	/// signature that sealed the message, not a second one: signatures are
+	/// randomized under CryptoKit (ECDSA on every curve, and Ed25519 via
+	/// CryptoKit's own hedged signing) — deterministic only under
+	/// swift-crypto's BoringSSL backend on Linux (RFC 8032 Ed25519) — so
+	/// signing the same content twice may produce two different signatures,
+	/// and a ref built from the wrong one would never match what a
+	/// receiver's own `unprotect` + `ProposalStore.insert` computes.
+	///
+	/// Frame → sign → derive → seal (ADR 0002 S2): the signer closure runs
+	/// BEFORE this membership's own send generation is derived/advanced, so a
+	/// throwing app closure (a spent-out ticket pool, a declined signature)
+	/// leaves the ratchet untouched — `framed`/`signPrivate` need only
+	/// `secrets.groupContext`, never the derived (key, nonce, generation), so
+	/// nothing downstream of `sign` depends on anything upstream of `derive`.
 	mutating func protectContent(
 		membershipIndex: Int,
 		_ provider: any MLS.CipherSuiteProvider,
 		content: MLS.RFC9420.Content,
 		authenticatedData: Data,
-		signingKey: MLS.SignatureSecretKey,
+		sign: MLS.RFC9420.SigningClosure,
 		reuseGuard: MLS.Framing.ReuseGuard,
 		paddingLength: Int
 	) throws -> (message: MLS.RFC9420.PrivateMessage, signature: MLS.Signature) {
@@ -463,12 +505,6 @@ extension MLS.RFC9420.Group {
 		}
 		let isHandshake = content.contentType != .application
 
-		// Spend this membership's own generation (slice 3b) — seeded from and
-		// consuming the shared secret tree, advanced on the membership.
-		let (key, nonce, generation) = try deriveOwnSendKey(
-			membershipIndex: membershipIndex, epoch: epochNumber,
-			isHandshake: isHandshake, provider)
-
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: epochNumber,
 			sender: .member(leaf), authenticatedData: authenticatedData,
@@ -477,8 +513,19 @@ extension MLS.RFC9420.Group {
 		// the signature: behaviorally identical to `protectPrivate`, which
 		// does exactly these two calls internally.
 		let (_, signature) = try MLS.RFC9420.signPrivate(
-			provider, content: framed, groupContext: secrets.groupContext,
-			signingKey: signingKey)
+			provider, content: framed, groupContext: secrets.groupContext, sign: sign)
+
+		// Spend this membership's own generation (slice 3b) — seeded from and
+		// consuming the shared secret tree, advanced on the membership. Deferred
+		// until after the signature is in hand (S2): the closure may throw. A
+		// throw AFTER this point (deriveOwnSendKey's sendGenerationExhausted /
+		// generationAlreadyConsumed, or sealPrivate) now wastes a consumed
+		// signing ticket rather than a send generation — the right priority,
+		// since a burned one-time key costs more than a skipped generation.
+		let (key, nonce, generation) = try deriveOwnSendKey(
+			membershipIndex: membershipIndex, epoch: epochNumber,
+			isHandshake: isHandshake, provider)
+
 		let message = try MLS.RFC9420.sealPrivate(
 			provider, keySource: OneShotKey(key: key, nonce: nonce),
 			content: framed, signature: signature, generation: generation,

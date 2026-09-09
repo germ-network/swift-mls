@@ -1,4 +1,7 @@
 // swift-tools-version: 6.1
+// Effective minimum toolchain is Swift 6.2.3: `SignatureRole` uses
+// `@nonexhaustive` (SE-0487), a compiler feature gated on the language
+// version, not the tools-version declared above.
 import PackageDescription
 
 let package = Package(
