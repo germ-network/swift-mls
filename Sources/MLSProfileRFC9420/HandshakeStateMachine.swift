@@ -171,6 +171,13 @@ extension MLS.RFC9420 {
 		/// `app_data_dictionary` mutation is the app/profile's, deferred). One event
 		/// per proposal, in proposal-list order.
 		case appDataUpdate(MLS.Extensions.AppDataUpdate)
+		/// A commit carried a `Proposal.custom` — a non-default proposal type the
+		/// receiver opted into via `customProposalTypes`, decoded as
+		/// `type ‖ opaque<V>(body)`. Surfaced for the application to interpret;
+		/// the library makes no state change for it and does not validate the
+		/// body. One event per proposal, in proposal-list order, after the
+		/// membership stream (no roster slot, so no §12.3 replay ordering).
+		case customProposal(type: ProposalType, body: Data)
 	}
 
 	/// The effects of one commit, in application order — the **complete** record

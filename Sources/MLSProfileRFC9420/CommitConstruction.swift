@@ -216,6 +216,29 @@ extension MLS.RFC9420.Group {
 				if case .externalInit = $0.proposal { true } else { false }
 			})
 		else { throw MLS.RFC9420.GroupError.externalInitInRegularCommit }
+		// A `.custom` body is unparseable as intended at a default type (every
+		// receiver takes the typed arm), and at any type a receiver decodes ONE
+		// way — so a list mixing `.custom` and a typed arm at one code point
+		// can't be read whole by any peer. Send-side only: from bytes, the
+		// ambient makes the mix unrepresentable on receive.
+		var typedTypes: Set<MLS.RFC9420.ProposalType> = []
+		var customTypes: Set<MLS.RFC9420.ProposalType> = []
+		for stored in resolved {
+			if case .custom(let type, _) = stored.proposal {
+				guard !MLS.RFC9420.defaultProposalTypes.contains(type) else {
+					throw MLS.RFC9420.GroupError.customProposalUsesDefaultType(
+						type)
+				}
+				customTypes.insert(type)
+			} else {
+				typedTypes.insert(stored.proposal.type)
+			}
+		}
+		if let conflict = customTypes.intersection(typedTypes).min(by: {
+			$0.rawValue < $1.rawValue
+		}) {
+			throw MLS.RFC9420.GroupError.customProposalConflictsWithTypedArm(conflict)
+		}
 
 		var provisionalExtensions = context.extensions
 		for stored in resolved {
@@ -254,6 +277,13 @@ extension MLS.RFC9420.Group {
 				// §7.2.1 registers app_data_update as Path Required N — it touches
 				// no leaf/tree key, so it never forces a path.
 				case .add, .preSharedKey, .reInit, .appDataUpdate: false
+				// Permissive by construction: §12.4 says "New proposal types MUST
+				// state whether they require a path", but the library has no
+				// registry entry for an opaque type, so it does not force one. A
+				// consumer whose type is Path Required passes `includePath: true`
+				// (the default) — and, on receive, checks for `.updated(committer)`
+				// among the effects, since the receiver cannot enforce it either.
+				case .custom: false
 				}
 			}
 		if !includePath && pathRequired {
@@ -557,6 +587,13 @@ extension MLS.RFC9420.Group {
 			appDataUpdates: resolved.compactMap {
 				if case .appDataUpdate(let update) = $0.proposal {
 					update
+				} else {
+					nil
+				}
+			},
+			customProposals: resolved.compactMap {
+				if case .custom(let type, let body) = $0.proposal {
+					(type: type, body: body)
 				} else {
 					nil
 				}
