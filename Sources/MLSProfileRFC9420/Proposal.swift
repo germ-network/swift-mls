@@ -141,6 +141,18 @@ extension MLS.RFC9420 {
 		/// `CommitEffect`); the deferred §4.7 `app_data_dictionary` mutation is not
 		/// implemented here.
 		case appDataUpdate(MLS.Extensions.AppDataUpdate)
+		/// A proposal of a **non-default** type (RFC 9420 §12.2's term — anything
+		/// outside the seven above) whose body this library does not type, carried
+		/// as `type ‖ opaque<V>(body)`. The `opaque<V>` wrapper is not something
+		/// §12.1's `Proposal` struct prescribes (see the comment above on the tag
+		/// + bare body); it is the convention peers use to carry a type they don't
+		/// share a body definition for, and the library only writes or reads it
+		/// on request: emit by constructing this case, accept by naming the type
+		/// in `MLS.RFC9420.customProposalTypes` for the receive scope. The body is
+		/// surfaced as `CommitEffect.customProposal` and never interpreted. A
+		/// default type here is refused at `committing`
+		/// (`customProposalUsesDefaultType`).
+		case custom(type: ProposalType, body: Data)
 	}
 
 	/// `struct { ProposalOrRefType type; select (ProposalOrRef.type) {
@@ -282,6 +294,7 @@ extension MLS.RFC9420.Proposal {
 		case .externalInit: .init(.externalInit)
 		case .groupContextExtensions: .init(.groupContextExtensions)
 		case .appDataUpdate: .init(.appDataUpdate)
+		case .custom(let type, _): type
 		}
 	}
 }
@@ -298,6 +311,8 @@ extension MLS.RFC9420.Proposal: MLSEncodable {
 		case .externalInit(let externalInit): try writer.encode(externalInit)
 		case .groupContextExtensions(let extensions): try writer.encodeVector(extensions)
 		case .appDataUpdate(let update): try writer.encode(update)
+		// `type ‖ opaque<V>(body)`; the tag was written above.
+		case .custom(_, let body): try writer.writeOpaque(body)
 		}
 	}
 }
@@ -305,6 +320,16 @@ extension MLS.RFC9420.Proposal: MLSEncodable {
 extension MLS.RFC9420.Proposal: MLSDecodable {
 	public init(from reader: inout MLS.Reader) throws {
 		let type = try MLS.RFC9420.ProposalType(from: &reader)
+		// The opt-in `.custom` path first, so a wrapped body at a typed code point
+		// (0x0008 under the ambient) lands here and re-encodes byte-for-byte —
+		// the transcript hash is recomputed from a RE-ENCODE of the decoded
+		// content. A default type never takes this path even if named.
+		if !MLS.RFC9420.defaultProposalTypes.contains(type),
+			MLS.RFC9420.customProposalTypes.contains(type)
+		{
+			self = .custom(type: type, body: Data(try reader.readOpaque()))
+			return
+		}
 		switch type {
 		case .known(.add): self = .add(try MLS.RFC9420.KeyPackage(from: &reader))
 		case .known(.update): self = .update(try MLS.RFC9420.LeafNode(from: &reader))

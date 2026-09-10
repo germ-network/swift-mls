@@ -398,7 +398,8 @@ extension MLS.RFC9420.Group {
 		)?,
 		removedLeaves: [MLS.LeafIndex],
 		localMembershipLeaves: Set<MLS.LeafIndex>,
-		appDataUpdates: [MLS.Extensions.AppDataUpdate]
+		appDataUpdates: [MLS.Extensions.AppDataUpdate],
+		customProposals: [(type: MLS.RFC9420.ProposalType, body: Data)]
 	) -> MLS.RFC9420.CommitEffects {
 		// Emitted in §12.3 application order — update, then remove, then add — so
 		// the stream is replayable against a leaf-indexed roster: an Add fills the
@@ -428,6 +429,9 @@ extension MLS.RFC9420.Group {
 		// they touch no roster slot, so they carry no §12.3 replay ordering.
 		for update in appDataUpdates {
 			events.append(.appDataUpdate(update))
+		}
+		for custom in customProposals {
+			events.append(.customProposal(type: custom.type, body: custom.body))
 		}
 		return MLS.RFC9420.CommitEffects(events)
 	}
@@ -539,6 +543,11 @@ extension MLS.RFC9420.Group {
 				case .update, .remove, .externalInit, .groupContextExtensions: true
 				// app_data_update is Path Required N (§7.2.1) — same class as PSK.
 				case .add, .preSharedKey, .reInit, .appDataUpdate: false
+				// An opaque body: §12.4's "New proposal types MUST state whether
+				// they require a path", but the library cannot read that for a
+				// type it doesn't know — treated as path-not-required (see
+				// `committing`'s twin for the consumer's recourse).
+				case .custom: false
 				}
 			}
 		if pathRequired && commit.path == nil {
@@ -629,7 +638,9 @@ extension MLS.RFC9420.Group {
 			// key), so fall back rather than requiring state the terminal delta
 			// does not use. Only `removed`/`membershipRemoved` are reported here —
 			// any add/update in the same commit belongs to an epoch this device
-			// never enters, and is not tag-confirmed.
+			// never enters, and is not tag-confirmed (likewise any app_data_update
+			// or custom-proposal body: an evicted member cannot tag-confirm it, so
+			// surfacing it would present unverified data as a commit effect).
 			guard let store = core.messageSecrets[context.epoch],
 				let resumption = core.resumptionPsks[context.epoch]
 			else {
@@ -642,7 +653,8 @@ extension MLS.RFC9420.Group {
 			let effects = commitMembershipEffects(
 				epochAdvanced: nil, added: [], updateChanges: [],
 				committerChange: nil, removedLeaves: removedLeaves,
-				localMembershipLeaves: localLeaves, appDataUpdates: [])
+				localMembershipLeaves: localLeaves, appDataUpdates: [],
+				customProposals: [])
 			return MLS.RFC9420.PendingCommit(
 				effects: effects, base: context, baseMemberships: localLeaves,
 				newContext: context, newTree: tree, newEpoch: epoch,
@@ -885,6 +897,13 @@ extension MLS.RFC9420.Group {
 			appDataUpdates: resolved.compactMap {
 				if case .appDataUpdate(let update) = $0.proposal {
 					update
+				} else {
+					nil
+				}
+			},
+			customProposals: resolved.compactMap {
+				if case .custom(let type, let body) = $0.proposal {
+					(type: type, body: body)
 				} else {
 					nil
 				}
@@ -1175,6 +1194,20 @@ extension MLS.RFC9420.Group {
 				// mutation are deferred to the app_data_dictionary layer a profile
 				// owns; this envelope makes no group-state change.
 				appDataUpdates.append(update)
+
+			case .custom:
+				// An opaque body the library cannot validate: §12.1 has no rule for
+				// it, and the one §12.2 rule that binds a non-default type — the
+				// list is invalid if it "contains a Proposal with a non-default
+				// proposal type that is not supported by some members of the group
+				// that will process the Commit" (§13.2: such a type "MUST NOT be
+				// included in a commit unless the proposal type is supported by all
+				// the members") — is not enforced here, matching `.appDataUpdate`
+				// above. Satisfying it is the consumer's: advertise the type in
+				// `Capabilities.proposals` and check the roster before committing.
+				// The library surfaces the proposal (`CommitEffect.customProposal`),
+				// it does not adjudicate support.
+				break
 
 			case .reInit:
 				// Rejected later in `processing` with its own explicit

@@ -242,6 +242,17 @@ extension MLS.RFC9420 {
 		case updateByCommitter
 		/// §12.2: a Remove naming the committer's own leaf.
 		case removeOfCommitter
+		/// A `.custom` proposal was built at one of RFC 9420's seven default
+		/// proposal types (0x0001–0x0007, `defaultProposalTypes`). Those bodies
+		/// have a spec-defined shape every receiver decodes as the typed arm, so
+		/// an opaque-wrapped one is never parseable as intended — the seam is for
+		/// non-default types only.
+		case customProposalUsesDefaultType(ProposalType)
+		/// One proposal list carries both a `.custom` and a typed proposal at the
+		/// same code point. A receiver decodes a type one way or the other (the
+		/// `customProposalTypes` ambient selects which), so no peer can parse both
+		/// shapes in one commit.
+		case customProposalConflictsWithTypedArm(ProposalType)
 		/// §12.2: multiple Update/Remove proposals applying to one leaf.
 		case duplicateProposalForLeaf(leaf: MLS.LeafIndex)
 		/// §12.2: two PreSharedKey proposals naming one `PreSharedKeyID`.
