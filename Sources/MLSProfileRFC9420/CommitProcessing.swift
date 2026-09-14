@@ -1087,8 +1087,21 @@ extension MLS.RFC9420.Group {
 		var seenPskIDs: Set<Data> = []
 		var seenGroupContextExtensions = false
 		var appDataUpdates: [MLS.Extensions.AppDataUpdate] = []
+		// §12.2/§13.2 non-default-type support (below, after this loop): which
+		// leaves this commit removes (exempt), and which non-default types the
+		// list carries at all. Judged against `memberCapabilitiesByLeaf` as
+		// already captured above -- the CURRENT, pre-commit leaves -- because
+		// §12.2 (list validation) runs entirely before §12.3 ("Applying a
+		// Proposal List") touches the tree; an updated member is judged by the
+		// leaf it still has at validation time, not the replacement its own
+		// Update carries.
+		var removedLeavesInList: Set<MLS.LeafIndex> = []
+		var nonDefaultProposalTypesUsed: Set<MLS.RFC9420.ProposalType> = []
 
 		for stored in resolved {
+			if !MLS.RFC9420.defaultProposalTypes.contains(stored.proposal.type) {
+				nonDefaultProposalTypesUsed.insert(stored.proposal.type)
+			}
 			switch stored.proposal {
 			case .add(let keyPackage):
 				// §12.1.1 delegates to §10.1 wholesale; §10.1's own
@@ -1163,6 +1176,7 @@ extension MLS.RFC9420.Group {
 					throw MLS.RFC9420.GroupError.duplicateProposalForLeaf(
 						leaf: removed)
 				}
+				removedLeavesInList.insert(removed)
 
 			case .preSharedKey(let id):
 				// §12.1.4: nonce length equals the suite's KDF.Nh, for *every*
@@ -1192,21 +1206,22 @@ extension MLS.RFC9420.Group {
 				// (`validateProposalList`). The two state-dependent §4.7 clauses
 				// (unknown component; removing absent state) and the dictionary
 				// mutation are deferred to the app_data_dictionary layer a profile
-				// owns; this envelope makes no group-state change.
+				// owns; this envelope makes no group-state change. §7.2.1 registers
+				// 0x0008 as non-default, so it also feeds the §12.2/§13.2 roster
+				// support check below, same as `.custom`.
 				appDataUpdates.append(update)
 
 			case .custom:
-				// An opaque body the library cannot validate: §12.1 has no rule for
-				// it, and the one §12.2 rule that binds a non-default type — the
-				// list is invalid if it "contains a Proposal with a non-default
-				// proposal type that is not supported by some members of the group
-				// that will process the Commit" (§13.2: such a type "MUST NOT be
-				// included in a commit unless the proposal type is supported by all
-				// the members") — is not enforced here, matching `.appDataUpdate`
-				// above. Satisfying it is the consumer's: advertise the type in
-				// `Capabilities.proposals` and check the roster before committing.
-				// The library surfaces the proposal (`CommitEffect.customProposal`),
-				// it does not adjudicate support.
+				// An opaque body the library cannot validate against §12.1 — there
+				// is no rule for a type it doesn't know. §12.2's list rule that DOES
+				// bind a non-default type — the list is invalid if it "contains a
+				// Proposal with a non-default proposal type that is not supported by
+				// some members of the group that will process the Commit" (§13.2:
+				// such a type "MUST NOT be included in a commit unless the proposal
+				// type is supported by all the members") — IS enforced below, over
+				// every non-default type the list carries, `.custom` and
+				// `.appDataUpdate` alike. The library still doesn't adjudicate the
+				// body, only roster-wide support for the type.
 				break
 
 			case .reInit:
@@ -1233,6 +1248,31 @@ extension MLS.RFC9420.Group {
 				// needs the sender's commit type: §12.2's *external* rules
 				// require exactly one ExternalInit rather than forbidding it.
 				throw MLS.RFC9420.GroupError.externalInitInRegularCommit
+			}
+		}
+
+		// RFC 9420 §12.2 / §13.2: every non-default proposal type this list
+		// carries must be supported by every member that will process the
+		// Commit. "Will process" excludes members this commit removes (the
+		// §12.2 parenthetical) -- judged against `memberCapabilitiesByLeaf`,
+		// the CURRENT leaves captured above, for every remaining member
+		// INCLUDING one this commit updates: §12.2 (list validation) is
+		// evaluated entirely before §12.3 ("Applying a Proposal List") touches
+		// the tree, so at this point an updated member still has its old leaf
+		// -- its Update's replacement leaf is not yet, and must not be,
+		// consulted. Added members need no exemption logic:
+		// `memberCapabilitiesByLeaf` is built from the PRE-commit tree, so a
+		// leaf an Add introduces never appears in it. Independent of
+		// `required_capabilities` (§12.1.7's sweep further below) — this rule
+		// binds whether or not a GroupContextExtensions proposal is present.
+		if !nonDefaultProposalTypesUsed.isEmpty {
+			for (leafIndex, capabilities) in memberCapabilitiesByLeaf {
+				guard !removedLeavesInList.contains(leafIndex) else { continue }
+				for type in nonDefaultProposalTypesUsed
+				where !capabilities.proposals.contains(type) {
+					throw MLS.RFC9420.GroupError.proposalTypeNotSupported(
+						type: type, leaf: leafIndex)
+				}
 			}
 		}
 

@@ -82,7 +82,8 @@ struct AppDataUpdateProposalTests {
 	@Test("an AppDataUpdate-only commit is pathless-valid and surfaces the effect (send)")
 	func pathlessCommitSurfacesEffect() throws {
 		let provider = Self.provider
-		let alice = try SelfInteropTests.member("alice")
+		let alice = try SelfInteropTests.member(
+			"alice", capabilityProposals: [.init(.appDataUpdate)])
 		let groupA = try SelfInteropTests.createGroup(alice)
 		let update = Self.anUpdate()
 		let transition = try groupA.committing(
@@ -119,7 +120,8 @@ struct AppDataUpdateProposalTests {
 	@Test("a §4.7-violating AppDataUpdate list is rejected at commit construction")
 	func conflictingListRejected() throws {
 		let provider = Self.provider
-		let alice = try SelfInteropTests.member("alice")
+		let alice = try SelfInteropTests.member(
+			"alice", capabilityProposals: [.init(.appDataUpdate)])
 		let groupA = try SelfInteropTests.createGroup(alice)
 		#expect(throws: MLS.Extensions.AppDataUpdate.ValidityError.updateAndRemove(0xFF01))
 		{
@@ -148,7 +150,8 @@ struct AppDataUpdateProposalTests {
 	/// checks, so the garbage tag never matters — the §4.7 rule is what rejects it.
 	@Test("a §4.7-violating AppDataUpdate list is rejected on receive")
 	func conflictingListRejectedOnReceive() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try ConstructedRejectionTests.pair(
+			capabilityProposals: [.init(.appDataUpdate)])
 		let conflicting: [MLS.RFC9420.ProposalOrRef] = [
 			.proposal(
 				.appDataUpdate(

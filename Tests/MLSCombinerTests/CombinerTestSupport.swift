@@ -53,7 +53,8 @@ enum CombinerTestSupport {
 			credential: .basic(identity: Data(name.utf8)),
 			capabilities: .init(
 				versions: [.mls10], cipherSuites: [.curve25519Aes128],
-				extensions: [], proposals: [], credentials: [.init(.basic)]),
+				extensions: [], proposals: [.init(.appDataUpdate)],
+				credentials: [.init(.basic)]),
 			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(

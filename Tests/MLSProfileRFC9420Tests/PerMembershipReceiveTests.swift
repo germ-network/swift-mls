@@ -31,9 +31,15 @@ struct PerMembershipReceiveTests {
 	}
 
 	static func trio() throws -> Trio {
-		let alice = try SelfInteropTests.member("alice")
-		let bob = try SelfInteropTests.member("bob")
-		let carol = try SelfInteropTests.member("carol")
+		// `.appDataUpdate` advertised by all three: `AppDataUpdateProposalTests`
+		// reuses this trio to commit one, which the §12.2/§13.2 roster-support
+		// check requires every processing member to list.
+		let alice = try SelfInteropTests.member(
+			"alice", capabilityProposals: [.init(.appDataUpdate)])
+		let bob = try SelfInteropTests.member(
+			"bob", capabilityProposals: [.init(.appDataUpdate)])
+		let carol = try SelfInteropTests.member(
+			"carol", capabilityProposals: [.init(.appDataUpdate)])
 
 		var groupA = try SelfInteropTests.createGroup(alice)
 		let addBob = try groupA.commit(

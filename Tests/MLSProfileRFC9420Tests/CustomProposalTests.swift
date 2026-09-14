@@ -28,6 +28,16 @@ struct CustomProposalTests {
 
 	enum TestError: Error { case unexpectedFraming }
 
+	/// Alice + Bob, both advertising `typedPoint` and `privatePoint` — the §12.2/
+	/// §13.2 roster-support check (added alongside this seam) requires every
+	/// processing member to list a non-default type it commits, so this suite's
+	/// own pair, not `ConstructedRejectionTests.pair()`'s (deliberately empty)
+	/// leaves, is what the commit-integration tests below build on.
+	static func pair() throws -> ConstructedRejectionTests.Pair {
+		try ConstructedRejectionTests.pair(
+			capabilityProposals: [Self.typedPoint, Self.privatePoint])
+	}
+
 	/// `type ‖ opaque<V>(body)`, hand-built from the codec primitives.
 	static func wrapped(_ type: MLS.RFC9420.ProposalType, _ body: Data) throws -> Data {
 		var writer = MLS.Writer()
@@ -124,7 +134,7 @@ struct CustomProposalTests {
 
 	@Test("`.custom` at a default type is refused at commit construction")
 	func customAtDefaultTypeRefused() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		#expect(
 			throws: MLS.RFC9420.GroupError.customProposalUsesDefaultType(.init(.update))
 		) {
@@ -140,7 +150,7 @@ struct CustomProposalTests {
 
 	@Test("`.custom` and a typed arm at one code point cannot share a commit")
 	func customConflictingWithTypedArmRefused() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let typed = MLS.RFC9420.Proposal.appDataUpdate(
 			.init(componentID: 0xFF01, operation: .remove))
 		#expect(
@@ -165,7 +175,7 @@ struct CustomProposalTests {
 	/// encoded content, which the test also checks contains them verbatim).
 	@Test("a wrapped custom proposal rides a full PUBLIC commit: validates from bytes")
 	func publicCommitRoundTrip() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bytes = try Self.sentCommit(
 			pair, type: Self.typedPoint, body: Self.body, framing: .publicMessage)
 
@@ -209,7 +219,7 @@ struct CustomProposalTests {
 	/// AEAD open), so the ambient must reach it through `validating`.
 	@Test("a wrapped custom proposal rides a full PRIVATE commit: validates from bytes")
 	func privateCommitRoundTrip() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bytes = try Self.sentCommit(
 			pair, type: Self.typedPoint, body: Self.body, framing: .privateMessage)
 
@@ -233,7 +243,7 @@ struct CustomProposalTests {
 	/// stream in proposal-list order, one per proposal.
 	@Test("custom effects are reported in proposal-list order, identically on both sides")
 	func effectsInListOrder() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let other = Data([0x01, 0x02])
 		let transition = try pair.groupA.committing(
 			Self.provider,
@@ -264,7 +274,7 @@ struct CustomProposalTests {
 	/// byte + first body byte and then `0xA1` as the operation — not an op code.
 	@Test("3a: without the ambient a wrapped 0x0008 chokes on the typed arm (public)")
 	func noAmbientTypedArmChokesPublic() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bytes = try Self.sentCommit(
 			pair, type: Self.typedPoint, body: Self.body, framing: .publicMessage)
 		#expect(throws: MLS.CodecError.unknownEnumValue(0xA1)) {
@@ -274,7 +284,7 @@ struct CustomProposalTests {
 
 	@Test("3a: without the ambient a wrapped 0x0008 chokes on the typed arm (private)")
 	func noAmbientTypedArmChokesPrivate() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bytes = try Self.sentCommit(
 			pair, type: Self.typedPoint, body: Self.body, framing: .privateMessage)
 		guard case .privateMessage(let commit) = try MLS.RFC9420.Message(mlsEncoded: bytes)
@@ -288,7 +298,7 @@ struct CustomProposalTests {
 
 	@Test("3a: without the ambient a wrapped private-use type is `unknownProposalType`")
 	func noAmbientUnknownTypeRejected() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bytes = try Self.sentCommit(
 			pair, type: Self.privatePoint, body: Self.body, framing: .publicMessage)
 		#expect(throws: MLS.RFC9420.WireError.unknownProposalType(0xF001)) {
@@ -303,7 +313,7 @@ struct CustomProposalTests {
 	/// confirmation tag.
 	@Test("3b: a body byte flipped on the wire fails framing authentication")
 	func wireTamperFailsSignature() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		var bytes = try Self.sentCommit(
 			pair, type: Self.typedPoint, body: Self.body, framing: .publicMessage)
 		let range = try #require(bytes.range(of: Self.body))
@@ -329,7 +339,7 @@ struct CustomProposalTests {
 	/// re-signs, so it cannot separate body-binding from signature-binding).
 	@Test("3c: a validly framed commit tagged over a different transcript fails the tag")
 	func bodyOutsideTagRejected() throws {
-		let pair = try ConstructedRejectionTests.pair()
+		let pair = try Self.pair()
 		let bodyPrime = Data(Self.body.reversed())
 		let real = try pair.groupA.committing(
 			Self.provider,
