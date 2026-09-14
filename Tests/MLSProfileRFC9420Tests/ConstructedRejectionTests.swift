@@ -28,9 +28,16 @@ struct ConstructedRejectionTests {
 	}
 
 	/// Alice + Bob, converged at epoch 1, with Alice's signing key in hand.
-	static func pair() throws -> Pair {
-		let alice = try SelfInteropTests.member("alice")
-		let bob = try SelfInteropTests.member("bob")
+	/// `capabilityProposals` is advertised by BOTH leaves — pass the non-default
+	/// types a test commits so it clears the §12.2/§13.2 roster-support check
+	/// rather than reusing this default (deliberately empty) pair.
+	static func pair(
+		capabilityProposals: [MLS.RFC9420.ProposalType] = []
+	) throws -> Pair {
+		let alice = try SelfInteropTests.member(
+			"alice", capabilityProposals: capabilityProposals)
+		let bob = try SelfInteropTests.member(
+			"bob", capabilityProposals: capabilityProposals)
 		var groupA = try SelfInteropTests.createGroup(alice)
 		let add = try groupA.commit(
 			Self.provider, proposals: [.proposal(.add(bob.keyPackage))],

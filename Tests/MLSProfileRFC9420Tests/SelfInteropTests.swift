@@ -35,7 +35,8 @@ struct SelfInteropTests {
 	}
 
 	static func member(
-		_ name: String, capabilityExtensions: [MLS.RFC9420.ExtensionType] = []
+		_ name: String, capabilityExtensions: [MLS.RFC9420.ExtensionType] = [],
+		capabilityProposals: [MLS.RFC9420.ProposalType] = []
 	) throws -> Member {
 		let provider = Self.provider
 		let (signingKey, signatureKey) = try GroupMutationTests.signingKeyPair(provider)
@@ -46,7 +47,7 @@ struct SelfInteropTests {
 			credential: .basic(identity: Data(name.utf8)),
 			capabilities: .init(
 				versions: [.mls10], cipherSuites: [.curve25519Aes128],
-				extensions: capabilityExtensions, proposals: [],
+				extensions: capabilityExtensions, proposals: capabilityProposals,
 				credentials: [.init(.basic)]),
 			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
 			extensions: [], signature: Data())

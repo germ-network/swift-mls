@@ -253,6 +253,18 @@ extension MLS.RFC9420 {
 		/// `customProposalTypes` ambient selects which), so no peer can parse both
 		/// shapes in one commit.
 		case customProposalConflictsWithTypedArm(ProposalType)
+		/// RFC 9420 §12.2: a regular commit's proposal list is invalid if it
+		/// "contains a Proposal with a non-default proposal type that is not
+		/// supported by some members of the group that will process the Commit
+		/// (i.e., members being added or removed by the Commit do not need to
+		/// support the proposal type)." §13.2 states the send-side mirror: such a
+		/// type "MUST NOT be included in a commit unless the proposal type is
+		/// supported by all the members of the group that will process the
+		/// Commit." Thrown on both construct and process — `validateProposalList`
+		/// is shared by both. `leaf` names the processing member found without
+		/// `type` in its `capabilities.proposals` — its CURRENT leaf, since §12.2
+		/// list validation runs entirely before §12.3 applies any Update.
+		case proposalTypeNotSupported(type: ProposalType, leaf: MLS.LeafIndex)
 		/// §12.2: multiple Update/Remove proposals applying to one leaf.
 		case duplicateProposalForLeaf(leaf: MLS.LeafIndex)
 		/// §12.2: two PreSharedKey proposals naming one `PreSharedKeyID`.
