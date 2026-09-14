@@ -150,12 +150,13 @@ extension MLS.Combiner {
 		/// call, that a specific PSK (e.g. the `apq_psk` of the current PQ epoch) was
 		/// really folded in, rather than merely present in the store.
 		///
-		/// `@unchecked Sendable`: resolution happens synchronously, inline, within a
-		/// single `committing`/`joining`/`validating` call on the thread that made it —
-		/// the profile's PSK closure is not `@Sendable` and is never invoked
-		/// concurrently — so mutating this plain reference type from that one closure
-		/// is safe despite `PSKStore` itself needing to be `Sendable`.
-		public final class ResolutionRecord: @unchecked Sendable {
+		/// Deliberately NOT `Sendable`: resolution happens synchronously, inline,
+		/// within a single `committing`/`joining`/`validating` call on the thread
+		/// that made it — the profile's PSK closure is not `@Sendable` and is never
+		/// invoked concurrently — so there is nothing here to synchronize, and
+		/// claiming `Sendable` would advertise safety for the unsynchronized
+		/// `resolvedStorageIDs` mutation that does not hold.
+		public final class ResolutionRecord {
 			private var resolvedStorageIDs: Set<Data> = []
 
 			fileprivate func note(_ id: Data) { resolvedStorageIDs.insert(id) }

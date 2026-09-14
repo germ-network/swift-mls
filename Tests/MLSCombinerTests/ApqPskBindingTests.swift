@@ -75,30 +75,82 @@ import Testing
 		}
 	}
 
-	/// A classical commit that resolves a STALE `apq_psk` — real PSK value, but from
-	/// an older PQ epoch's export, not the current one — must not satisfy the check.
-	/// The storage id `ExportedPsk.export` derives is scoped to `(group, epoch,
-	/// component)`, so a stale export's id differs from the current one's even
-	/// though both are legitimate `apq_psk` exports of the same component.
+	/// A REAL stale-epoch case, not a hand-picked pskID mismatch: `ExportedPsk.export`
+	/// really does derive a different storage id per PQ epoch of the same group and
+	/// component. Export the apq_psk at the join epoch (1), advance the PQ half to
+	/// epoch 2, and export again — the two storage ids differ. Then drive a FULL
+	/// commit whose classical half references the STALE (epoch-1) apq_psk while the
+	/// store holds both exports: `verifyApqPskBound`/`verifyFullCommit`, checked
+	/// against the epoch-2 export, must reject it even though the epoch-1 PSK really
+	/// was resolved.
 	@Test func verifyApqPskBoundRejectsStaleEpoch() throws {
-		let staleID = Data([0xAA])
-		let currentID = Data([0xBB])
-		let stale = try MLS.Combiner.ExportedPsk.fromParts(
-			componentID: Self.componentID, pskID: staleID,
-			psk: SecretBytes(bytes: Data([1, 2, 3])))
-		let current = try MLS.Combiner.ExportedPsk.fromParts(
-			componentID: Self.componentID, pskID: currentID,
-			psk: SecretBytes(bytes: Data([4, 5, 6])))
+		try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
+			let alice = try Support.member("alice")
+			let bob = try Support.member("bob")
 
-		var store = MLS.Combiner.PSKStore()
-		store.register(stale)
-		let (resolver, record) = store.recordingResolver()
+			// Raw (non-combiner) group pairs, NOT `Support.establishedPair`: `establish`
+			// / `join` each export the apq_psk internally as part of founding the
+			// classical half, which would already consume the epoch-1 component this
+			// test needs to export itself.
+			var (aPq, bPq) = try rawGroupPair(founder: alice, peer: bob)
+			var (aClassical, bClassical) = try rawGroupPair(founder: alice, peer: bob)
 
-		// The commit's resolver only had the stale PSK to resolve.
-		_ = try resolver(stale.preSharedKeyID(nonce: Data()))
+			// Export the apq_psk at PQ epoch 1 (the join epoch) on both sides.
+			let founderEpoch1Psk = try MLS.Combiner.ExportedPsk.export(
+				from: &aPq, Support.provider, componentID: Self.componentID)
+			let peerEpoch1Psk = try MLS.Combiner.ExportedPsk.export(
+				from: &bPq, Support.provider, componentID: Self.componentID)
 
-		#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
-			try MLS.Combiner.verifyApqPskBound(record: record, expected: current)
+			// Advance the PQ half to epoch 2, carrying the {2, 2} attestation.
+			let pqCommit = try commitAttesting(
+				&aPq, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2)
+			let pqEffects = try process(&bPq, pqCommit)
+			#expect(bPq.context.epoch == 2)
+
+			// Export again at epoch 2: a DIFFERENT storage id from epoch 1's, proving
+			// `export` is genuinely epoch-scoped (not merely id-scoped).
+			let founderEpoch2Psk = try MLS.Combiner.ExportedPsk.export(
+				from: &aPq, Support.provider, componentID: Self.componentID)
+			let peerEpoch2Psk = try MLS.Combiner.ExportedPsk.export(
+				from: &bPq, Support.provider, componentID: Self.componentID)
+			#expect(founderEpoch2Psk.storageID != founderEpoch1Psk.storageID)
+			#expect(peerEpoch2Psk.storageID != peerEpoch1Psk.storageID)
+
+			// Drive a FULL commit whose classical half references the STALE
+			// (epoch-1) apq_psk. Both sides' stores hold BOTH exports, as a client
+			// that retained an old export alongside the fresh one would.
+			var founderStore = MLS.Combiner.PSKStore()
+			founderStore.register(founderEpoch1Psk)
+			founderStore.register(founderEpoch2Psk)
+			var peerStore = MLS.Combiner.PSKStore()
+			peerStore.register(peerEpoch1Psk)
+			peerStore.register(peerEpoch2Psk)
+
+			let nonce = Support.provider.randomBytes(Support.provider.hashSize)
+			let classicalCommit = try commitAttestingAndBindingPsk(
+				&aClassical, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2,
+				psk: founderEpoch1Psk, nonce: nonce,
+				resolver: founderStore.resolver())
+
+			let (resolver, record) = peerStore.recordingResolver()
+			let classicalEffects = try process(
+				&bClassical, classicalCommit, psk: resolver)
+			#expect(bClassical.context.epoch == 2)
+
+			// The epoch-1 PSK really was resolved (a real, valid apq_psk — just the
+			// wrong epoch), but checking against the epoch-2 export still rejects.
+			#expect(record.resolved(peerEpoch1Psk.storageID))
+			#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
+				try MLS.Combiner.verifyApqPskBound(
+					record: record, expected: peerEpoch2Psk)
+			}
+			#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
+				_ = try MLS.Combiner.verifyFullCommit(
+					classicalEffects: classicalEffects, pqEffects: pqEffects,
+					classicalEpoch: bClassical.context.epoch,
+					pqEpoch: bPq.context.epoch,
+					record: record, expected: peerEpoch2Psk)
+			}
 		}
 	}
 
@@ -116,14 +168,171 @@ import Testing
 		try MLS.Combiner.verifyApqPskBound(record: record, expected: expected)
 	}
 
+	/// Integration negative for the FULL-commit path (not just a hand-built
+	/// record): a classical commit carrying the epoch attestation but NO
+	/// `PreSharedKey` proposal at all — `verifyFullCommitAttestation` passes (the
+	/// attestation itself is well-formed and matches the observed epochs), but
+	/// `verifyApqPskBound`/`verifyFullCommit` reject it, since the classical
+	/// `validating` call resolved nothing.
+	@Test func verifyFullCommitRejectsAttestationOnlyClassicalCommit() throws {
+		try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
+			let alice = try Support.member("alice")
+			let bob = try Support.member("bob")
+			let (founder, peer) = try Support.establishedPair(founder: alice, peer: bob)
+
+			var aClassical = founder.classical
+			var aPq = founder.pq
+			var bClassical = peer.classical
+			var bPq = peer.pq
+
+			let pqCommit = try commitAttesting(
+				&aPq, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2)
+			let pqEffects = try process(&bPq, pqCommit)
+
+			// Classical commit: attestation only, no PreSharedKey proposal.
+			let classicalCommit = try commitAttesting(
+				&aClassical, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2)
+			let store = MLS.Combiner.PSKStore()
+			let (resolver, record) = store.recordingResolver()
+			let classicalEffects = try process(
+				&bClassical, classicalCommit, psk: resolver)
+
+			let expected = try MLS.Combiner.ExportedPsk.export(
+				from: &bPq, Support.provider, componentID: Self.componentID)
+
+			let verified = try MLS.Combiner.verifyFullCommitAttestation(
+				classicalEffects: classicalEffects, pqEffects: pqEffects,
+				classicalEpoch: bClassical.context.epoch, pqEpoch: bPq.context.epoch
+			)
+			#expect(verified == MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2))
+
+			#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
+				try MLS.Combiner.verifyApqPskBound(
+					record: record, expected: expected)
+			}
+			#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
+				_ = try MLS.Combiner.verifyFullCommit(
+					classicalEffects: classicalEffects, pqEffects: pqEffects,
+					classicalEpoch: bClassical.context.epoch,
+					pqEpoch: bPq.context.epoch,
+					record: record, expected: expected)
+			}
+		}
+	}
+
+	// MARK: commit/process helpers (two-step handshake)
+
+	/// A raw (non-combiner) RFC 9420 group pair at epoch 1, with nothing exported
+	/// yet — a founder half and a peer half of the SAME group, via `create` +
+	/// `committing` + `Group.joining`, no `APQInfo` or attestation involved.
+	/// Deliberately NOT `CombinerGroup.establish`/`join`, which each export the
+	/// apq_psk internally while founding the classical half — using either here
+	/// would leave the epoch-1 component already consumed before a test gets a
+	/// chance to export it itself.
+	private func rawGroupPair(
+		founder: CombinerTestSupport.Member, peer: CombinerTestSupport.Member
+	) throws -> (founder: MLS.RFC9420.Group, peer: MLS.RFC9420.Group) {
+		let creation = try Support.halfCreation(founder: founder, peer: peer)
+		let epoch0 = try MLS.RFC9420.Group.create(
+			Support.provider, groupID: creation.groupID, leafNode: creation.leafNode,
+			leafSecretKey: creation.leafSecretKey, epochSecret: creation.epochSecret)
+		let transition = try epoch0.committing(
+			Support.provider,
+			proposals: [.proposal(.add(creation.peerKeyPackage))],
+			signingKey: creation.signingKey, randomness: creation.randomness,
+			psk: { _ in nil })
+		let adopted = transition.group
+		let sent = transition.takeOutput()
+		guard let welcome = sent.welcome else {
+			throw MLS.Combiner.Error.missingWelcome
+		}
+		let founderGroup = try sent.takePending().apply(onto: adopted).group
+
+		let pending = try MLS.RFC9420.Group.joining(
+			Support.provider, welcome: welcome, credentials: peer.joinCredentials,
+			psk: { _ in nil })
+		let peerGroup = pending.apply().group
+		return (founderGroup, peerGroup)
+	}
+
+	/// Commit an `ApqInfoUpdate` attestation only — no PreSharedKey proposal — the
+	/// two-step handshake: adopt the `committing` transition's group, apply the
+	/// pending advance onto it.
+	private func commitAttesting(
+		_ group: inout MLS.RFC9420.Group, signingKey: MLS.SignatureSecretKey,
+		tEpoch: UInt64, pqEpoch: UInt64
+	) throws -> MLS.RFC9420.Message {
+		let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: tEpoch, pqEpoch: pqEpoch)
+		let transition = try group.committing(
+			Support.provider,
+			proposals: [
+				.proposal(try attestation.proposal(componentID: Self.componentID))
+			],
+			signingKey: signingKey, randomness: .generate(Support.provider))
+		let adopted = transition.group
+		let sent = transition.takeOutput()
+		let message = sent.message
+		group = try sent.takePending().apply(onto: adopted).group
+		return message
+	}
+
+	/// Like `commitAttesting`, but also includes a `PreSharedKey` proposal
+	/// referencing `psk` alongside the attestation, and resolves it via `resolver`
+	/// on the committing (sending) side — the sender must fold the PSK into its own
+	/// epoch-secret derivation too.
+	private func commitAttestingAndBindingPsk(
+		_ group: inout MLS.RFC9420.Group, signingKey: MLS.SignatureSecretKey,
+		tEpoch: UInt64, pqEpoch: UInt64,
+		psk: MLS.Combiner.ExportedPsk, nonce: Data,
+		resolver: @escaping (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+	) throws -> MLS.RFC9420.Message {
+		let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: tEpoch, pqEpoch: pqEpoch)
+		let transition = try group.committing(
+			Support.provider,
+			proposals: [
+				.proposal(psk.proposal(nonce: nonce)),
+				.proposal(try attestation.proposal(componentID: Self.componentID)),
+			],
+			signingKey: signingKey, randomness: .generate(Support.provider),
+			psk: resolver)
+		let adopted = transition.group
+		let sent = transition.takeOutput()
+		let message = sent.message
+		group = try sent.takePending().apply(onto: adopted).group
+		return message
+	}
+
+	private func process(
+		_ group: inout MLS.RFC9420.Group, _ message: MLS.RFC9420.Message,
+		psk: @escaping (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = {
+			_ in nil
+		}
+	) throws -> MLS.RFC9420.CommitEffects {
+		guard case .privateMessage(let privateCommit) = message else {
+			throw MLS.Combiner.Error.commitShapeMismatch
+		}
+		let transition = try group.validating(
+			Support.provider, commit: privateCommit, proposals: .init(),
+			psk: psk)
+		let adopted = transition.group
+		switch transition.takeOutput() {
+		case .pending(let pending):
+			let applied = try pending.apply(onto: adopted)
+			group = applied.group
+			return applied.output
+		case .rejected(let rejection):
+			throw rejection.reason
+		}
+	}
+
 	// MARK: founder half without the PSK proposal
 
 	/// Mirrors `CombinerGroup.establish`, but the classical half's founding commit
 	/// carries the epoch attestation and `APQInfo` while deliberately OMITTING the
-	/// `apq_psk` `PreSharedKey` proposal — the non-conforming/buggy peer this
-	/// finding is about. Only the resulting `APQWelcome` is needed by the tests
-	/// above, so unlike `establish` this does not bother advancing past the
-	/// founder's own committed (pre-apply) state.
+	/// `apq_psk` `PreSharedKey` proposal — the non-conforming/buggy peer case under
+	/// test above. Only the resulting `APQWelcome` is needed by the tests above, so
+	/// unlike `establish` this does not bother advancing past the founder's own
+	/// committed (pre-apply) state.
 	private func establishWithoutApqPskProposal(
 		founder: CombinerTestSupport.Member, peer: CombinerTestSupport.Member
 	) throws -> MLS.Combiner.APQWelcome {

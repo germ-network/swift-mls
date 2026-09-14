@@ -85,7 +85,7 @@ import Testing
 
 			// Export + register the NEW PQ epoch's apq_psk on both sides, then fold it
 			// into the classical FULL commit via a PreSharedKey proposal (draft
-			// §6.2/§4.1) -- the binding this finding is about.
+			// §6.2/§4.1) -- the binding under test.
 			let founderApqPsk = try MLS.Combiner.ExportedPsk.export(
 				from: &aPq, Support.provider, componentID: Self.componentID)
 			var founderStore = MLS.Combiner.PSKStore()
@@ -106,12 +106,13 @@ import Testing
 				&bClassical, classicalCommit, psk: resolver)
 			#expect(bClassical.context.epoch == 2)
 
-			let verified = try MLS.Combiner.verifyFullCommitAttestation(
+			let verified = try MLS.Combiner.verifyFullCommit(
 				classicalEffects: classicalEffects, pqEffects: pqEffects,
-				classicalEpoch: bClassical.context.epoch, pqEpoch: bPq.context.epoch
+				classicalEpoch: bClassical.context.epoch,
+				pqEpoch: bPq.context.epoch,
+				record: record, expected: peerApqPsk
 			)
 			#expect(verified == MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2))
-			try MLS.Combiner.verifyApqPskBound(record: record, expected: peerApqPsk)
 		}
 	}
 

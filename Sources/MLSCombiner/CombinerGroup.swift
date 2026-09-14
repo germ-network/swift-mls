@@ -221,11 +221,13 @@ extension MLS.Combiner.CombinerGroup {
 			let classicalPending = try MLS.RFC9420.Group.joining(
 				classicalProvider, welcome: welcome.tWelcome,
 				credentials: classicalCredentials, psk: resolver)
-			let classicalRoster = classicalPending.roster
-			let classicalGroup = classicalPending.apply().group
+			// Resolution happens inside `joining` itself, so the record is already
+			// complete here — fail fast, before the (pure value) `apply()` below.
 			guard record.resolved(apqPsk.storageID) else {
 				throw MLS.Combiner.Error.apqPskNotBound
 			}
+			let classicalRoster = classicalPending.roster
+			let classicalGroup = classicalPending.apply().group
 
 			let group = MLS.Combiner.CombinerGroup(
 				classical: classicalGroup, pq: pqGroup, pskStore: store,
