@@ -89,15 +89,33 @@ extension MLS.Combiner.ApqInfoUpdate {
 	/// The single combiner attestation carried by a processed commit's effects, if
 	/// any. `nil` when the commit carried none (a PARTIAL, or a non-attesting commit);
 	/// throws `attestationMismatch` if it carried more than one `AppDataUpdate` (the
-	/// draft caps it at one) or a malformed / wrong-component one. Scan
-	/// `CommitEffects.events` for the `.appDataUpdate` the profile surfaces.
+	/// draft caps it at one) or a malformed / wrong-component one. Accepts the
+	/// attestation from either the typed `.appDataUpdate` effect or, when a receiver
+	/// has opted `AppDataUpdate`'s proposal type into `customProposalTypes`, the
+	/// wrapped `.customProposal(type: .appDataUpdate, body:)` effect it sees instead.
 	public static func extract(
 		from effects: MLS.RFC9420.CommitEffects,
 		componentID: MLS.Extensions.ComponentID
 	) throws -> MLS.Combiner.ApqInfoUpdate? {
 		var found: MLS.Combiner.ApqInfoUpdate?
 		for event in effects.events {
-			guard case .appDataUpdate(let appDataUpdate) = event else { continue }
+			let appDataUpdate: MLS.Extensions.AppDataUpdate
+			switch event {
+			case .appDataUpdate(let value):
+				appDataUpdate = value
+			case .customProposal(let type, let body)
+			where type == MLS.RFC9420.ProposalType(.appDataUpdate):
+				var reader = MLS.Reader(body)
+				let value = try MLS.Extensions.AppDataUpdate(from: &reader)
+				do {
+					try reader.finish()
+				} catch {
+					throw MLS.Combiner.Error.attestationMismatch
+				}
+				appDataUpdate = value
+			default:
+				continue
+			}
 			guard found == nil else { throw MLS.Combiner.Error.attestationMismatch }
 			found = try decode(from: appDataUpdate, componentID: componentID)
 		}
