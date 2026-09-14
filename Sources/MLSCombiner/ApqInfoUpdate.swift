@@ -116,6 +116,18 @@ extension MLS.Combiner {
 	/// directly regardless of intervening PARTIALs. This is the draft-generic
 	/// attestation check; the 2-party proposal whitelist and the FULL/PARTIAL commit
 	/// *shape* policy live downstream.
+	///
+	/// **This is only half of verifying a FULL commit.** The attestation is an
+	/// `AppDataUpdate` proposal the sender authored — it says the PQ→classical PSK
+	/// injection happened, but proves nothing on its own (a buggy or non-conforming
+	/// peer could attest without ever folding the `apq_psk` in). The other half is
+	/// [`verifyApqPskBound`]: it confirms the classical half's `validating` call
+	/// actually resolved a `PreSharedKey` proposal naming the current PQ epoch's
+	/// `apq_psk`, per draft §6.2's "each T group commit that is part of a FULL
+	/// commit MUST include a PreSharedKey proposal ... psk_id = apq_psk_id" and
+	/// §4.1's "the sender includes information about the PSK in a PreSharedKey
+	/// proposal for the traditional session's Commit". Both checks are required to
+	/// trust a FULL commit.
 	public static func verifyFullCommitAttestation(
 		classicalEffects: MLS.RFC9420.CommitEffects,
 		pqEffects: MLS.RFC9420.CommitEffects,
@@ -139,5 +151,24 @@ extension MLS.Combiner {
 			throw MLS.Combiner.Error.attestationMismatch
 		}
 		return classical
+	}
+
+	/// Verify that a FULL commit's classical half actually folded the current PQ
+	/// epoch's `apq_psk` in, per draft §6.2/§4.1 — the companion check to
+	/// [`verifyFullCommitAttestation`] (see its doc comment for why both are
+	/// required). Pass the `ResolutionRecord` from the
+	/// `MLS.Combiner.PSKStore.recordingResolver()` given to the classical half's
+	/// `validating` call, and the `apq_psk` freshly exported off the **new** PQ
+	/// epoch (never a retained one): a commit that only resolved a STALE PQ-epoch
+	/// `apq_psk` — real PSK, wrong epoch — must not satisfy this check, since the
+	/// storage id `export` derives is epoch-scoped and a stale export's id differs
+	/// from the current one's.
+	public static func verifyApqPskBound(
+		record: MLS.Combiner.PSKStore.ResolutionRecord,
+		expected: MLS.Combiner.ExportedPsk
+	) throws {
+		guard record.resolved(expected.storageID) else {
+			throw MLS.Combiner.Error.apqPskNotBound
+		}
 	}
 }
