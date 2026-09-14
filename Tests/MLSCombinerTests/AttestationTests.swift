@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSExtensions
+import SecretBytes
 import Testing
 
 @testable import MLSCombiner
@@ -75,21 +76,41 @@ import Testing
 			var bClassical = peer.classical
 			var bPq = peer.pq
 
-			// A FULL commit: both halves advance to epoch 2, each carrying the {2, 2}
-			// attestation. (Alice is the founder; she commits on both halves.)
-			let classicalCommit = try commitAttesting(
-				&aClassical, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2)
+			// PQ half first (draft §4.1): both sides advance to epoch 2, carrying the
+			// {2, 2} attestation. (Alice is the founder; she commits on both halves.)
 			let pqCommit = try commitAttesting(
 				&aPq, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2)
-
-			let classicalEffects = try process(&bClassical, classicalCommit)
 			let pqEffects = try process(&bPq, pqCommit)
-			#expect(bClassical.context.epoch == 2)
 			#expect(bPq.context.epoch == 2)
 
-			let verified = try MLS.Combiner.verifyFullCommitAttestation(
+			// Export + register the NEW PQ epoch's apq_psk on both sides, then fold it
+			// into the classical FULL commit via a PreSharedKey proposal (draft
+			// §6.2/§4.1) -- the binding under test.
+			let founderApqPsk = try MLS.Combiner.ExportedPsk.export(
+				from: &aPq, Support.provider, componentID: Self.componentID)
+			var founderStore = MLS.Combiner.PSKStore()
+			founderStore.register(founderApqPsk)
+
+			let peerApqPsk = try MLS.Combiner.ExportedPsk.export(
+				from: &bPq, Support.provider, componentID: Self.componentID)
+			var peerStore = MLS.Combiner.PSKStore()
+			peerStore.register(peerApqPsk)
+
+			let nonce = Support.provider.randomBytes(Support.provider.hashSize)
+			let classicalCommit = try commitAttestingAndBindingPsk(
+				&aClassical, signingKey: alice.signingKey, tEpoch: 2, pqEpoch: 2,
+				psk: founderApqPsk, nonce: nonce, resolver: founderStore.resolver())
+
+			let (resolver, record) = peerStore.recordingResolver()
+			let classicalEffects = try process(
+				&bClassical, classicalCommit, psk: resolver)
+			#expect(bClassical.context.epoch == 2)
+
+			let verified = try MLS.Combiner.verifyFullCommit(
 				classicalEffects: classicalEffects, pqEffects: pqEffects,
-				classicalEpoch: bClassical.context.epoch, pqEpoch: bPq.context.epoch
+				classicalEpoch: bClassical.context.epoch,
+				pqEpoch: bPq.context.epoch,
+				record: record, expected: peerApqPsk
 			)
 			#expect(verified == MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2))
 		}
@@ -282,15 +303,44 @@ import Testing
 		return message
 	}
 
+	/// Like `commitAttesting`, but also includes a `PreSharedKey` proposal
+	/// referencing `psk` (draft §6.2/§4.1's PQ→classical binding) alongside the
+	/// attestation, and resolves it via `resolver` on the committing (sending) side
+	/// — the sender must fold the PSK into its own epoch-secret derivation too.
+	private func commitAttestingAndBindingPsk(
+		_ group: inout MLS.RFC9420.Group, signingKey: MLS.SignatureSecretKey,
+		tEpoch: UInt64, pqEpoch: UInt64,
+		psk: MLS.Combiner.ExportedPsk, nonce: Data,
+		resolver: @escaping (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+	) throws -> MLS.RFC9420.Message {
+		let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: tEpoch, pqEpoch: pqEpoch)
+		let transition = try group.committing(
+			Support.provider,
+			proposals: [
+				.proposal(psk.proposal(nonce: nonce)),
+				.proposal(try attestation.proposal(componentID: Self.componentID)),
+			],
+			signingKey: signingKey, randomness: .generate(Support.provider),
+			psk: resolver)
+		let adopted = transition.group
+		let sent = transition.takeOutput()
+		let message = sent.message
+		group = try sent.takePending().apply(onto: adopted).group
+		return message
+	}
+
 	private func process(
-		_ group: inout MLS.RFC9420.Group, _ message: MLS.RFC9420.Message
+		_ group: inout MLS.RFC9420.Group, _ message: MLS.RFC9420.Message,
+		psk: @escaping (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? = {
+			_ in nil
+		}
 	) throws -> MLS.RFC9420.CommitEffects {
 		guard case .privateMessage(let privateCommit) = message else {
 			throw MLS.Combiner.Error.commitShapeMismatch
 		}
 		let transition = try group.validating(
 			Support.provider, commit: privateCommit, proposals: .init(),
-			psk: { _ in nil })
+			psk: psk)
 		let adopted = transition.group
 		switch transition.takeOutput() {
 		case .pending(let pending):

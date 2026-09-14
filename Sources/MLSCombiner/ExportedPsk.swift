@@ -142,5 +142,56 @@ extension MLS.Combiner {
 				return secret
 			}
 		}
+
+		/// What a [`recordingResolver`] observed during one commit/join/validate call:
+		/// the storage ids it actually resolved a value for. A successful resolution is
+		/// the only evidence that (a) the commit's proposal list referenced that PSK,
+		/// and (b) we held its value — so this is how a caller confirms, after the
+		/// call, that a specific PSK (e.g. the `apq_psk` of the current PQ epoch) was
+		/// really folded in, rather than merely present in the store.
+		///
+		/// Deliberately NOT `Sendable`: resolution happens synchronously, inline,
+		/// within a single `committing`/`joining`/`validating` call on the thread
+		/// that made it — the profile's PSK closure is not `@Sendable` and is never
+		/// invoked concurrently — so there is nothing here to synchronize, and
+		/// claiming `Sendable` would advertise safety for the unsynchronized
+		/// `resolvedStorageIDs` mutation that does not hold.
+		public final class ResolutionRecord {
+			private var resolvedStorageIDs: Set<Data> = []
+
+			fileprivate func note(_ id: Data) { resolvedStorageIDs.insert(id) }
+
+			/// Whether `storageID` was resolved (to a non-nil secret) during the call
+			/// this record came from.
+			public func resolved(_ storageID: Data) -> Bool {
+				resolvedStorageIDs.contains(storageID)
+			}
+		}
+
+		/// Like [`resolver`], but also records every storage id it successfully
+		/// resolves into the returned `ResolutionRecord` — recorded only on a
+		/// non-nil resolution, since that is what proves the PSK was both referenced
+		/// by the commit and held by us. Pass the resolver to `joining`/`validating`;
+		/// inspect the record afterward.
+		public func recordingResolver()
+			-> (
+				resolver: (MLS.RFC9420.PreSharedKeyIdentifier) throws ->
+					SecretBytes?,
+				record: ResolutionRecord
+			)
+		{
+			let snapshot = entries
+			let record = ResolutionRecord()
+			let resolver: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes? =
+				{
+					identifier in
+					guard let storageID = try identifier.applicationStorageID(),
+						let secret = snapshot[storageID]
+					else { return nil }
+					record.note(storageID)
+					return secret
+				}
+			return (resolver, record)
+		}
 	}
 }

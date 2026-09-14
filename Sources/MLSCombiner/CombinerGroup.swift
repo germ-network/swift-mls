@@ -211,9 +211,21 @@ extension MLS.Combiner.CombinerGroup {
 			var store = MLS.Combiner.PSKStore()
 			store.register(apqPsk)
 
+			// Recording, not the plain resolver: a non-conforming classical Welcome
+			// can carry `APQInfo` + the epoch attestation without ever referencing the
+			// `apq_psk` in a PreSharedKey proposal, in which case `joining` below
+			// succeeds having resolved nothing — the guard after it is what catches
+			// that (draft-ietf-mls-combiner-02 §6.2/§4.1: the T commit MUST include
+			// the PSK proposal).
+			let (resolver, record) = store.recordingResolver()
 			let classicalPending = try MLS.RFC9420.Group.joining(
 				classicalProvider, welcome: welcome.tWelcome,
-				credentials: classicalCredentials, psk: store.resolver())
+				credentials: classicalCredentials, psk: resolver)
+			// Resolution happens inside `joining` itself, so the record is already
+			// complete here — fail fast, before the (pure value) `apply()` below.
+			guard record.resolved(apqPsk.storageID) else {
+				throw MLS.Combiner.Error.apqPskNotBound
+			}
 			let classicalRoster = classicalPending.roster
 			let classicalGroup = classicalPending.apply().group
 

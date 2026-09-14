@@ -134,6 +134,17 @@ extension MLS.Combiner {
 	/// directly regardless of intervening PARTIALs. This is the draft-generic
 	/// attestation check; the 2-party proposal whitelist and the FULL/PARTIAL commit
 	/// *shape* policy live downstream.
+	///
+	/// **This is the attestation half only, not the complete FULL-commit check.**
+	/// The attestation is an `AppDataUpdate` proposal the sender authored — it says
+	/// the PQ→classical PSK injection happened, but proves nothing on its own (a
+	/// buggy or non-conforming peer could attest without ever folding the
+	/// `apq_psk` in). The other half is [`verifyApqPskBound`], which confirms the
+	/// classical half's `validating` call actually resolved a `PreSharedKey`
+	/// proposal naming the current PQ epoch's `apq_psk` (draft §6.2/§4.1). Callers
+	/// that want both checks in one place should use [`verifyFullCommit`] instead
+	/// of calling this directly; this entry point remains for granular use (and
+	/// testing) where only the attestation is relevant.
 	public static func verifyFullCommitAttestation(
 		classicalEffects: MLS.RFC9420.CommitEffects,
 		pqEffects: MLS.RFC9420.CommitEffects,
@@ -157,5 +168,45 @@ extension MLS.Combiner {
 			throw MLS.Combiner.Error.attestationMismatch
 		}
 		return classical
+	}
+
+	/// Verify that a FULL commit's classical half actually folded the current PQ
+	/// epoch's `apq_psk` in, per draft §6.2/§4.1 — the companion check to
+	/// [`verifyFullCommitAttestation`] (see its doc comment for why both are
+	/// required). Pass the `ResolutionRecord` from the
+	/// `MLS.Combiner.PSKStore.recordingResolver()` given to the classical half's
+	/// `validating` call, and the `apq_psk` freshly exported off the **new** PQ
+	/// epoch (never a retained one): a commit that only resolved a STALE PQ-epoch
+	/// `apq_psk` — real PSK, wrong epoch — must not satisfy this check, since the
+	/// storage id `export` derives is epoch-scoped and a stale export's id differs
+	/// from the current one's.
+	public static func verifyApqPskBound(
+		record: MLS.Combiner.PSKStore.ResolutionRecord,
+		expected: MLS.Combiner.ExportedPsk
+	) throws {
+		guard record.resolved(expected.storageID) else {
+			throw MLS.Combiner.Error.apqPskNotBound
+		}
+	}
+
+	/// The complete FULL-commit check (draft §6.1 + §6.2/§4.1): runs
+	/// [`verifyFullCommitAttestation`] and [`verifyApqPskBound`] together, so a
+	/// caller cannot verify a FULL commit's epoch attestation while forgetting the
+	/// `apq_psk` binding check — both are required to trust a FULL commit. Returns
+	/// the verified `ApqInfoUpdate` on success.
+	public static func verifyFullCommit(
+		classicalEffects: MLS.RFC9420.CommitEffects,
+		pqEffects: MLS.RFC9420.CommitEffects,
+		classicalEpoch: UInt64,
+		pqEpoch: UInt64,
+		record: MLS.Combiner.PSKStore.ResolutionRecord,
+		expected: MLS.Combiner.ExportedPsk,
+		codepoints: MLS.Combiner.Codepoints = .deployed
+	) throws -> MLS.Combiner.ApqInfoUpdate {
+		let verified = try verifyFullCommitAttestation(
+			classicalEffects: classicalEffects, pqEffects: pqEffects,
+			classicalEpoch: classicalEpoch, pqEpoch: pqEpoch, codepoints: codepoints)
+		try verifyApqPskBound(record: record, expected: expected)
+		return verified
 	}
 }

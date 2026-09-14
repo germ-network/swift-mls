@@ -26,6 +26,12 @@ extension MLS.Combiner {
 		/// that must be PARTIAL carried one — a shape the combiner cannot reconcile.
 		case commitShapeMismatch
 
+		/// The classical half of a join or FULL commit did not resolve the expected
+		/// PQ-epoch `apq_psk` — it may carry `APQInfo` and the epoch attestation, but
+		/// never actually folded the PQ half's secrecy into its key schedule
+		/// (draft-ietf-mls-combiner-02 §6.2/§4.1).
+		case apqPskNotBound
+
 		/// An establishment or join step produced no Welcome for the added member.
 		case missingWelcome
 
