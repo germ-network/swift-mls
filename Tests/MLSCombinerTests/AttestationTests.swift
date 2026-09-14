@@ -169,6 +169,99 @@ import Testing
 				from: effects, componentID: Self.componentID) == nil)
 	}
 
+	// MARK: `.customProposal`-wrapped attestation (receiver opted `appDataUpdate`
+	// into `customProposalTypes`)
+
+	/// `extract` reads the same attestation whether the profile surfaces it as the
+	/// typed `.appDataUpdate` effect or, under `customProposalTypes`, as the wrapped
+	/// `.customProposal(type: .appDataUpdate, body:)` effect.
+	@Test func extractAcceptsCustomProposalWrappedAttestation() throws {
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 5, pqEpoch: 6)
+		let appDataUpdate = try update.appDataUpdate(componentID: Self.componentID)
+		let body = try appDataUpdate.mlsEncoded()
+		let effects = MLS.RFC9420.CommitEffects([
+			.customProposal(type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
+		])
+		#expect(
+			try MLS.Combiner.ApqInfoUpdate.extract(
+				from: effects, componentID: Self.componentID) == update)
+	}
+
+	/// A `.customProposal` at some other code point isn't a combiner attestation —
+	/// `extract` skips it rather than trying to decode it as one.
+	@Test func extractIgnoresCustomProposalAtDifferentType() throws {
+		let effects = MLS.RFC9420.CommitEffects([
+			.customProposal(
+				type: MLS.RFC9420.ProposalType(.reInit), body: Data([1, 2, 3]))
+		])
+		#expect(
+			try MLS.Combiner.ApqInfoUpdate.extract(
+				from: effects, componentID: Self.componentID) == nil)
+
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 2)
+		let real = try update.appDataUpdate(componentID: Self.componentID)
+		let mixed = MLS.RFC9420.CommitEffects([
+			.customProposal(
+				type: MLS.RFC9420.ProposalType(.reInit), body: Data([1, 2, 3])),
+			.appDataUpdate(real),
+		])
+		#expect(
+			try MLS.Combiner.ApqInfoUpdate.extract(
+				from: mixed, componentID: Self.componentID) == update)
+	}
+
+	/// Trailing bytes after the wrapped `AppDataUpdate` within the `.customProposal`
+	/// body are rejected the same way the typed path rejects trailing bytes.
+	@Test func extractRejectsTrailingBytesInCustomProposalBody() throws {
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 5, pqEpoch: 6)
+		let appDataUpdate = try update.appDataUpdate(componentID: Self.componentID)
+		let body = try appDataUpdate.mlsEncoded() + Data([0])
+		let effects = MLS.RFC9420.CommitEffects([
+			.customProposal(type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
+		])
+		#expect(throws: MLS.Combiner.Error.attestationMismatch) {
+			_ = try MLS.Combiner.ApqInfoUpdate.extract(
+				from: effects, componentID: Self.componentID)
+		}
+	}
+
+	/// The dedup guard applies across shapes: one typed `.appDataUpdate` plus one
+	/// wrapped `.customProposal(type: .appDataUpdate)` is still two attestations.
+	@Test func extractRejectsMixedShapeDuplicateAttestation() throws {
+		let a = try MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2)
+			.appDataUpdate(componentID: Self.componentID)
+		let bBody = try MLS.Combiner.ApqInfoUpdate(tEpoch: 3, pqEpoch: 3)
+			.appDataUpdate(componentID: Self.componentID)
+			.mlsEncoded()
+		let effects = MLS.RFC9420.CommitEffects([
+			.appDataUpdate(a),
+			.customProposal(
+				type: MLS.RFC9420.ProposalType(.appDataUpdate), body: bBody),
+		])
+		#expect(throws: MLS.Combiner.Error.attestationMismatch) {
+			_ = try MLS.Combiner.ApqInfoUpdate.extract(
+				from: effects, componentID: Self.componentID)
+		}
+	}
+
+	/// `verifyFullCommitAttestation` succeeds when both halves surface the wrapped
+	/// `.customProposal(type: .appDataUpdate)` shape, built by hand like the other
+	/// `CommitEffects`-constructing tests above (no need to drive a real commit under
+	/// `customProposalTypes` for this unit-level check).
+	@Test func verifyFullCommitAttestationAcceptsCustomProposalShape() throws {
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2)
+		let body = try update.appDataUpdate(componentID: Self.componentID).mlsEncoded()
+		let effect = MLS.RFC9420.CommitEffect.customProposal(
+			type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
+		let classicalEffects = MLS.RFC9420.CommitEffects([effect])
+		let pqEffects = MLS.RFC9420.CommitEffects([effect])
+
+		let verified = try MLS.Combiner.verifyFullCommitAttestation(
+			classicalEffects: classicalEffects, pqEffects: pqEffects,
+			classicalEpoch: 2, pqEpoch: 2)
+		#expect(verified == update)
+	}
+
 	// MARK: commit/process helpers (two-step handshake)
 
 	private func commitAttesting(
