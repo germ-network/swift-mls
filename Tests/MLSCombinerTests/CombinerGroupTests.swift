@@ -65,6 +65,39 @@ import Testing
 		}
 	}
 
+	/// `classicalExtraExtensions` lands on the classical half's creation-time
+	/// GroupContext, appended after the combiner's own `APQInfo`, and is never threaded
+	/// onto the PQ half. Omitting the parameter (the default) is a no-op regression:
+	/// both halves still carry only `APQInfo`.
+	@Test func establishThreadsClassicalExtraExtensionsOntoClassicalHalfOnly() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let placeholderType = MLS.RFC9420.ExtensionType(rawValue: 0xFF00)
+		let placeholderData = Data([0xAA, 0xBB, 0xCC])
+		let extra = MLS.RFC9420.Extension(type: placeholderType, data: placeholderData)
+
+		let (group, _) = try MLS.Combiner.CombinerGroup.establish(
+			classical: try Support.halfCreation(founder: alice, peer: bob),
+			pq: try Support.halfCreation(founder: alice, peer: bob),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider,
+			classicalExtraExtensions: [extra])
+
+		#expect(group.classical.context.extensions.contains(extra))
+		#expect(!group.pq.context.extensions.contains(extra))
+
+		// Regression: omitting the parameter still establishes exactly as before — both
+		// halves carry only APQInfo, the classical half carries no extra extension.
+		let (plainGroup, _) = try MLS.Combiner.CombinerGroup.establish(
+			classical: try Support.halfCreation(founder: alice, peer: bob),
+			pq: try Support.halfCreation(founder: alice, peer: bob),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+		#expect(plainGroup.classical.context.extensions.count == 1)
+		#expect(plainGroup.pq.context.extensions.count == 1)
+		#expect(
+			plainGroup.classical.context.extensions[0].type
+				== MLS.Combiner.Codepoints.deployed.apqInfoExtensionType)
+	}
+
 	/// `APQInfo` rides both halves' Welcomes: the joiner reads a `0xF0A1` extension out
 	/// of each half's GroupContext, the identity fields agree across halves, each names
 	/// the joined group and epoch — i.e. `verifyPair()` holds for the joiner.

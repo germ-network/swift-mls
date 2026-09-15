@@ -96,12 +96,19 @@ extension MLS.Combiner.CombinerGroup {
 	/// draft §7 codec, or twomlspq-swift's own framing). Runs under the codepoints'
 	/// component-id wire width so the `apq_psk` `PreSharedKeyID` and the `AppDataUpdate`
 	/// proposal encode at the deployed width.
+	///
+	/// `classicalExtraExtensions` are caller-supplied creation-time GroupContext
+	/// extensions (RFC 9420 §11.1) appended after the combiner's own `APQInfo` on the
+	/// classical half only — the classical half is the message half, so that is where
+	/// application-defined creation-time extensions belong. They are not threaded onto
+	/// the PQ half. Defaults to empty, so existing callers are unaffected.
 	public static func establish(
 		classical: MLS.Combiner.HalfCreation,
 		pq: MLS.Combiner.HalfCreation,
 		mode: UInt8,
 		classicalProvider: any MLS.CipherSuiteProvider,
 		pqProvider: any MLS.CipherSuiteProvider,
+		classicalExtraExtensions: [MLS.RFC9420.Extension] = [],
 		codepoints: MLS.Combiner.Codepoints = .deployed
 	) throws -> (group: MLS.Combiner.CombinerGroup, welcome: MLS.Combiner.APQWelcome) {
 		try codepoints.withWireWidth {
@@ -135,7 +142,8 @@ extension MLS.Combiner.CombinerGroup {
 
 			let nonce = classicalProvider.randomBytes(classicalProvider.hashSize)
 			let (classicalGroup, classicalWelcome) = try createAndAdd(
-				classicalProvider, creation: classical, extensions: [infoExtension],
+				classicalProvider, creation: classical,
+				extensions: [infoExtension] + classicalExtraExtensions,
 				extraProposals: [
 					.proposal(apqPsk.proposal(nonce: nonce)),
 					attestationProposal,
