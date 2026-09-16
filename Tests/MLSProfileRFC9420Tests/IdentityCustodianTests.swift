@@ -137,6 +137,7 @@ struct IdentityCustodianTests {
 		var hashSize: Int { inner.hashSize }
 		var aeadKeySize: Int { inner.aeadKeySize }
 		var aeadNonceSize: Int { inner.aeadNonceSize }
+		var hpkeSecretKeySize: Int? { inner.hpkeSecretKeySize }
 
 		func randomBytes(_ count: Int) -> Data { inner.randomBytes(count) }
 		func hash(_ data: Data) throws -> Data { try inner.hash(data) }

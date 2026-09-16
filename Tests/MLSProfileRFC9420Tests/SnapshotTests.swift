@@ -225,6 +225,158 @@ struct SnapshotTests {
 		}
 	}
 
+	// MARK: - Nsk length validation (spec/snapshot.md §3.1, §4.1.2 `(Nsk)`)
+
+	/// Mimics a wrapper KEM provider (the 0xFDEA ML-KEM case): forwards
+	/// everything to the X25519 provider but reports Nsk = 96 — the CryptoKit
+	/// ML-KEM-768 `integrityCheckedRepresentation` length.
+	private struct MLKEMStyleNskProvider: MLS.CipherSuiteProvider {
+		let inner: any MLS.CipherSuiteProvider
+
+		var cipherSuite: MLS.CipherSuite { inner.cipherSuite }
+		var hashSize: Int { inner.hashSize }
+		var aeadKeySize: Int { inner.aeadKeySize }
+		var aeadNonceSize: Int { inner.aeadNonceSize }
+		var hpkeSecretKeySize: Int? { 96 }
+
+		func randomBytes(_ count: Int) -> Data { inner.randomBytes(count) }
+		func hash(_ data: Data) throws -> Data { try inner.hash(data) }
+		func kdfExtract(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+			-> Data
+		{
+			try inner.kdfExtract(salt: salt, ikm: ikm)
+		}
+		func kdfExpand(prk: some ContiguousBytes, info: Data, length: Int) throws -> Data {
+			try inner.kdfExpand(prk: prk, info: info, length: length)
+		}
+		func kdfExtractSecret(salt: some ContiguousBytes, ikm: some ContiguousBytes) throws
+			-> SecretBytes
+		{
+			try inner.kdfExtractSecret(salt: salt, ikm: ikm)
+		}
+		func kdfExpandSecret(prk: some ContiguousBytes, info: Data, length: Int) throws
+			-> SecretBytes
+		{
+			try inner.kdfExpandSecret(prk: prk, info: info, length: length)
+		}
+		func sign(privateKey: MLS.SignatureSecretKey, content: Data) throws -> Data {
+			try inner.sign(privateKey: privateKey, content: content)
+		}
+		func verify(publicKey: MLS.SignaturePublicKey, content: Data, signature: Data)
+			throws -> Bool
+		{
+			try inner.verify(
+				publicKey: publicKey, content: content, signature: signature)
+		}
+		func aeadSeal(key: Data, nonce: Data, aad: Data?, plaintext: Data) throws -> Data {
+			try inner.aeadSeal(key: key, nonce: nonce, aad: aad, plaintext: plaintext)
+		}
+		func aeadOpen(key: Data, nonce: Data, aad: Data?, ciphertext: Data) throws -> Data {
+			try inner.aeadOpen(key: key, nonce: nonce, aad: aad, ciphertext: ciphertext)
+		}
+		func hpkeGenerateKeyPair() throws -> (MLS.HpkeSecretKey, MLS.HpkePublicKey) {
+			try inner.hpkeGenerateKeyPair()
+		}
+		func hpkeSeal(publicKey: MLS.HpkePublicKey, info: Data, aad: Data?, plaintext: Data)
+			throws -> (enc: Data, ciphertext: Data)
+		{
+			try inner.hpkeSeal(
+				publicKey: publicKey, info: info, aad: aad, plaintext: plaintext)
+		}
+		func hpkeOpen(
+			enc: Data, secretKey: MLS.HpkeSecretKey, info: Data, aad: Data?,
+			ciphertext: Data
+		) throws -> Data {
+			try inner.hpkeOpen(
+				enc: enc, secretKey: secretKey, info: info, aad: aad,
+				ciphertext: ciphertext)
+		}
+		func hpkeDeriveKeyPair(ikm: some ContiguousBytes) throws -> (
+			MLS.HpkeSecretKey, MLS.HpkePublicKey
+		) {
+			try inner.hpkeDeriveKeyPair(ikm: ikm)
+		}
+	}
+
+	@Test("a tree_secret_keys value that is not Nsk bytes is rejected (§3.1)")
+	func rejectsWrongLengthTreeSecretKeys() throws {
+		var snapshot = try SelfInteropTests.createGroup(
+			try SelfInteropTests.member("solo")
+		).makeSnapshot()
+		// X25519's Nsk is 32; a 31-byte secret decodes clean but is silently
+		// undecryptable.
+		let leafNode = try #require(
+			snapshot.memberships.entries[0]!.treeSecretKeys.entries.keys.sorted().first)
+		snapshot.memberships.entries[0]!.treeSecretKeys.entries[leafNode] =
+			SecretField(wrappedValue: SecretBytes(randomByteCount: 31))
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.wrongLength(
+				field: "tree_secret_keys", expected: 32, actual: 31)
+		) {
+			_ = try Group.restore(from: snapshot, Self.provider)
+		}
+	}
+
+	@Test("a pending_update.secret that is not Nsk bytes is rejected (§3.1)")
+	func rejectsWrongLengthPendingUpdateSecret() throws {
+		let solo = try SelfInteropTests.member("solo")
+		var group = try SelfInteropTests.createGroup(solo)
+		_ = try group.proposeUpdate(Self.provider, signingKey: solo.signingKey)
+		var snapshot = try group.makeSnapshot()
+		var membership = try #require(snapshot.memberships.entries[0]!)
+		var pending = try #require(membership.pendingUpdate)
+		let index = try #require(pending.entries.keys.sorted().first)
+		pending.entries[index]!.secret = SecretBytes(randomByteCount: 31)
+		membership.pendingUpdate = pending
+		snapshot.memberships.entries[0] = membership
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.wrongLength(
+				field: "pending_update.secret", expected: 32, actual: 31)
+		) {
+			_ = try Group.restore(from: snapshot, Self.provider)
+		}
+	}
+
+	@Test("a wrapper provider reporting a different Nsk rejects every secret length (§3.1)")
+	func wrapperNskMismatchIsRejected() throws {
+		let wrapper = MLKEMStyleNskProvider(inner: Self.provider)
+		let snapshot = try SelfInteropTests.createGroup(
+			try SelfInteropTests.member("solo")
+		).makeSnapshot()
+		// The honest 32-byte archive still restores under the real provider.
+		_ = try Group.restore(from: snapshot, Self.provider)
+
+		// The same archive under the wrapper's Nsk of 96: honest 32-byte
+		// secrets throw, as do tampered 95-byte and 2400-byte ones.
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.wrongLength(
+				field: "tree_secret_keys", expected: 96, actual: 32)
+		) {
+			_ = try Group.restore(from: snapshot, wrapper)
+		}
+		var shortSnapshot = snapshot
+		let leafNode = try #require(
+			shortSnapshot.memberships.entries[0]!.treeSecretKeys.entries.keys.sorted()
+				.first)
+		shortSnapshot.memberships.entries[0]!.treeSecretKeys.entries[leafNode] =
+			SecretField(wrappedValue: SecretBytes(randomByteCount: 95))
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.wrongLength(
+				field: "tree_secret_keys", expected: 96, actual: 95)
+		) {
+			_ = try Group.restore(from: shortSnapshot, wrapper)
+		}
+		var longSnapshot = snapshot
+		longSnapshot.memberships.entries[0]!.treeSecretKeys.entries[leafNode] =
+			SecretField(wrappedValue: SecretBytes(randomByteCount: 2400))
+		#expect(
+			throws: MLS.RFC9420.SnapshotError.wrongLength(
+				field: "tree_secret_keys", expected: 96, actual: 2400)
+		) {
+			_ = try Group.restore(from: longSnapshot, wrapper)
+		}
+	}
+
 	@Test("a malformed retirement (head_secret present with head_generation 2^32) is rejected")
 	func rejectsMalformedRetirement() throws {
 		var duo = try ApplicationMessageTests.duo()

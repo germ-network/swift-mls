@@ -109,6 +109,17 @@ extension MLS {
 		func hpkeDeriveKeyPair(ikm: some ContiguousBytes) throws -> (
 			HpkeSecretKey, HpkePublicKey
 		)
+
+		/// Expected byte length of an HPKE secret (KEM private) key for this
+		/// suite (`Nsk`, RFC 9180 §7.1; spec/snapshot.md §3.1). A requirement
+		/// (with a `nil` default below, the `randomBytes` pattern) rather than
+		/// an extension-only member: snapshot restore reads it through
+		/// `any CipherSuiteProvider`, and extension defaults are statically
+		/// dispatched — an override or a wrapper's forwarding would be
+		/// invisible there. `nil` = the suite has no fixed-width HPKE private
+		/// key (nothing to check against); only fixed-size suites are
+		/// length-checked at restore.
+		var hpkeSecretKeySize: Int? { get }
 	}
 
 	/// Looks up the `CipherSuiteProvider` for a suite id. An app composes
@@ -168,4 +179,11 @@ extension MLS.CipherSuiteProvider {
 		}
 		return bytes
 	}
+}
+
+extension MLS.CipherSuiteProvider {
+	/// Default `nil`: a suite reports a fixed HPKE private-key length only if it
+	/// has one; a suite with no fixed width leaves this `nil` and keeps the
+	/// non-empty check only (spec/snapshot.md §3.1).
+	public var hpkeSecretKeySize: Int? { nil }
 }
