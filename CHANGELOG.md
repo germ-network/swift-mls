@@ -1,5 +1,11 @@
 # @germ-network/swift-mls
 
+## 0.1.1
+
+### Patch Changes
+
+- [#97](https://github.com/germ-network/swift-mls/pull/97) [`5ccb0af`](https://github.com/germ-network/swift-mls/commit/5ccb0afffc5370d64c3234bbe01716b7c5f4ad95) Thanks [@germ-mark](https://github.com/germ-mark)! - Snapshot restore length-checks `tree_secret_keys` and `pending_update.secret` against the provider's HPKE secret-key size (`Nsk`, spec/snapshot.md §3.1/§4.1.2) instead of accepting any non-empty byte string.
+
 ## 0.1.0
 
 ### Minor Changes
