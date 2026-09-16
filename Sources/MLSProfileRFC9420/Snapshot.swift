@@ -899,11 +899,14 @@ extension MLS.RFC9420.Group {
 		guard tree.leaf(at: leafIndex) != nil else {
 			throw MLS.RFC9420.SnapshotError.myLeafIndexBlank(leafIndex.value)
 		}
+		// spec/snapshot.md §4.1.2 annotates both secret fields (Nsk); when the
+		// provider reports Nsk, restore length-checks against it (§3.1).
+		let nsk = provider.hpkeSecretKeySize
 		let secretKeys = try restoreTreeSecretKeys(
-			archive.treeSecretKeys, myLeafIndex: leafIndex, tree: tree)
+			archive.treeSecretKeys, myLeafIndex: leafIndex, tree: tree, nsk: nsk)
 		let pendingUpdate = try archive.pendingUpdate.map {
 			try restorePendingUpdate(
-				$0, leafIndex: leafIndex, currentEpoch: currentEpoch)
+				$0, leafIndex: leafIndex, currentEpoch: currentEpoch, nsk: nsk)
 		}
 		let ownSend = try restoreOwnSend(
 			archive.ownSend, currentEpoch: currentEpoch, nh: provider.hashSize,
@@ -937,10 +940,13 @@ extension MLS.RFC9420.Group {
 	/// is malformed). The epoch and own-leaf node are not stored: they are the
 	/// current epoch (a pending Update is cleared on every advance, so it is only
 	/// valid for `group_context.epoch`) and `2 · leaf`. The public key is opaque
-	/// wire bytes; the secret is validated non-empty by `HpkeSecretKey`.
+	/// wire bytes; the secret is validated non-empty by `HpkeSecretKey`, and —
+	/// when the provider reports `Nsk` — length-checked against it
+	/// (spec/snapshot.md §3.1: a wrong-length value is a decode error; §4.1.2
+	/// annotates the field `(Nsk)`).
 	private static func restorePendingUpdate(
 		_ map: MLS.RFC9420.IntegerKeyedMap<PendingUpdateEntryArchive>,
-		leafIndex: MLS.LeafIndex, currentEpoch: UInt64
+		leafIndex: MLS.LeafIndex, currentEpoch: UInt64, nsk: Int?
 	) throws -> (
 		epoch: UInt64, node: UInt32,
 		updates: [(publicKey: MLS.HpkePublicKey, secret: MLS.HpkeSecretKey)]
@@ -956,6 +962,10 @@ extension MLS.RFC9420.Group {
 				)
 			}
 			let entry = map.entries[index]!
+			if let nsk {
+				try requireLength(
+					entry.secret.byteCount, nsk, "pending_update.secret")
+			}
 			updates.append(
 				(
 					publicKey: MLS.HpkePublicKey(entry.publicKey),
@@ -973,10 +983,13 @@ extension MLS.RFC9420.Group {
 	}
 
 	/// spec/snapshot.md §4.1.2 key 0: node indices lie on the member's own direct
-	/// path (own leaf included), never empty.
+	/// path (own leaf included), never empty. When `nsk` is given (the provider
+	/// reports `Nsk`), each secret is length-checked against it
+	/// (spec/snapshot.md §3.1: a wrong-length value is a decode error; §4.1.2
+	/// annotates the field `(Nsk)`).
 	private static func restoreTreeSecretKeys(
 		_ map: MLS.RFC9420.IntegerKeyedMap<SecretField<SecretBytes>>,
-		myLeafIndex: MLS.LeafIndex, tree: MLS.TreeKEM.RatchetTree
+		myLeafIndex: MLS.LeafIndex, tree: MLS.TreeKEM.RatchetTree, nsk: Int?
 	) throws -> [UInt32: MLS.HpkeSecretKey] {
 		guard !map.entries.isEmpty else {
 			throw MLS.RFC9420.SnapshotError.unexpectedlyEmpty(field: "tree_secret_keys")
@@ -1001,6 +1014,10 @@ extension MLS.RFC9420.Group {
 			guard occupied else {
 				throw MLS.RFC9420.SnapshotError.treeSecretKeyOffDirectPath(
 					node: node)
+			}
+			if let nsk {
+				try requireLength(
+					secret.wrappedValue.byteCount, nsk, "tree_secret_keys")
 			}
 			secretKeys[node] = try MLS.HpkeSecretKey(secret.wrappedValue)
 		}

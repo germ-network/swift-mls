@@ -24,7 +24,7 @@ extension MLS.RFC9420 {
 		/// source of truth for the suite).
 		case cipherSuiteMismatch
 		/// A length-constrained byte string (spec/snapshot.md §3.1) was the
-		/// wrong length for the suite: `Nh`/`Nk`/`Nn`.
+		/// wrong length for the suite: `Nh`/`Nk`/`Nn`/`Nsk`.
 		case wrongLength(field: String, expected: Int, actual: Int)
 		/// A `{ + uint => ... }` map the schema marks "never empty" was empty
 		/// (spec/snapshot.md §4.1.1/§4.1.2/§4.3), or `memberships` itself was

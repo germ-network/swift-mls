@@ -434,12 +434,14 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
-	private var hpkeSecretKeySize: Int {
+	/// `Nsk` for the supported suites (RFC 9180 §7.1); `nil` where the suite is
+	/// not backed (snapshot restore then falls back to the non-empty check only).
+	public var hpkeSecretKeySize: Int? {
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha, .p256Aes128: 32
 		case .p384Aes256: 48
 		case .p521Aes256: 66
-		default: 0
+		default: nil
 		}
 	}
 
@@ -510,6 +512,9 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	func hpkeDeriveKeyPair(ikm: some ContiguousBytes) throws -> (
 		MLS.HpkeSecretKey, MLS.HpkePublicKey
 	) {
+		guard let nsk = hpkeSecretKeySize else {
+			throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+		}
 		// RFC 9180 §4's LabeledExtract concatenates `ikm` into a byte string
 		// that is then hashed, so the seed's bytes must be materialized here
 		// regardless of custody — an inherent `Data` for the hash input, not a
@@ -522,7 +527,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 			let sk = try MLS.HpkeSecretKey(
 				kemLabeledExpand(
 					prk: dkpPrk, label: "sk", info: Data(),
-					length: hpkeSecretKeySize))
+					length: nsk))
 			return (sk, try hpkePublicKey(for: sk))
 		}
 
@@ -535,7 +540,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		for counter in UInt8(0)...254 {
 			var candidate = try kemLabeledExpand(
 				prk: dkpPrk, label: "candidate", info: Data([counter]),
-				length: hpkeSecretKeySize)
+				length: nsk)
 			candidate[0] &= bitmask
 			let candidateKey = try MLS.HpkeSecretKey(candidate)
 			if let publicKey = try? hpkePublicKey(for: candidateKey) {
