@@ -1,5 +1,11 @@
 # @germ-network/swift-mls
 
+## 0.1.2
+
+### Patch Changes
+
+- [#100](https://github.com/germ-network/swift-mls/pull/100) [`c55fb15`](https://github.com/germ-network/swift-mls/commit/c55fb1544f2a1742e3260bcf2dadb9703c83c6cd) Thanks [@germ-mark](https://github.com/germ-mark)! - Opt `MLS.Combiner`'s founding-commit orchestration out of optimization: a Swift 6.4.0 optimizer bug (SIL ownership verifier, Android cross-compilation only) crashed `-c release` builds of `MLSCombiner`.
+
 ## 0.1.1
 
 ### Patch Changes
