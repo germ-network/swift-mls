@@ -169,6 +169,16 @@ extension MLS.Combiner.CombinerGroup {
 	/// attestation) as the founding commit; returns the group at epoch 1 and the
 	/// added member's Welcome. The two-step handshake: adopt the `committing`
 	/// transition's group, then apply the pending advance onto it.
+	///
+	/// The read-`group`-then-`takeOutput()` handoff on `Transition` (a
+	/// non-frozen `~Copyable` struct) trips a Swift 6.4.0 optimizer bug under
+	/// `-O` — SIL verification fails with "read-only scope invalidated by a
+	/// local write" once a public caller makes this function a specialization
+	/// target (the swiftlang/swift#86147 family; #86178's verifier relaxation
+	/// covered only the `destroy_addr` form, and the crash reproduces only
+	/// cross-compiling for Android). These are one-shot handshake
+	/// orchestration paths, so opt them out of optimization.
+	@_optimize(none)
 	private static func createAndAdd(
 		_ provider: any MLS.CipherSuiteProvider,
 		creation: MLS.Combiner.HalfCreation,
