@@ -239,7 +239,7 @@ let package = Package(
             name: "MLSCombinerTests",
             dependencies: [
                 "MLSCombiner", "MLSProfileRFC9420", "MLSExtensions", "MLSCrypto",
-                "MLSCodec", "MLSTreeKEM", "MLSFraming",
+                "MLSCodec", "MLSTreeKEM", "MLSFraming", "MLSVectorSupport",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),

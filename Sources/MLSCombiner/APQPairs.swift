@@ -5,10 +5,11 @@ import MLSProfileRFC9420
 // half and a PQ half of the same RFC 9420 object. Each is the trivial MLS-presentation
 // struct `{ X t_*; X pq_*; }`, so the codec is `encode(t) ‖ encode(pq)`, each field via
 // its own type's `MLSCodable` (the profile types already conform). This draft §7 codec
-// is the GENERIC default; the deployed TwoMLSPQ wire uses Germ tag+length framing
-// instead (`[tag][u32-LE a_len][a][u32-LE b_len][b]`), which twomlspq-swift supplies as
-// a compat override reading `.t`/`.pq` — swift-mls owns the logical pairs + the draft
-// codec, not the deployed framing.
+// is the GENERIC default; the deployed TwoMLSPQ opaque-blob framing (Rust
+// `encode_combiner_key_package`: `[version byte][opaque t][opaque pq]`, the §7 pair as
+// §2.1.2 varint vectors — CombinerBlob reads it) is engine-owned, and twomlspq-swift
+// supplies a compat override reading `.t`/`.pq` for the archive migration — swift-mls
+// owns the logical pairs + the draft codec, not the blob's minting.
 //
 // `APQPartialGroupInfo` is DEFERRED: its base `PartialGroupInfo` is not an RFC 9420
 // type and appears nowhere in the deployed code or this profile, so TwoMLSPQ does not
