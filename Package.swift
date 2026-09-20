@@ -6,14 +6,16 @@ import PackageDescription
 
 let package = Package(
     name: "swift-mls",
-    // macOS 14 / iOS 17, not the lower floor the rest of swift-crypto allows:
-    // CryptoKit's own HPKE type (which `import Crypto` resolves to on Apple
-    // platforms) is @available(iOS 17.0, macOS 14.0, ...) — stricter than the
-    // 10.15/13 annotation on swift-crypto's own HPKE source, which only
-    // applies when swift-crypto compiles its own implementation. HPKE
-    // underlies EncryptWithLabel, so this floor is not avoidable while every
-    // suite delegates to swift-crypto's HPKE. See SwiftCryptoProvider.swift.
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10)],
+    // macOS 15 / iOS 18. Two floors stack here: CryptoKit's own HPKE type
+    // (which `import Crypto` resolves to on Apple platforms) is
+    // @available(iOS 17.0, macOS 14.0, ...) — stricter than the 10.15/13
+    // annotation on swift-crypto's own HPKE source, which only applies when
+    // swift-crypto compiles its own implementation (HPKE underlies
+    // EncryptWithLabel, so this floor is not avoidable while every suite
+    // delegates to swift-crypto's HPKE — see SwiftCryptoProvider.swift); and
+    // swift-secret-bytes 0.5.0, the swift-crypto-5 release this package now
+    // rides, declares iOS 18 / macOS 15. The higher floor wins.
+    platforms: [.macOS(.v15), .iOS(.v18), .tvOS(.v18), .watchOS(.v11)],
     products: [
         .library(name: "MLSCodec", targets: ["MLSCodec"]),
         .library(name: "MLSCrypto", targets: ["MLSCrypto"]),
@@ -27,20 +29,31 @@ let package = Package(
         .library(name: "MLSCombiner", targets: ["MLSCombiner"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
-        // Zeroizing storage for held secrets. Floor is iOS 16 / macOS 13,
-        // below this package's own, so it imposes nothing on adopters; its
-        // one dependency is swift-crypto, already in this tree. Pinned to the
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
+        // Zeroizing storage for held secrets. Its floor is now iOS 18 /
+        // macOS 15 (0.5.0), which this package's own floor matches; its one
+        // dependency is swift-crypto, already in this tree. Pinned to the
         // minor: it is pre-1.0 and breaks at minor bumps by its own changelog.
-        // 0.4.0 adds the SecretArchive plaintext-ingress SPI the mls-rs migration
-        // needs (germ-network/swift-secret-bytes#9).
+        // 0.5.0 is its swift-crypto 5 release (tracking this package's move);
+        // 0.4.0 added the SecretArchive plaintext-ingress SPI the mls-rs
+        // migration needs (germ-network/swift-secret-bytes#9).
         .package(
             url: "https://github.com/germ-network/swift-secret-bytes.git",
-            .upToNextMinor(from: "0.4.0")),
+            .upToNextMinor(from: "0.5.0")),
         // Interop-harness only — never a dependency of any library product
         // (grpc-swift 2 requires macOS 15+; the executable target below is
         // the sole consumer). Pinned major versions keep the checked-in
         // generated stubs valid.
+        //
+        // swift-certificates is pulled in transitively by grpc-swift-nio-transport.
+        // Its released line (≤1.20.0) caps swift-crypto at `..<5.0.0`, so it
+        // cannot resolve against swift-crypto 5; main has widened the cap to
+        // `..<6.0.0` but is unreleased. Pinned to that main commit as a root
+        // constraint to override the transitive cap — replace with the released
+        // version (≥ the first 1.x that permits swift-crypto 5) once it cuts.
+        .package(
+            url: "https://github.com/apple/swift-certificates.git",
+            revision: "9ad45b63b0d6529637e61101a6ad1e41ddf7964c"),
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.0.0"),
         .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.0.0"),
