@@ -1,12 +1,12 @@
 ---
-"@germ-network/swift-mls": minor
+"@germ-network/swift-mls": patch
 ---
 
 Widen the `swift-crypto` dependency to `from: "5.0.0"` and move
 `swift-secret-bytes` to its 0.5.0 (swift-crypto 5) release, as part of the
 org-wide swift-crypto 5 migration.
 
-**Breaking — platform floor rises to macOS 15 / iOS 18 / tvOS 18 / watchOS 11.**
+Note — the platform floor rises to macOS 15 / iOS 18 / tvOS 18 / watchOS 11.
 swift-secret-bytes 0.5.0, the swift-crypto-5 release this package now rides,
 declares iOS 18 / macOS 15; the new floor is the higher of that and the
 existing CryptoKit-HPKE floor.
