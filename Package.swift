@@ -39,7 +39,7 @@ let package = Package(
         // migration needs (germ-network/swift-secret-bytes#9).
         .package(
             url: "https://github.com/germ-network/swift-secret-bytes.git",
-            .upToNextMinor(from: "0.5.0")),
+            from: "0.5.0"),
         // Interop-harness only — never a dependency of any library product
         // (grpc-swift 2 requires macOS 15+; the executable target below is
         // the sole consumer). Pinned major versions keep the checked-in
