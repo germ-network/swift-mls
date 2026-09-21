@@ -1,5 +1,17 @@
 # @germ-network/swift-mls
 
+## 0.1.4
+
+### Patch Changes
+
+- [#105](https://github.com/germ-network/swift-mls/pull/105) [`49b4465`](https://github.com/germ-network/swift-mls/commit/49b4465edf81a6ce586db66c0b22db7330194057) Thanks [@germ-mark](https://github.com/germ-mark)! - Widen the `swift-secret-bytes` pin from `.upToNextMinor(from: "0.5.0")` to
+  `from: "0.5.0"`.
+
+  `.upToNextMinor` on a 0.x version fences the range at `0.5.x`, so this package
+  capped the whole graph below swift-secret-bytes 0.6.0 — the release that carries
+  the shared `SecretBytes`↔`String` text bridge. `from:` keeps the 0.5.0 floor and
+  admits 0.6.0 when it cuts. No source changes.
+
 ## 0.1.3
 
 ### Patch Changes
