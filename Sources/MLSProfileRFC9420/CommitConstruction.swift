@@ -542,6 +542,7 @@ extension MLS.RFC9420.Group {
 		var newSecretKeysByLeaf: [MLS.LeafIndex: [UInt32: MLS.HpkeSecretKey]] = [
 			committerLeaf: newSecretKeys
 		]
+		let migratedUpdateSecrets = Self.migratedUpdateSecrets(resolved)
 		for (index, membership) in memberships.enumerated()
 		where index != committerIndex && !removedLocal.contains(membership.leafIndex) {
 			if let path = updatePath, let contextEncoded = provisionalContextEncoded {
@@ -550,7 +551,8 @@ extension MLS.RFC9420.Group {
 					senderIndex: committerLeaf,
 					provisionalContextEncoded: contextEncoded,
 					blankedNodes: applied.blankedNodes,
-					addedLeaves: applied.addedLeaves, provider)
+					addedLeaves: applied.addedLeaves,
+					migratedUpdateSecrets: migratedUpdateSecrets, provider)
 				guard derived == commitSecret else {
 					throw MLS.RFC9420.GroupError.divergentCommitSecret
 				}

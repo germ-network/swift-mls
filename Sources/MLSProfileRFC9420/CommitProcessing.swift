@@ -33,6 +33,13 @@ extension MLS.RFC9420 {
 		/// later epoch may have reused it.
 		public var epoch: UInt64
 		public var groupID: Data
+		/// An Update's leaf secret, when `@_spi(Migration)
+		/// Group.insertMigratedOwnUpdate` was given one directly rather than
+		/// finding it already in the group's `pendingUpdate` — not `public`,
+		/// so no API reads a member's own secret out of the store this way.
+		/// `installKeysForMembership` falls back to it only when no
+		/// group-held pending pair covers the leaf a commit installs.
+		var migratedLeafSecret: MLS.HpkeSecretKey? = nil
 	}
 
 	/// A proposal whose framing has been authenticated — the capability
@@ -163,7 +170,7 @@ extension MLS.RFC9420 {
 		/// The migration-only insertion path, reachable only from
 		/// `@_spi(Migration) Group.insertMigratedOwnUpdate` — every authenticity
 		/// check (ownership, freshness, the leaf's own signature, the
-		/// possession-backed pending-secret proof) is that method's job, not
+		/// possession proof) is that method's job, not
 		/// this one's. This is a plain write with exactly one check of its
 		/// own: it throws if `ref` already names an entry, verified or
 		/// migrated, so a migrated write can never replace one. `ref` is
@@ -838,6 +845,7 @@ extension MLS.RFC9420.Group {
 			// root — so a divergence means the memberships decapped inconsistent
 			// path material and the commit is rejected, never applied.
 			let provisionalContextEncoded = try provisionalContext.mlsEncoded()
+			let migratedUpdateSecrets = Self.migratedUpdateSecrets(resolved)
 			var agreedCommitSecret: SecretBytes?
 			for membership in survivingMemberships {
 				let (keys, derived) = try installKeysForMembership(
@@ -845,7 +853,7 @@ extension MLS.RFC9420.Group {
 					senderIndex: senderIndex,
 					provisionalContextEncoded: provisionalContextEncoded,
 					blankedNodes: blankedNodes, addedLeaves: addedLeaves,
-					provider)
+					migratedUpdateSecrets: migratedUpdateSecrets, provider)
 				if let agreed = agreedCommitSecret {
 					guard derived == agreed else {
 						throw MLS.RFC9420.GroupError.divergentCommitSecret
@@ -1478,6 +1486,30 @@ extension MLS.RFC9420.Group {
 		}
 	}
 
+	/// Resolved Updates that carry a migration-supplied leaf secret
+	/// (`@_spi(Migration) Group.insertMigratedOwnUpdate`), keyed by the
+	/// leaf's OWN new encryption key — the fallback `installKeysForMembership`
+	/// reaches for when no group-held `pendingUpdate` entry covers the leaf a
+	/// commit installs. Safe to key by public key alone: `applyProposals`'s
+	/// own post-application sweep (`MLS.TreeKEM.TreeError.duplicateEncryptionKey`)
+	/// already rejected any commit whose resulting tree has two leaves
+	/// sharing an encryption key, before either caller below ever reaches
+	/// this — and an Update proposal only ever replaces its own sender's
+	/// leaf besides, so a match here is already scoped to the right
+	/// membership. Shared by `validatedDelta` (receive) and `committing`
+	/// (send, for a SIBLING local membership's Update the committer folds).
+	static func migratedUpdateSecrets(
+		_ resolved: [MLS.RFC9420.StoredProposal]
+	) -> [MLS.HpkePublicKey: MLS.HpkeSecretKey] {
+		Dictionary(
+			resolved.compactMap { stored -> (MLS.HpkePublicKey, MLS.HpkeSecretKey)? in
+				guard case .update(let leafNode) = stored.proposal,
+					let secret = stored.migratedLeafSecret
+				else { return nil }
+				return (leafNode.encryptionKey, secret)
+			}, uniquingKeysWith: { first, _ in first })
+	}
+
 	/// Decap the committer's path for one **local membership** (slice 4a),
 	/// returning that membership's installed new-epoch keys and the
 	/// `commit_secret` it derives. Each membership prunes and decaps against its
@@ -1493,6 +1525,7 @@ extension MLS.RFC9420.Group {
 		provisionalContextEncoded: Data,
 		blankedNodes: Set<UInt32>,
 		addedLeaves: Set<MLS.LeafIndex>,
+		migratedUpdateSecrets: [MLS.HpkePublicKey: MLS.HpkeSecretKey],
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> (keys: [UInt32: MLS.HpkeSecretKey], commitSecret: SecretBytes) {
 		// Stale keys go before the fresh ones arrive (the prune-before-merge order
@@ -1505,13 +1538,20 @@ extension MLS.RFC9420.Group {
 			leafCount: provisionalTree.leafCount)
 		// Seed this membership's committed self-Update leaf key (see the N = 1
 		// path's own comment): retain every proposed secret, install the one whose
-		// public key the provisional tree actually placed at this leaf.
+		// public key the provisional tree actually placed at this leaf. A
+		// group-held `pendingUpdate` entry wins; if none covers the installed
+		// key, fall back to a migration-supplied secret attached to the
+		// resolved store entry for that same Update (`@_spi(Migration)
+		// Group.insertMigratedOwnUpdate`, when it wasn't already in
+		// `pendingUpdate`).
+		let installedKey = provisionalTree.leaf(at: membership.leafIndex)?.encryptionKey
 		if let pending = membership.pendingUpdate, pending.epoch == context.epoch,
-			let installedKey = provisionalTree.leaf(at: membership.leafIndex)?
-				.encryptionKey,
+			let installedKey,
 			let match = pending.updates.first(where: { $0.publicKey == installedKey })
 		{
 			keys[pending.node] = match.secret
+		} else if let installedKey, let secret = migratedUpdateSecrets[installedKey] {
+			keys[2 * membership.leafIndex.value] = secret
 		}
 		let result = try provisionalTree.decapCommitPath(
 			heldSecretKeys: keys, sender: senderIndex,
