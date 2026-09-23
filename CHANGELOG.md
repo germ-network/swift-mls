@@ -1,5 +1,11 @@
 # @germ-network/swift-mls
 
+## 0.1.6
+
+### Patch Changes
+
+- [#111](https://github.com/germ-network/swift-mls/pull/111) [`42a9682`](https://github.com/germ-network/swift-mls/commit/42a968286289d6152f7b4f60a2b1252d78e57718) Thanks [@germ-mark](https://github.com/germ-mark)! - The migration-only own-Update insert (`@_spi(Migration) Group.insertMigratedOwnUpdate`) can now take the Update's leaf secret directly instead of requiring it in the group state.
+
 ## 0.1.5
 
 ### Patch Changes
