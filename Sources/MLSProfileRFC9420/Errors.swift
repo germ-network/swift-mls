@@ -332,5 +332,29 @@ extension MLS.RFC9420 {
 		/// epoch" — so this is the caller's decision to make, not a
 		/// mandate to wipe immediately.
 		case removedFromGroup
+		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: the membership at
+		/// `leaf` has no retained self-Update record (`pendingUpdate`, current
+		/// epoch) naming the given leaf's `encryptionKey`. Without a match,
+		/// nothing here proves this device's archive holds ANY secret for the
+		/// leaf's public key, let alone the right one — installing it unseen
+		/// would silently strand the device unable to derive its own future
+		/// secrets once the leaf lands.
+		case migratedUpdateHasNoPendingSecret
+		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: a `pendingUpdate`
+		/// entry named the leaf's `encryptionKey`, but sealing a probe to that
+		/// public key and opening it with the paired secret didn't round-trip.
+		/// A name match alone is not proof of a genuine pair — `pendingUpdate`
+		/// isn't written only by `proposeUpdate`; a snapshot restore also
+		/// stamps entries at the current epoch without cross-checking each
+		/// secret against its public key — so this is the actual possession
+		/// proof, catching a corrupted or mismatched archive before the leaf
+		/// is ever installed.
+		case migratedUpdateSecretMismatch
+		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: the given `ref`
+		/// already names an entry in the store, verified or migrated. A migrated
+		/// write may only add a new entry, never replace one — replacing a
+		/// verified entry would let unauthenticated data displace authenticated
+		/// data under the same key.
+		case migratedUpdateRefAlreadyStored
 	}
 }

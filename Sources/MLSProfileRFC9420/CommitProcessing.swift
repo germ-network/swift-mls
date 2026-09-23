@@ -18,7 +18,11 @@ extension MLS.RFC9420 {
 	/// that is deliberate: the only way to produce a `StoredProposal` from
 	/// outside this module is `ProposalStore.insert`, which derives
 	/// proposal, sender, and the ref that keys them from one
-	/// `VerifiedProposal` — see that type's doc comment.
+	/// `VerifiedProposal` — see that type's doc comment. The one narrow
+	/// exception is `Group.insertMigratedOwnUpdate` (`@_spi(Migration)`),
+	/// which restores a member's own outstanding Update proposal after a
+	/// migration that kept it without the signed framing bytes `insert`
+	/// needs — see that method's doc comment for what it checks instead.
 	public struct StoredProposal: Sendable {
 		public var proposal: Proposal
 		public var sender: MLS.Sender
@@ -39,6 +43,9 @@ extension MLS.RFC9420 {
 	/// `PublicMessage`, and `unprotect` for a `PrivateMessage`. The `init` is
 	/// not `public`, so a caller cannot fabricate one from raw bytes — the same
 	/// unrepresentable-by-construction technique `StoredProposal` uses.
+	/// `Group.insertMigratedOwnUpdate` (`@_spi(Migration)`) is the one place a
+	/// `StoredProposal` enters the store without a `VerifiedProposal` behind
+	/// it at all — see that method's doc comment for what stands in instead.
 	public struct VerifiedProposal: Sendable {
 		/// The authenticated frame. Deliberately not `public`: exposing the raw
 		/// `AuthenticatedContent` would let a caller extract and re-wrap it, and
@@ -90,7 +97,15 @@ extension MLS.RFC9420 {
 
 	/// By-reference proposals, keyed by `ProposalRef`.
 	///
-	/// **The store is a trust boundary, and `insert` is its gate.**
+	/// **The store is a trust boundary, and `insert` is its gate.** The one
+	/// narrow exception is `@_spi(Migration) Group.insertMigratedOwnUpdate`,
+	/// which authenticates a member's own outstanding Update proposal a
+	/// different way when its signed framing was never retained — see that
+	/// method's own doc comment for what it checks instead of the framing
+	/// signature below. It reaches `insertMigratedOwnUpdate(_:_:)`, a few
+	/// lines down, only after every one of its own checks passes; that helper
+	/// is a plain write with no checks of its own beyond refusing to replace
+	/// an existing entry — it is not itself a second gate.
 	/// `processing` never recomputes a `ProposalRef` against its stored
 	/// proposal, and never re-verifies a stored `sender` — it does not need
 	/// to, because `insert` accepts only a `VerifiedProposal`, whose framing
@@ -111,7 +126,10 @@ extension MLS.RFC9420 {
 	/// under it, or a sender that doesn't match how the proposal was framed,
 	/// is unrepresentable. The old typealias let a caller assemble those three
 	/// independently, which is what made a mismatched (or unverified)
-	/// substitution constructible.
+	/// substitution constructible. `insertMigratedOwnUpdate(_:_:)` is the one
+	/// exception, reachable only from `@_spi(Migration) Group.insertMigratedOwnUpdate`
+	/// — see that method's doc comment for what ties its ref, proposal, and
+	/// sender together instead of a `VerifiedProposal`.
 	public struct ProposalStore: Sendable {
 		private var entries: [MLS.HashReference: StoredProposal] = [:]
 
@@ -140,6 +158,36 @@ extension MLS.RFC9420 {
 				proposal: proposal, sender: content.content.sender,
 				epoch: content.content.epoch, groupID: content.content.groupID)
 			return ref
+		}
+
+		/// The migration-only insertion path, reachable only from
+		/// `@_spi(Migration) Group.insertMigratedOwnUpdate` — every authenticity
+		/// check (ownership, freshness, the leaf's own signature, the
+		/// possession-backed pending-secret proof) is that method's job, not
+		/// this one's. This is a plain write with exactly one check of its
+		/// own: it throws if `ref` already names an entry, verified or
+		/// migrated, so a migrated write can never replace one. `ref` is
+		/// stored exactly as given, never recomputed — it can't be, without
+		/// the framing bytes a migration never retained. A `ref` that
+		/// resolves to no entry fails closed: the member who owns this Update
+		/// can't process the peer's commit that lands it, and stays stuck at
+		/// that epoch (the commit just fails `unknownProposalReference`). A
+		/// `ref` that resolves to the WRONG entry (a caller pairing mistake,
+		/// not something this method can catch) is not silently misapplied
+		/// when a genuine remote peer sends the commit either — that peer
+		/// built it from ITS OWN, correct resolution, so this side's tree
+		/// hash and confirmation tag stop matching once the wrong proposal is
+		/// applied, and processing fails, just not necessarily with that same
+		/// named error. See `Group.insertMigratedOwnUpdate`'s own doc comment
+		/// for the different, worse risk when a SIBLING local membership is
+		/// the one committing a wrongly-paired entry.
+		mutating func insertMigratedOwnUpdate(
+			_ ref: MLS.HashReference, _ proposal: StoredProposal
+		) throws {
+			guard entries[ref] == nil else {
+				throw MLS.RFC9420.GroupError.migratedUpdateRefAlreadyStored
+			}
+			entries[ref] = proposal
 		}
 
 		public subscript(_ ref: MLS.HashReference) -> StoredProposal? {
@@ -1044,6 +1092,49 @@ extension MLS.RFC9420.Group {
 			tree: provisionalTree, blankedNodes: blankedNodes, added: added)
 	}
 
+	/// The current, pre-commit roster's capabilities and credential types —
+	/// one decode pass over every non-blank leaf, the updater's own (current,
+	/// pre-replacement) leaf included. §7.3's mutual-support bullet is
+	/// actually two clauses: this leaf's credential type must be supported
+	/// by "all members of the group" (no exclusion stated), and this leaf's
+	/// OWN capabilities must cover every credential type "currently in use
+	/// by OTHER members" (explicitly excluding self). Including the
+	/// updater's own leaf here is therefore STRICTER than that second
+	/// clause's literal text, not looser — but it matches the first
+	/// clause's unqualified "all members" and §13.3's "all members of the
+	/// group support" (no "other" there either), so one roster serves both
+	/// without special-casing which clause is being checked. (A LeafNode's
+	/// own credential type must separately be listed in its OWN
+	/// capabilities — §7.2 — but that's `validatePolicy`'s
+	/// `credentialTypeNotInOwnCapabilities` guard, not something roster
+	/// inclusion achieves.)
+	///
+	/// Shared by `validateProposalList` — every arm, not just Update: the
+	/// Add arm's `KeyPackage.validate` and the list-wide §12.2/§13.2
+	/// non-default-type and §12.1.7 required-capabilities sweeps all consume
+	/// this same roster — and, `@_spi(Migration)`, by
+	/// `Group.insertMigratedOwnUpdate`'s §7.3 check. Both build the SAME
+	/// roster from the SAME pre-commit tree, but not quite an identical
+	/// predicate end to end: required capabilities come from
+	/// `context.extensions` on the SPI path, versus `provisionalExtensions`
+	/// (post any GroupContextExtensions proposal in the SAME resolved list)
+	/// on receive. The by-leaf dictionary is exposed (not just the
+	/// flattened capabilities list) because `validateProposalList` also
+	/// needs it keyed, for the §12.2/§12.1.7 sweeps.
+	func currentMemberRoster() throws -> (
+		byLeaf: [MLS.LeafIndex: MLS.RFC9420.Capabilities],
+		credentialTypes: Set<MLS.RFC9420.CredentialType>
+	) {
+		var byLeaf: [MLS.LeafIndex: MLS.RFC9420.Capabilities] = [:]
+		var credentialTypes: Set<MLS.RFC9420.CredentialType> = []
+		for (leafIndex, record) in tree.nonBlankLeaves() {
+			let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
+			byLeaf[leafIndex] = leaf.capabilities
+			credentialTypes.insert(leaf.credential.credentialType)
+		}
+		return (byLeaf, credentialTypes)
+	}
+
 	/// RFC 9420 §12.2 (list rules) and §12.1 (per-proposal validity), over
 	/// the resolved list. This is the authenticity payload of phase 6a as
 	/// much as the policy one: before this pass, an Update's or Add's
@@ -1074,13 +1165,7 @@ extension MLS.RFC9420.Group {
 		// One decode pass over the members, shared by every leaf check.
 		// Indexed, because §12.1.7's membership sweep below needs to
 		// exclude removed members and substitute updated leaves.
-		var memberCapabilitiesByLeaf: [MLS.LeafIndex: MLS.RFC9420.Capabilities] = [:]
-		var memberCredentialTypes: Set<MLS.RFC9420.CredentialType> = []
-		for (leafIndex, record) in tree.nonBlankLeaves() {
-			let leaf = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
-			memberCapabilitiesByLeaf[leafIndex] = leaf.capabilities
-			memberCredentialTypes.insert(leaf.credential.credentialType)
-		}
+		let (memberCapabilitiesByLeaf, memberCredentialTypes) = try currentMemberRoster()
 		let memberCapabilities = Array(memberCapabilitiesByLeaf.values)
 
 		var updatedOrRemoved: Set<MLS.LeafIndex> = []
