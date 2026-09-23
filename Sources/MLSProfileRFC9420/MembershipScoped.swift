@@ -100,29 +100,40 @@ extension MLS.RFC9420.Group {
 	/// Propose a self-Update for the local membership occupying `leaf` (D18) —
 	/// the membership's pending transition to a new LeafNode. N > 1-correct (slice
 	/// 3b): the pending self-Update and the seal are both scoped to this membership.
+	///
+	/// `authenticatedData` rides in the proposal's `FramedContent` (RFC 9420
+	/// §6), covered by its signature and by `ref`. Sent UNENCRYPTED under
+	/// either framing, including `.privateMessage`, where it rides in
+	/// `PrivateMessage`'s own plaintext field (RFC 9420 §6.3) rather than
+	/// inside the encrypted ciphertext.
 	public mutating func proposingUpdate(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage,
-		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil,
+		authenticatedData: Data = Data()
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposeUpdate(
 			membershipIndex: try membershipIndex(of: leaf), provider,
-			sign: sign, framing: framing, newIdentity: newIdentity)
+			sign: sign, framing: framing, newIdentity: newIdentity,
+			authenticatedData: authenticatedData)
 	}
 
-	/// `signingKey:` sugar over the closure form above (ADR 0002).
+	/// `signingKey:` sugar over the closure form above (ADR 0002), `authenticatedData`
+	/// included.
 	public mutating func proposingUpdate(
 		as leaf: MLS.LeafIndex,
 		_ provider: any MLS.CipherSuiteProvider,
 		signingKey: MLS.SignatureSecretKey,
 		framing: HandshakeFraming = .privateMessage,
-		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil,
+		authenticatedData: Data = Data()
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposingUpdate(
 			as: leaf, provider, sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			framing: framing, newIdentity: newIdentity)
+			framing: framing, newIdentity: newIdentity,
+			authenticatedData: authenticatedData)
 	}
 
 	/// Send an application message as the local membership occupying `leaf` (D18),
