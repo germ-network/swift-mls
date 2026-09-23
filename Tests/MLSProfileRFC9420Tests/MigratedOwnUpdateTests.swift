@@ -1455,11 +1455,11 @@ struct MigratedOwnUpdateTests {
 
 		var appliedGroupA = groupA
 		let snapshotBefore = try groupA.makeSnapshot()
-		// The wrong key can construct an `HPKE.Recipient` (it's validly
-		// shaped) but can't open the AEAD ciphertext the genuine key sealed —
-		// verified empirically: this is what `decapCommitPath` actually
-		// throws, not merely SOME error.
-		#expect(throws: CryptoKitError.authenticationFailure) {
+		// The wrong key is validly shaped but can't open what the genuine key
+		// sealed. The backend reports that differently (CryptoKit:
+		// `.authenticationFailure`; BoringSSL: `.underlyingCoreCryptoError`),
+		// so pin the error domain; the passing twin below pins the cause.
+		#expect(throws: CryptoKitError.self) {
 			try appliedGroupA.process(
 				Self.provider, commit: commitMessage, proposals: corruptedStore,
 				psk: { _ in nil })
