@@ -18,12 +18,13 @@ permissions:
 # image to catch up.
 jobs:
   lint:
-    runs-on: macos-15
+    # Lint with the swift-format the code is written with (it ships in the
+    # toolchain); older releases order `@_spi … @testable import` lines
+    # differently. The build and test jobs keep proving the 6.2.3 minimum.
+    runs-on: ubuntu-latest
+    container: swift:6.4.0
     steps:
       - uses: actions/checkout@v4
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
       # --strict: warnings fail the job too, not only errors — .swift-format
       # here matches AtprotoTypes/jxl-encoder-swift's config exactly, but
       # unlike those two repos this is actually enforced in CI, not merely
