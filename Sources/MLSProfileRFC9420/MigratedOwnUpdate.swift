@@ -20,18 +20,20 @@ extension MLS.RFC9420.Group {
 	/// ever be committed; that `leafNode`'s own signature verifies under its
 	/// embedded `signatureKey`, bound to `(groupID, leaf)` exactly as a
 	/// self-Update signs one (`proposeUpdate`'s S2 self-verify checks the
-	/// same thing on the sending side); that `leaf`'s own retained
-	/// `pendingUpdate`, for the CURRENT epoch, names an entry under this
-	/// exact `encryptionKey` AND that entry's secret genuinely opens what it
-	/// seals to that key — a possession proof, not just a name match (see
+	/// same thing on the sending side); that the Update's leaf secret —
+	/// `leaf`'s own retained `pendingUpdate` for the CURRENT epoch, if it
+	/// names an entry under this exact `encryptionKey`, else the
+	/// caller-supplied `leafSecret` — genuinely opens what it seals to that
+	/// key, a possession proof, not just a name match (see
 	/// `migratedUpdateSecretMismatch`'s doc comment for why a match alone
-	/// isn't enough); and that `leafNode` passes the same §7.3 validity
-	/// policy an incoming Update leaf gets. What none of this establishes is
-	/// that `ref` is the real reference for `leafNode` — that can't be
-	/// checked without the framing bytes a migration never retained. Trust
-	/// in the `(ref, leafNode)` pairing rests entirely on the archive being
-	/// this device's own, assembled locally. **Never call this with data
-	/// received over the network.**
+	/// isn't enough; a group-held pair always wins over a supplied one); and
+	/// that `leafNode` passes the same §7.3 validity policy an incoming
+	/// Update leaf gets. What none of this establishes is that `ref` is the
+	/// real reference for `leafNode` — that can't be checked without the
+	/// framing bytes a migration never retained. Trust in the `(ref,
+	/// leafNode)` pairing rests entirely on the archive being this device's
+	/// own, assembled locally. **Never call this with data received over the
+	/// network.**
 	///
 	/// §12.2 forbids the membership that proposed an Update from ever
 	/// committing it itself (`updateByCommitter`) — an Update in your own
@@ -57,6 +59,15 @@ extension MLS.RFC9420.Group {
 	/// that same named error). The sibling-commits-it-wrong risk above is
 	/// different, and worse: getting the `(ref, leafNode)` pairing right is
 	/// the caller's job either way, since nothing here can check it.
+	///
+	/// - Parameter leafSecret: the Update's leaf HPKE secret, for an archive
+	///   that kept it separately from the group snapshot rather than in
+	///   `pendingUpdate`. Length- and possession-checked, and stands on its
+	///   own — no `pendingUpdate` entry required — but a group-held pair
+	///   always wins when both are present. It lives only on `store`'s entry
+	///   for `ref`, for the commit that folds this proposal; this call never
+	///   mutates the group, with `leafSecret` or without it. **Never feed it
+	///   network data**, same as `leafNode`.
 	@_spi(Migration)
 	public func insertMigratedOwnUpdate(
 		as leaf: MLS.LeafIndex,
@@ -65,7 +76,8 @@ extension MLS.RFC9420.Group {
 		ref: MLS.HashReference,
 		leafNode: MLS.RFC9420.LeafNode,
 		epoch: UInt64,
-		groupID: Data
+		groupID: Data,
+		leafSecret: MLS.HpkeSecretKey? = nil
 	) throws {
 		let membershipIndex = try membershipIndex(of: leaf)
 		guard groupID == context.groupID else {
@@ -85,34 +97,39 @@ extension MLS.RFC9420.Group {
 		// current epoch, without cross-checking each secret against its public
 		// key), so a name match alone shows the archive holds SOME entry filed
 		// under this key, not that the paired secret is genuine. The
-		// possession check right below is what actually proves that.
+		// possession check below is what actually proves that. A group-held
+		// entry always wins over a caller-supplied `leafSecret`: nothing here
+		// records the supplied secret in that case.
+		let storedSecret: MLS.HpkeSecretKey?
 		let pendingUpdate = memberships[membershipIndex].pendingUpdate
-		guard let pendingUpdate, pendingUpdate.epoch == context.epoch,
+		if let pendingUpdate, pendingUpdate.epoch == context.epoch,
 			let matched = pendingUpdate.updates.first(where: {
 				$0.publicKey == leafNode.encryptionKey
 			})
-		else {
-			throw MLS.RFC9420.GroupError.migratedUpdateHasNoPendingSecret
-		}
-
-		// Possession: seal a probe to the matched entry's OWN public key and
-		// open it with its OWN secret. Without this, a corrupted or
-		// mismatched archive entry — a name match with no genuine pair behind
-		// it — would only surface later, when the *installed* leaf's commit
-		// lands and this device silently can't decap its own path.
-		do {
-			let probe = Data("migrated-update-possession-probe".utf8)
-			let sealed = try provider.hpkeSeal(
-				publicKey: matched.publicKey, info: Data(), aad: nil,
-				plaintext: probe)
-			let opened = try provider.hpkeOpen(
-				enc: sealed.enc, secretKey: matched.secret, info: Data(), aad: nil,
-				ciphertext: sealed.ciphertext)
-			guard opened == probe else {
+		{
+			try Self.checkPossession(
+				provider, publicKey: matched.publicKey, secret: matched.secret)
+			storedSecret = nil
+		} else if let leafSecret {
+			// Length: a caller-supplied secret of the wrong size for this
+			// suite's Nsk can't be a genuine HPKE private key for
+			// `leafNode.encryptionKey` — reject it before ever handing it to
+			// the crypto provider. On P-521, the possession probe ALONE would
+			// accept a leading-zero-stripped, 65-byte secret (the provider
+			// re-pads it before use, SwiftCryptoProvider.swift's `p521Padded`)
+			// — this check isn't redundant there: a snapshot restore later
+			// rejects that same short length outright (spec/snapshot.md §3.1),
+			// so a secret this check lets slip would silently outlive one that
+			// could never have survived a round trip through the group's own
+			// persistence.
+			if let nsk = provider.hpkeSecretKeySize, leafSecret.data.byteCount != nsk {
 				throw MLS.RFC9420.GroupError.migratedUpdateSecretMismatch
 			}
-		} catch {
-			throw MLS.RFC9420.GroupError.migratedUpdateSecretMismatch
+			try Self.checkPossession(
+				provider, publicKey: leafNode.encryptionKey, secret: leafSecret)
+			storedSecret = leafSecret
+		} else {
+			throw MLS.RFC9420.GroupError.migratedUpdateHasNoPendingSecret
 		}
 
 		guard let currentRecord = tree.leaf(at: leaf) else {
@@ -130,6 +147,32 @@ extension MLS.RFC9420.Group {
 			ref,
 			MLS.RFC9420.StoredProposal(
 				proposal: .update(leafNode), sender: .member(leaf), epoch: epoch,
-				groupID: groupID))
+				groupID: groupID, migratedLeafSecret: storedSecret))
+	}
+
+	/// Seals a probe to `publicKey` and opens it with `secret`; any failure
+	/// (including a malformed `publicKey` — `pendingUpdate`'s own public half
+	/// is never length-checked at snapshot restore) or an opened plaintext
+	/// that doesn't match is `migratedUpdateSecretMismatch`. Without this, a
+	/// corrupted or mismatched pair — a name match with no genuine pairing
+	/// behind it — would only surface later, when the *installed* leaf's
+	/// commit lands and this device silently can't decap its own path.
+	private static func checkPossession(
+		_ provider: any MLS.CipherSuiteProvider, publicKey: MLS.HpkePublicKey,
+		secret: MLS.HpkeSecretKey
+	) throws {
+		do {
+			let probe = Data("migrated-update-possession-probe".utf8)
+			let sealed = try provider.hpkeSeal(
+				publicKey: publicKey, info: Data(), aad: nil, plaintext: probe)
+			let opened = try provider.hpkeOpen(
+				enc: sealed.enc, secretKey: secret, info: Data(), aad: nil,
+				ciphertext: sealed.ciphertext)
+			guard opened == probe else {
+				throw MLS.RFC9420.GroupError.migratedUpdateSecretMismatch
+			}
+		} catch {
+			throw MLS.RFC9420.GroupError.migratedUpdateSecretMismatch
+		}
 	}
 }

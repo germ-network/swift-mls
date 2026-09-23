@@ -334,21 +334,27 @@ extension MLS.RFC9420 {
 		case removedFromGroup
 		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: the membership at
 		/// `leaf` has no retained self-Update record (`pendingUpdate`, current
-		/// epoch) naming the given leaf's `encryptionKey`. Without a match,
-		/// nothing here proves this device's archive holds ANY secret for the
-		/// leaf's public key, let alone the right one — installing it unseen
-		/// would silently strand the device unable to derive its own future
-		/// secrets once the leaf lands.
+		/// epoch) naming the given leaf's `encryptionKey`, AND the caller
+		/// supplied no `leafSecret` either. Without either, nothing here
+		/// proves this device's archive holds ANY secret for the leaf's
+		/// public key, let alone the right one — installing it unseen would
+		/// silently strand the device unable to derive its own future secrets
+		/// once the leaf lands. A supplied `leafSecret` that fails its own
+		/// checks throws `migratedUpdateSecretMismatch` instead of this.
 		case migratedUpdateHasNoPendingSecret
-		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: a `pendingUpdate`
-		/// entry named the leaf's `encryptionKey`, but sealing a probe to that
-		/// public key and opening it with the paired secret didn't round-trip.
-		/// A name match alone is not proof of a genuine pair — `pendingUpdate`
-		/// isn't written only by `proposeUpdate`; a snapshot restore also
-		/// stamps entries at the current epoch without cross-checking each
-		/// secret against its public key — so this is the actual possession
-		/// proof, catching a corrupted or mismatched archive before the leaf
-		/// is ever installed.
+		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: sealing a probe to
+		/// a public key and opening it with the secret claimed to pair with it
+		/// didn't round-trip — a name match alone is not proof of a genuine
+		/// pair. Reached two ways: a `pendingUpdate` entry named the leaf's
+		/// `encryptionKey`, but its secret didn't open the probe
+		/// (`pendingUpdate` isn't written only by `proposeUpdate`; a snapshot
+		/// restore also stamps entries at the current epoch without
+		/// cross-checking each secret against its public key, and never
+		/// length-checks the PUBLIC key at all); or the caller supplied
+		/// `leafSecret` directly, and it either has the wrong byte length for
+		/// this suite's Nsk or fails the same probe against
+		/// `leafNode.encryptionKey`. Either way, the leaf is never installed
+		/// on a mismatch.
 		case migratedUpdateSecretMismatch
 		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: the given `ref`
 		/// already names an entry in the store, verified or migrated. A migrated
