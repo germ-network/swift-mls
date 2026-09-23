@@ -1,5 +1,13 @@
 # @germ-network/swift-mls
 
+## 0.1.5
+
+### Patch Changes
+
+- [#109](https://github.com/germ-network/swift-mls/pull/109) [`66ba6c4`](https://github.com/germ-network/swift-mls/commit/66ba6c40e6848134abdcfc885a9c630a4870fa74) Thanks [@germ-mark](https://github.com/germ-mark)! - Adds `Group.insertMigratedOwnUpdate` (`@_spi(Migration)`), a narrow, migration-only way to restore a member's own outstanding Update proposal when it was carried over from another implementation without the signed framing bytes `ProposalStore.insert` normally requires.
+
+- [#107](https://github.com/germ-network/swift-mls/pull/107) [`472bd86`](https://github.com/germ-network/swift-mls/commit/472bd8688e5b82d4c95a3103d13ecae8578009a5) Thanks [@germ-mark](https://github.com/germ-mark)! - Self-Update proposals can carry authenticated data: `proposeUpdate`/`proposingUpdate(as:)` now take a trailing `authenticatedData: Data = Data()` parameter.
+
 ## 0.1.4
 
 ### Patch Changes
