@@ -21,32 +21,42 @@ extension MLS.RFC9420.Group {
 	/// `Group.verifying(proposal:)` for a `publicMessage`) and feeding the
 	/// resulting `VerifiedProposal` to `ProposalStore.insert`. A caller that
 	/// is also the eventual committer needs nothing else to reference it by.
+	///
+	/// `authenticatedData` rides in the proposal's `FramedContent` (RFC 9420
+	/// §6), covered by its signature and by `ref`. Sent UNENCRYPTED under
+	/// either framing, including `.privateMessage`, where it rides in
+	/// `PrivateMessage`'s own plaintext field (RFC 9420 §6.3) rather than
+	/// inside the encrypted ciphertext.
 	public mutating func proposeUpdate(
 		_ provider: any MLS.CipherSuiteProvider,
 		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage,
-		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil,
+		authenticatedData: Data = Data()
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		// Proposes for the sole local membership; `ambiguousMembership` at N ≠ 1,
 		// where `proposingUpdate(as:)` names it (slice 3b: the pending self-Update
 		// and the seal are both per-membership now, so this is N > 1-correct).
 		try proposeUpdate(
 			membershipIndex: try soleMembershipIndex(), provider,
-			sign: sign, framing: framing, newIdentity: newIdentity)
+			sign: sign, framing: framing, newIdentity: newIdentity,
+			authenticatedData: authenticatedData)
 	}
 
-	/// `signingKey:` sugar over the closure form above (ADR 0002). `newIdentity:`
-	/// is legitimate here too for a credential-only rotation (M1) — see
-	/// `committing`'s matching overload.
+	/// `signingKey:` sugar over the closure form above (ADR 0002), `authenticatedData`
+	/// included. `newIdentity:` is legitimate here too for a credential-only
+	/// rotation (M1) — see `committing`'s matching overload.
 	public mutating func proposeUpdate(
 		_ provider: any MLS.CipherSuiteProvider,
 		signingKey: MLS.SignatureSecretKey,
 		framing: HandshakeFraming = .privateMessage,
-		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil,
+		authenticatedData: Data = Data()
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		try proposeUpdate(
 			provider, sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			framing: framing, newIdentity: newIdentity)
+			framing: framing, newIdentity: newIdentity,
+			authenticatedData: authenticatedData)
 	}
 
 	mutating func proposeUpdate(
@@ -54,7 +64,8 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		sign: MLS.RFC9420.SigningClosure,
 		framing: HandshakeFraming = .privateMessage,
-		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil
+		newIdentity: MLS.RFC9420.NewSigningIdentity? = nil,
+		authenticatedData: Data = Data()
 	) throws -> (message: MLS.RFC9420.Message, ref: MLS.HashReference) {
 		let leaf = memberships[membershipIndex].leafIndex
 		guard let currentRecord = tree.leaf(at: leaf) else {
@@ -115,7 +126,7 @@ extension MLS.RFC9420.Group {
 
 		let framed = MLS.RFC9420.FramedContent(
 			groupID: context.groupID, epoch: context.epoch,
-			sender: .member(leaf), authenticatedData: Data(),
+			sender: .member(leaf), authenticatedData: authenticatedData,
 			content: .proposal(.update(updateLeaf)))
 
 		let message: MLS.RFC9420.Message
@@ -142,7 +153,7 @@ extension MLS.RFC9420.Group {
 			let (sealed, signature) = try protectContent(
 				membershipIndex: membershipIndex, provider,
 				content: .proposal(.update(updateLeaf)),
-				authenticatedData: Data(), sign: sign,
+				authenticatedData: authenticatedData, sign: sign,
 				reuseGuard: MLS.Framing.ReuseGuard(provider.randomBytes(4)),
 				paddingLength: 0)
 			message = .privateMessage(sealed)
