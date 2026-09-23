@@ -692,6 +692,10 @@ struct MigratedOwnUpdateTests {
 		/// migration archive keeps apart from the group snapshot.
 		var leafSecret: MLS.HpkeSecretKey
 		var ref: MLS.HashReference
+		/// Alice's own `PublicMessage` framing of the proposal `ref` names — kept
+		/// so a test can re-verify it through `groupA.verifying(proposal:)`, the
+		/// same way a peer's own copy of the proposal would arrive.
+		var framed: MLS.RFC9420.PublicMessage
 		var bobStore: MLS.RFC9420.ProposalStore
 		var baselineStore: MLS.RFC9420.ProposalStore
 		var baselineRef: MLS.HashReference
@@ -756,7 +760,7 @@ struct MigratedOwnUpdateTests {
 		return SecretFixture(
 			alice: alice, bob: bob, groupA: groupA, groupB: groupB,
 			aliceLeaf: aliceLeaf, bobLeaf: bobLeaf, updateLeaf: updateLeaf,
-			leafSecret: leafSecret, ref: ref, bobStore: bobStore,
+			leafSecret: leafSecret, ref: ref, framed: framed, bobStore: bobStore,
 			baselineStore: baselineStore, baselineRef: baselineRef,
 			baselineProposal: baselineProposal)
 	}
@@ -1501,5 +1505,88 @@ struct MigratedOwnUpdateTests {
 			mlsEncoded: try #require(appliedGroupA.tree.leaf(at: f.aliceLeaf)).encoded)
 		#expect(installed == f.updateLeaf)
 		SelfInteropTests.assertConverged(appliedGroupA, groupB)
+	}
+
+	// MARK: - `ProposalStore.insert` versus a migrated entry (keep-on-match,
+	// throw-on-mismatch)
+
+	/// MATCH: a verified proposal arriving under a ref the migration already
+	/// populated, with content matching exactly, is idempotent — the existing
+	/// (migrated) entry is kept untouched, so its `migratedLeafSecret` survives.
+	@Test(
+		"insert keeps a migrated entry untouched when the verified proposal's content matches"
+	)
+	func insertKeepsMigratedEntryOnMatch() throws {
+		let f = try Self.secretFixture()
+		var store = MLS.RFC9420.ProposalStore()
+		try f.groupA.insertMigratedOwnUpdate(
+			as: f.aliceLeaf, Self.provider, into: &store, ref: f.ref,
+			leafNode: f.updateLeaf, epoch: f.groupA.context.epoch,
+			groupID: f.groupA.context.groupID, leafSecret: f.leafSecret)
+
+		let returnedRef = try store.insert(
+			f.groupA.verifying(Self.provider, proposal: f.framed), Self.provider)
+
+		#expect(returnedRef == f.ref)
+		#expect(store.count == 1)
+		#expect(store[f.ref]?.migratedLeafSecret != nil)
+	}
+
+	/// MISMATCH: a verified proposal arriving under a ref the migration
+	/// mispaired — same ref, different content — is refused rather than
+	/// silently accepted or used to overwrite: the migrated `(ref, leafNode)`
+	/// pairing was wrong, which is exactly the mistake `insertMigratedOwnUpdate`
+	/// itself cannot check (see its doc comment).
+	@Test(
+		"insert throws when a verified proposal's content mismatches a migrated entry under the same ref"
+	)
+	func insertThrowsOnMismatchedMigratedEntry() throws {
+		let f = try Self.fixture()
+		var groupA = f.groupA
+
+		// Alice proposes a SECOND Update (U2/R2) — retained alongside U1, same as
+		// `noOverwriteOfMigratedEntry`.
+		let (message2, ref2) = try groupA.proposeUpdate(
+			Self.provider, signingKey: f.alice.signingKey, framing: .publicMessage)
+		guard case .publicMessage(let framed2) = message2 else { throw Failure.shape }
+		guard case .proposal(.update(let updateLeaf2)) = framed2.content.content else {
+			throw Failure.shape
+		}
+		#expect(updateLeaf2 != f.updateLeaf)
+
+		// The migration mispairs R2 with U1 (`f.updateLeaf`) instead of U2 —
+		// individually genuine, but the wrong leaf for this ref.
+		var store = MLS.RFC9420.ProposalStore()
+		try groupA.insertMigratedOwnUpdate(
+			as: f.aliceLeaf, Self.provider, into: &store, ref: ref2,
+			leafNode: f.updateLeaf, epoch: groupA.context.epoch,
+			groupID: groupA.context.groupID)
+
+		// A genuinely verified copy of the REAL proposal (U2) later arrives under
+		// R2 — its content disagrees with what the migration stored there.
+		#expect(throws: MLS.RFC9420.GroupError.migratedUpdateRefAlreadyStored) {
+			try store.insert(
+				groupA.verifying(Self.provider, proposal: framed2), Self.provider)
+		}
+		let stillStored = try #require(store[ref2])
+		#expect(stillStored.proposal == .update(f.updateLeaf))
+		#expect(store.count == 1)
+	}
+
+	/// CONTROL: with no migrated entry involved, inserting the same verified
+	/// proposal twice is an idempotent overwrite, so the MATCH/MISMATCH results
+	/// above aren't just "insert always throws/keeps".
+	@Test("insert accepts the same verified proposal twice when nothing is migrated")
+	func insertAcceptsRepeatVerifiedInsertWithNoMigratedEntry() throws {
+		let f = try Self.secretFixture()
+		var store = MLS.RFC9420.ProposalStore()
+		let firstRef = try store.insert(
+			f.groupA.verifying(Self.provider, proposal: f.framed), Self.provider)
+		let secondRef = try store.insert(
+			f.groupA.verifying(Self.provider, proposal: f.framed), Self.provider)
+
+		#expect(firstRef == f.ref)
+		#expect(secondRef == f.ref)
+		#expect(store.count == 1)
 	}
 }

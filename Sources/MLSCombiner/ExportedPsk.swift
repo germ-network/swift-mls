@@ -104,8 +104,9 @@ extension MLS.Combiner {
 	/// `application` PSKs from, keyed by the local `storage_id`. It backs the
 	/// resolver the combiner passes to `committing`/`joining`/`validating`, and is
 	/// held on the `CombinerGroup` rather than on either half — the profile has no
-	/// per-group PSK store (resolution is a closure), and a construction-time value
-	/// (the `apq_psk`) must outlive any later client rotation.
+	/// per-group PSK store (resolution is a closure). `establish`/`join` forget the
+	/// founding `apq_psk` once its commit or Welcome has folded it (see `forget`),
+	/// so a `CombinerGroup` this module returns always holds an empty one.
 	public struct PSKStore: Sendable {
 		private var entries: [Data: SecretBytes] = [:]
 
@@ -118,9 +119,10 @@ extension MLS.Combiner {
 
 		/// Remove a PSK once the commit that referenced it has been applied (or it has
 		/// been retired), keeping the store bounded by what the caller still vouches for.
-		/// A downstream seam: not exercised within this module, since the store is
-		/// ephemeral — a live `apq_psk` is already folded into the epoch secrets once
-		/// its referencing commit is applied, with nothing left here to forget.
+		/// `establish` and `join` each call this on the founding `apq_psk` right after
+		/// its commit or Welcome has folded it into the epoch secrets — nothing left
+		/// there to resolve it against — which is why every `CombinerGroup` this
+		/// module returns holds an empty store.
 		public mutating func forget(storageID: Data) {
 			entries[storageID] = nil
 		}

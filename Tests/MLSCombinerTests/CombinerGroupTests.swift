@@ -98,6 +98,97 @@ import Testing
 				== MLS.Combiner.Codepoints.deployed.apqInfoExtensionType)
 	}
 
+	/// RFC 9420 §13.4: an extra classical extension carrying the SAME type as the
+	/// combiner's own `APQInfo` extension throws `duplicateExtensionType`.
+	@Test func establishRejectsExtraExtensionDuplicatingApqInfo() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let apqInfoType = MLS.Combiner.Codepoints.deployed.apqInfoExtensionType
+		let extra = MLS.RFC9420.Extension(type: apqInfoType, data: Data([0xAA]))
+
+		#expect(
+			throws: MLS.Combiner.Error.duplicateExtensionType(
+				MLS.RFC9420.ExtensionType(rawValue: 0xF0A1))
+		) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.provider, classicalExtraExtensions: [extra])
+		}
+	}
+
+	/// Two extras of the same type among `classicalExtraExtensions` themselves —
+	/// no `APQInfo` involvement — throw the same way.
+	@Test func establishRejectsTwoExtrasOfTheSameType() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let placeholderType = MLS.RFC9420.ExtensionType(rawValue: 0xFF00)
+		let first = MLS.RFC9420.Extension(type: placeholderType, data: Data([0x01]))
+		let second = MLS.RFC9420.Extension(type: placeholderType, data: Data([0x02]))
+
+		#expect(
+			throws: MLS.Combiner.Error.duplicateExtensionType(
+				MLS.RFC9420.ExtensionType(rawValue: 0xFF00))
+		) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.provider,
+				classicalExtraExtensions: [first, second])
+		}
+	}
+
+	/// A hand-built `.unknown` extra at `APQInfo`'s own raw code point still
+	/// collides. `0xF0A1` is private-use, so `ExtensionType(rawValue:)` already
+	/// normalizes to `.unknown` there too — this pins the comparison being over
+	/// `rawValue`, not case identity.
+	@Test func establishRejectsUnknownExtraDuplicatingApqInfoRawValue() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let extra = MLS.RFC9420.Extension(
+			type: MLS.RFC9420.ExtensionType.unknown(0xF0A1), data: Data([0xAA]))
+
+		#expect(
+			throws: MLS.Combiner.Error.duplicateExtensionType(
+				MLS.RFC9420.ExtensionType(rawValue: 0xF0A1))
+		) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.provider, classicalExtraExtensions: [extra])
+		}
+	}
+
+	/// The genuine `.known`/`.unknown` hazard: a `.known(.applicationID)` extra
+	/// and an `.unknown` extra at the SAME raw code point are distinct
+	/// `ExtensionType` values (`ExtensibleEnum`'s synthesized `Equatable` treats
+	/// the two cases as different), so a `Set<ExtensionType>` would miss this
+	/// duplicate — comparing by `rawValue` catches it.
+	@Test func establishRejectsKnownAndUnknownExtrasSharingARawValue() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let known = MLS.RFC9420.Extension(
+			type: MLS.RFC9420.ExtensionType(.applicationID), data: Data([0x01]))
+		let unknown = MLS.RFC9420.Extension(
+			type: MLS.RFC9420.ExtensionType.unknown(1), data: Data([0x02]))
+		#expect(known.type != unknown.type)
+
+		#expect(
+			throws: MLS.Combiner.Error.duplicateExtensionType(
+				MLS.RFC9420.ExtensionType(rawValue: 1))
+		) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.provider,
+				classicalExtraExtensions: [known, unknown])
+		}
+	}
+
 	/// `APQInfo` rides both halves' Welcomes: the joiner reads a `0xF0A1` extension out
 	/// of each half's GroupContext, the identity fields agree across halves, each names
 	/// the joined group and epoch — i.e. `verifyPair()` holds for the joiner.
@@ -266,5 +357,45 @@ import Testing
 		#expect(restored.classical.context == founder.classical.context)
 		#expect(restored.pq.context == founder.pq.context)
 		try restored.verifyPair()
+	}
+
+	/// `establish`/`join` each forget the founding `apq_psk` once its commit or
+	/// Welcome has folded it, so the store on the returned `CombinerGroup` is
+	/// empty on BOTH sides — nothing left there to resolve against, not merely
+	/// nothing referenced.
+	@Test func pskStoreIsEmptyAfterEstablishAndJoin() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+
+		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
+			classical: try Support.halfCreation(founder: alice, peer: bob),
+			pq: try Support.halfCreation(founder: alice, peer: bob),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+		let peer = try MLS.Combiner.CombinerGroup.join(
+			welcome: welcome, classicalCredentials: bob.joinCredentials,
+			pqCredentials: bob.joinCredentials,
+			classicalProvider: Support.provider, pqProvider: Support.provider)
+
+		// Independently re-derive the SAME epoch-1 apq_psk by joining the PQ
+		// Welcome a second time, into a fresh Group instance — exporting from it
+		// doesn't touch either party's actual PQ half.
+		let independentPqPending = try MLS.RFC9420.Group.joining(
+			Support.provider, welcome: welcome.pqWelcome,
+			credentials: bob.joinCredentials, psk: { _ in nil })
+		var independentPq = independentPqPending.apply().group
+		let apqPsk = try MLS.Combiner.ExportedPsk.export(
+			from: &independentPq, Support.provider,
+			componentID: MLS.Combiner.Codepoints.deployed.apqComponentID)
+		let id = apqPsk.preSharedKeyID(
+			nonce: Support.provider.randomBytes(Support.provider.hashSize))
+
+		#expect(try founder.pskStore.resolver()(id) == nil)
+		#expect(try peer.pskStore.resolver()(id) == nil)
+
+		// Control: the SAME id resolves non-nil from a store that actually holds
+		// it, so the nil results above aren't a wrong-id artifact.
+		var controlStore = MLS.Combiner.PSKStore()
+		controlStore.register(apqPsk)
+		#expect(try controlStore.resolver()(id) != nil)
 	}
 }

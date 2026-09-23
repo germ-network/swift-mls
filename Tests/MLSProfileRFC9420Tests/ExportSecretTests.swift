@@ -142,4 +142,39 @@ struct ExportSecretTests {
 
 		#expect(atEpoch1 != atEpoch0)
 	}
+
+	/// RFC 5869 §2.3 caps HKDF-Expand's output length at `255*HashLen`; the
+	/// bound is inclusive, so `length == maximum` still succeeds and exports
+	/// exactly that many bytes.
+	@Test("length == maximum succeeds and exports exactly maximum bytes")
+	func maximumLengthSucceeds() throws {
+		let provider = Self.provider
+		let group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+		let maximum = 255 * provider.hashSize
+
+		let exported = try group.exportSecret(
+			provider, label: "rendezvous", context: Data(), length: maximum)
+		#expect(exported.byteCount == maximum)
+	}
+
+	/// `0`, a negative length, one past the maximum, and `Int.max` are all
+	/// rejected by the same guard before ever reaching the HKDF backend, which
+	/// traps rather than throws past `255*HashLen`.
+	@Test("length outside 1...maximum throws exportLengthOutOfRange")
+	func outOfRangeLengthThrows() throws {
+		let provider = Self.provider
+		let group = try SelfInteropTests.createGroup(try SelfInteropTests.member("solo"))
+		let maximum = 255 * provider.hashSize
+
+		for length in [0, -1, maximum + 1, Int.max] {
+			#expect(
+				throws: MLS.RFC9420.GroupError.exportLengthOutOfRange(
+					length: length, maximum: maximum)
+			) {
+				_ = try group.exportSecret(
+					provider, label: "rendezvous", context: Data(),
+					length: length)
+			}
+		}
+	}
 }

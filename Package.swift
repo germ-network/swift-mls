@@ -32,11 +32,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
         // Zeroizing storage for held secrets. Its floor is now iOS 18 /
         // macOS 15 (0.5.0), which this package's own floor matches; its one
-        // dependency is swift-crypto, already in this tree. Pinned to the
-        // minor: it is pre-1.0 and breaks at minor bumps by its own changelog.
-        // 0.5.0 is its swift-crypto 5 release (tracking this package's move);
-        // 0.4.0 added the SecretArchive plaintext-ingress SPI the mls-rs
-        // migration needs (germ-network/swift-secret-bytes#9).
+        // dependency is swift-crypto, already in this tree. `from:`, not
+        // `.upToNextMinor`: it is pre-1.0 and may break at a minor, but an
+        // `.upToNextMinor` fence would cap the whole dependency graph below
+        // its next minor; `from:` keeps the 0.5.0 floor and admits later 0.x
+        // releases. 0.5.0 is its swift-crypto 5 release (tracking this
+        // package's move); 0.4.0 added the SecretArchive plaintext-ingress
+        // SPI the mls-rs migration needs (germ-network/swift-secret-bytes#9).
         .package(
             url: "https://github.com/germ-network/swift-secret-bytes.git",
             from: "0.5.0"),

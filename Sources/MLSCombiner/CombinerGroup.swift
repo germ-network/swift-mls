@@ -11,8 +11,12 @@ extension MLS.Combiner {
 	/// group's id must appear inside its own creation-time `APQInfo`, so it exists
 	/// before `create`), the `epochSecret` (RFC 9420 §11's fresh KDF.Nh value) and the
 	/// `CommitRandomness` for the founding add-commit, and the peer's `KeyPackage` to
-	/// add. The caller owns all randomness — nothing is generated inside the combiner,
-	/// so establishment is byte-for-byte reproducible.
+	/// add. The caller supplies this material; the rest of the randomness `establish`
+	/// consumes flows through the two providers — the classical `psk_nonce` and each
+	/// founding commit's private-framing reuse guard via `randomBytes`, and the
+	/// Welcome/UpdatePath encapsulations via `hpkeSeal`, both `CipherSuiteProvider`
+	/// requirements — so providers that make those deterministic reproduce
+	/// establishment byte-for-byte.
 	public struct HalfCreation: Sendable {
 		public var groupID: Data
 		public var leafNode: MLS.RFC9420.LeafNode
@@ -68,10 +72,12 @@ extension MLS.Combiner {
 	public struct CombinerGroup: Sendable {
 		public internal(set) var classical: MLS.RFC9420.Group
 		public internal(set) var pq: MLS.RFC9420.Group
-		/// The values `application` PSK references in the two halves' commits/joins
-		/// resolve from. Held here, not on either half — the profile resolves PSKs by
-		/// a caller closure, and a construction-time `apq_psk` must outlive any client
-		/// rotation.
+		/// The store `establish`/`join` resolve the founding `apq_psk` from while
+		/// building the pair. Empty on every `CombinerGroup` this module returns:
+		/// `establish` and `join` each forget the `apq_psk` once its commit or
+		/// Welcome has folded it, and `restore` never populates one either — there
+		/// is nothing left here for a caller to read, and the setter is `internal`
+		/// besides.
 		public internal(set) var pskStore: PSKStore
 		public let codepoints: Codepoints
 		// The memberwise initializer is intentionally internal (synthesized): a
@@ -101,7 +107,9 @@ extension MLS.Combiner.CombinerGroup {
 	/// extensions (RFC 9420 §11.1) appended after the combiner's own `APQInfo` on the
 	/// classical half only — the classical half is the message half, so that is where
 	/// application-defined creation-time extensions belong. They are not threaded onto
-	/// the PQ half. Defaults to empty, so existing callers are unaffected.
+	/// the PQ half. Defaults to empty, so existing callers are unaffected. A type
+	/// repeated among them, or equal to the `APQInfo` extension type, throws
+	/// `duplicateExtensionType` (RFC 9420 §13.4).
 	public static func establish(
 		classical: MLS.Combiner.HalfCreation,
 		pq: MLS.Combiner.HalfCreation,
@@ -122,6 +130,23 @@ extension MLS.Combiner.CombinerGroup {
 				pqEpoch: 1)
 			let infoExtension = try info.asExtension(
 				type: codepoints.apqInfoExtensionType)
+			// Compare by rawValue, not by ExtensionType itself: ExtensionType's
+			// synthesized Equatable/Hashable treats `.known` and `.unknown` at the
+			// same code point as distinct, so a Set<ExtensionType> would miss a
+			// hand-built `.unknown` duplicating a `.known` type's wire value.
+			let classicalExtensions = [infoExtension] + classicalExtraExtensions
+			var seenExtensionTypes: Set<UInt16> = []
+			for classicalExtension in classicalExtensions {
+				guard
+					seenExtensionTypes.insert(classicalExtension.type.rawValue)
+						.inserted
+				else {
+					throw MLS.Combiner.Error.duplicateExtensionType(
+						MLS.RFC9420.ExtensionType(
+							rawValue: classicalExtension.type.rawValue))
+				}
+			}
+
 			let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 1)
 			let attestationProposal = MLS.RFC9420.ProposalOrRef.proposal(
 				try attestation.proposal(componentID: codepoints.apqComponentID))
@@ -143,7 +168,7 @@ extension MLS.Combiner.CombinerGroup {
 			let nonce = classicalProvider.randomBytes(classicalProvider.hashSize)
 			let (classicalGroup, classicalWelcome) = try createAndAdd(
 				classicalProvider, creation: classical,
-				extensions: [infoExtension] + classicalExtraExtensions,
+				extensions: classicalExtensions,
 				extraProposals: [
 					.proposal(apqPsk.proposal(nonce: nonce)),
 					attestationProposal,
@@ -153,6 +178,7 @@ extension MLS.Combiner.CombinerGroup {
 			guard let pqWelcome, let classicalWelcome else {
 				throw MLS.Combiner.Error.missingWelcome
 			}
+			store.forget(storageID: apqPsk.storageID)
 			let group = MLS.Combiner.CombinerGroup(
 				classical: classicalGroup, pq: pqGroupForExport, pskStore: store,
 				codepoints: codepoints)
@@ -247,6 +273,7 @@ extension MLS.Combiner.CombinerGroup {
 			let classicalRoster = classicalPending.roster
 			let classicalGroup = classicalPending.apply().group
 
+			store.forget(storageID: apqPsk.storageID)
 			let group = MLS.Combiner.CombinerGroup(
 				classical: classicalGroup, pq: pqGroup, pskStore: store,
 				codepoints: codepoints)
