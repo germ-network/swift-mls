@@ -215,7 +215,7 @@ extension MLS {
 			context: Data,
 			length: Int
 		) throws -> SecretBytes {
-			let secret = try deriveSecret(
+			let secret = try deriveSecretSecret(
 				provider, secret: exporterSecret, label: label)
 			let contextHash = try provider.hash(context)
 			return try expandWithLabelSecret(

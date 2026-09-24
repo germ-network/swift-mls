@@ -31,13 +31,22 @@ extension MLS.RFC9420.Group {
 	/// On a combined group (e.g. `MLS.Combiner.CombinerGroup`) this is callable
 	/// per-half via `.classical` / `.pq`, which are public `Group`s; each half
 	/// derives from its own `exporter_secret`.
+	///
+	/// - Throws: `GroupError.exportLengthOutOfRange` if `length` is outside
+	///   `1...255 * Nh` — checked here rather than left to the HKDF backend,
+	///   which traps instead of throwing past that bound.
 	public func exportSecret(
 		_ provider: any MLS.CipherSuiteProvider,
 		label: String,
 		context: Data,
 		length: Int
 	) throws -> SecretBytes {
-		try MLS.KeySchedule.exportSecret(
+		let maximum = 255 * provider.hashSize
+		guard length > 0, length <= maximum else {
+			throw MLS.RFC9420.GroupError.exportLengthOutOfRange(
+				length: length, maximum: maximum)
+		}
+		return try MLS.KeySchedule.exportSecret(
 			provider, exporterSecret: epoch.exporterSecret,
 			label: label, context: context, length: length)
 	}

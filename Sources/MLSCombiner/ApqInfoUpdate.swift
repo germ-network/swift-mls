@@ -92,7 +92,11 @@ extension MLS.Combiner.ApqInfoUpdate {
 	/// draft caps it at one) or a malformed / wrong-component one. Accepts the
 	/// attestation from either the typed `.appDataUpdate` effect or, when a receiver
 	/// has opted `AppDataUpdate`'s proposal type into `customProposalTypes`, the
-	/// wrapped `.customProposal(type: .appDataUpdate, body:)` effect it sees instead.
+	/// wrapped `.customProposal(type: .appDataUpdate, body:)` effect it sees instead —
+	/// that wrapped arm decodes its `component_id` at the ambient
+	/// `ComponentID.componentIDWireWidth`, so call this inside a
+	/// `$componentIDWireWidth.withValue(codepoints.componentIDWireWidth)` scope, or
+	/// use [`verifyFullCommitAttestation`], which scopes itself.
 	public static func extract(
 		from effects: MLS.RFC9420.CommitEffects,
 		componentID: MLS.Extensions.ComponentID
@@ -145,6 +149,10 @@ extension MLS.Combiner {
 	/// that want both checks in one place should use [`verifyFullCommit`] instead
 	/// of calling this directly; this entry point remains for granular use (and
 	/// testing) where only the attestation is relevant.
+	///
+	/// Runs under `codepoints`' component-id wire width, so a wrapped
+	/// `.customProposal`-shaped attestation (see `extract`) decodes correctly
+	/// whether or not the caller is already inside that scope.
 	public static func verifyFullCommitAttestation(
 		classicalEffects: MLS.RFC9420.CommitEffects,
 		pqEffects: MLS.RFC9420.CommitEffects,
@@ -152,22 +160,25 @@ extension MLS.Combiner {
 		pqEpoch: UInt64,
 		codepoints: MLS.Combiner.Codepoints = .deployed
 	) throws -> MLS.Combiner.ApqInfoUpdate {
-		guard
-			let classical = try ApqInfoUpdate.extract(
-				from: classicalEffects, componentID: codepoints.apqComponentID),
-			let pq = try ApqInfoUpdate.extract(
-				from: pqEffects, componentID: codepoints.apqComponentID)
-		else {
-			throw MLS.Combiner.Error.attestationMismatch
+		try codepoints.withWireWidth {
+			guard
+				let classical = try ApqInfoUpdate.extract(
+					from: classicalEffects,
+					componentID: codepoints.apqComponentID),
+				let pq = try ApqInfoUpdate.extract(
+					from: pqEffects, componentID: codepoints.apqComponentID)
+			else {
+				throw MLS.Combiner.Error.attestationMismatch
+			}
+			// Both halves attest the same pair, and it is the actual post-commit epochs.
+			guard classical == pq,
+				classical.tEpoch == classicalEpoch,
+				classical.pqEpoch == pqEpoch
+			else {
+				throw MLS.Combiner.Error.attestationMismatch
+			}
+			return classical
 		}
-		// Both halves attest the same pair, and it is the actual post-commit epochs.
-		guard classical == pq,
-			classical.tEpoch == classicalEpoch,
-			classical.pqEpoch == pqEpoch
-		else {
-			throw MLS.Combiner.Error.attestationMismatch
-		}
-		return classical
 	}
 
 	/// Verify that a FULL commit's classical half actually folded the current PQ

@@ -1,4 +1,5 @@
 import MLSCodec
+import MLSProfileRFC9420
 
 extension MLS.Combiner {
 	/// Failure categories for the generic combiner layer. A consumer (twomlspq-swift)
@@ -39,5 +40,12 @@ extension MLS.Combiner {
 		/// caller input. Distinct from the input-shaped cases above so a caller never
 		/// mistakes an internal defect for a rejectable peer message.
 		case internalInconsistency
+
+		/// RFC 9420 §13.4: "Any field containing a list of extensions MUST NOT
+		/// have more than one extension of any given type." A classical
+		/// GroupContext extension list — the combiner's own `APQInfo` plus
+		/// `establish`'s caller-supplied `classicalExtraExtensions` — repeated a
+		/// type.
+		case duplicateExtensionType(MLS.RFC9420.ExtensionType)
 	}
 }

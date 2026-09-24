@@ -265,13 +265,17 @@ import Testing
 		}
 	}
 
-	/// `verifyFullCommitAttestation` succeeds when both halves surface the wrapped
-	/// `.customProposal(type: .appDataUpdate)` shape, built by hand like the other
-	/// `CommitEffects`-constructing tests above (no need to drive a real commit under
-	/// `customProposalTypes` for this unit-level check).
-	@Test func verifyFullCommitAttestationAcceptsCustomProposalShape() throws {
+	/// `verifyFullCommitAttestation` decodes the wrapped `.customProposal(type:
+	/// .appDataUpdate)` shape under `codepoints`' own component-id wire width, not
+	/// whatever happens to be ambient at the call site: the body is built inside a
+	/// `.uint32` scope (what a deployed wire commit actually carries), and
+	/// `verifyFullCommitAttestation` is called OUTSIDE that scope, with the default
+	/// (`.deployed`, `.uint32`) codepoints.
+	@Test func verifyFullCommitAttestationDecodesOutsideItsOwnWireWidthScope() throws {
 		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2)
-		let body = try update.appDataUpdate(componentID: Self.componentID).mlsEncoded()
+		let body = try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
+			try update.appDataUpdate(componentID: Self.componentID).mlsEncoded()
+		}
 		let effect = MLS.RFC9420.CommitEffect.customProposal(
 			type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
 		let classicalEffects = MLS.RFC9420.CommitEffects([effect])
@@ -280,6 +284,58 @@ import Testing
 		let verified = try MLS.Combiner.verifyFullCommitAttestation(
 			classicalEffects: classicalEffects, pqEffects: pqEffects,
 			classicalEpoch: 2, pqEpoch: 2)
+		#expect(verified == update)
+	}
+
+	/// The symmetric case: `codepoints` naming `.uint16` decodes correctly even
+	/// from INSIDE an ambient `.uint32` scope — pinning that the function uses
+	/// `codepoints`' own width, not simply "always `.uint32`".
+	@Test func verifyFullCommitAttestationUsesCodepointsWidthNotAlwaysUint32() throws {
+		let codepoints = MLS.Combiner.Codepoints(
+			apqInfoExtensionType: MLS.Combiner.Codepoints.deployed.apqInfoExtensionType,
+			apqComponentID: Self.componentID, componentIDWireWidth: .uint16)
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2)
+		let body = try update.appDataUpdate(componentID: Self.componentID).mlsEncoded()
+		let effect = MLS.RFC9420.CommitEffect.customProposal(
+			type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
+		let classicalEffects = MLS.RFC9420.CommitEffects([effect])
+		let pqEffects = MLS.RFC9420.CommitEffects([effect])
+
+		let verified = try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(
+			.uint32
+		) {
+			try MLS.Combiner.verifyFullCommitAttestation(
+				classicalEffects: classicalEffects, pqEffects: pqEffects,
+				classicalEpoch: 2, pqEpoch: 2, codepoints: codepoints)
+		}
+		#expect(verified == update)
+	}
+
+	/// The same outside-scope property, through `verifyFullCommit`: the PSK-bound
+	/// check is width-independent (`ExportedPsk.storageID` is `uint16`-pinned), so
+	/// this pins that `verifyFullCommit`'s attestation half inherits the fix via
+	/// delegation, without driving a real two-half commit.
+	@Test func verifyFullCommitDecodesAttestationOutsideItsOwnWireWidthScope() throws {
+		let psk = try MLS.Combiner.ExportedPsk.fromParts(
+			componentID: Self.componentID, pskID: Data([0x01]),
+			psk: SecretBytes(randomByteCount: 32))
+		var store = MLS.Combiner.PSKStore()
+		store.register(psk)
+		let (resolver, record) = store.recordingResolver()
+		_ = try resolver(psk.preSharedKeyID(nonce: Data(repeating: 0, count: 32)))
+
+		let update = MLS.Combiner.ApqInfoUpdate(tEpoch: 2, pqEpoch: 2)
+		let body = try MLS.Extensions.ComponentID.$componentIDWireWidth.withValue(.uint32) {
+			try update.appDataUpdate(componentID: Self.componentID).mlsEncoded()
+		}
+		let effect = MLS.RFC9420.CommitEffect.customProposal(
+			type: MLS.RFC9420.ProposalType(.appDataUpdate), body: body)
+		let classicalEffects = MLS.RFC9420.CommitEffects([effect])
+		let pqEffects = MLS.RFC9420.CommitEffects([effect])
+
+		let verified = try MLS.Combiner.verifyFullCommit(
+			classicalEffects: classicalEffects, pqEffects: pqEffects,
+			classicalEpoch: 2, pqEpoch: 2, record: record, expected: psk)
 		#expect(verified == update)
 	}
 

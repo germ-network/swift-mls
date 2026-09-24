@@ -356,11 +356,20 @@ extension MLS.RFC9420 {
 		/// `leafNode.encryptionKey`. Either way, the leaf is never installed
 		/// on a mismatch.
 		case migratedUpdateSecretMismatch
-		/// `@_spi(Migration) Group.insertMigratedOwnUpdate`: the given `ref`
-		/// already names an entry in the store, verified or migrated. A migrated
-		/// write may only add a new entry, never replace one — replacing a
-		/// verified entry would let unauthenticated data displace authenticated
-		/// data under the same key.
+		/// Two distinct directions share this case. `@_spi(Migration)
+		/// Group.insertMigratedOwnUpdate`: the given `ref` already names an entry
+		/// in the store, verified or migrated. A migrated write may only add a
+		/// new entry, never replace one — replacing a verified entry would let
+		/// unauthenticated data displace authenticated data under the same key.
+		/// `ProposalStore.insert`, the other direction: a verified proposal's
+		/// `ref` names an entry a migration wrote whose `proposal`, `sender`,
+		/// `epoch`, or `groupID` differs from the verified one — proof the
+		/// migrated `(ref, leafNode)` pairing was wrong, refused rather than
+		/// silently repaired (an identical match is kept, not rejected).
 		case migratedUpdateRefAlreadyStored
+		/// `Group.exportSecret`'s `length` must be in `1...255 * Nh` — RFC 5869
+		/// §2.3 caps HKDF-Expand at `255*HashLen` — checked up front because the
+		/// HKDF backends trap rather than throw past it.
+		case exportLengthOutOfRange(length: Int, maximum: Int)
 	}
 }

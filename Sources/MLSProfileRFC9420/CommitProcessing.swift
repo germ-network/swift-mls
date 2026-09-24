@@ -139,6 +139,10 @@ extension MLS.RFC9420 {
 	/// sender together instead of a `VerifiedProposal`.
 	public struct ProposalStore: Sendable {
 		private var entries: [MLS.HashReference: StoredProposal] = [:]
+		/// Refs written by `insertMigratedOwnUpdate`, so `insert` can tell a
+		/// migrated entry apart from an ordinary verified one — see `insert`'s doc
+		/// comment. Private to this type; `StoredProposal` itself carries no marker.
+		private var migratedRefs: Set<MLS.HashReference> = []
 
 		// swift-format-ignore: UseSynthesizedInitializer -- the synthesized
 		// memberwise init is `internal` (its access level follows `entries`,
@@ -152,6 +156,20 @@ extension MLS.RFC9420 {
 		/// `VerifiedProposal` (from `Group.verifying(proposal:)` or `unprotect`)
 		/// carries `.proposal` content by construction; the guard keeps
 		/// `notAProposal` as a defensive invariant rather than a live path.
+		///
+		/// If `ref` names an entry `insertMigratedOwnUpdate` wrote, this does NOT
+		/// overwrite it outright (that would silently drop its
+		/// `migratedLeafSecret` — see that method's doc comment). Instead: when
+		/// the verified proposal's content — `proposal`, `sender`, `epoch`,
+		/// `groupID` — matches the stored entry exactly, the migration paired
+		/// `ref` correctly, so the existing entry is kept untouched (its
+		/// `migratedLeafSecret` survives) and this call is idempotent, like
+		/// verified-over-verified. If any field differs, the migrated `(ref,
+		/// leafNode)` pairing was wrong — the very thing `insertMigratedOwnUpdate`
+		/// cannot check — so this throws `migratedUpdateRefAlreadyStored` rather
+		/// than silently repairing it, leaving the existing entry as is. A `ref`
+		/// naming an ordinary verified entry is overwritten with identical
+		/// content, so re-inserting the same verified proposal stays harmless.
 		@discardableResult
 		public mutating func insert(
 			_ verified: VerifiedProposal, _ provider: any MLS.CipherSuiteProvider
@@ -161,6 +179,16 @@ extension MLS.RFC9420 {
 				throw MLS.RFC9420.GroupError.notAProposal
 			}
 			let ref = try proposalRef(provider, content)
+			if migratedRefs.contains(ref), let existing = entries[ref] {
+				guard existing.proposal == proposal,
+					existing.sender == content.content.sender,
+					existing.epoch == content.content.epoch,
+					existing.groupID == content.content.groupID
+				else {
+					throw MLS.RFC9420.GroupError.migratedUpdateRefAlreadyStored
+				}
+				return ref
+			}
 			entries[ref] = StoredProposal(
 				proposal: proposal, sender: content.content.sender,
 				epoch: content.content.epoch, groupID: content.content.groupID)
@@ -185,9 +213,12 @@ extension MLS.RFC9420 {
 		/// built it from ITS OWN, correct resolution, so this side's tree
 		/// hash and confirmation tag stop matching once the wrong proposal is
 		/// applied, and processing fails, just not necessarily with that same
-		/// named error. See `Group.insertMigratedOwnUpdate`'s own doc comment
-		/// for the different, worse risk when a SIBLING local membership is
-		/// the one committing a wrongly-paired entry.
+		/// named error. If a verified copy of the real proposal is later
+		/// `insert`ed into the same store, `insert` refuses it (this method
+		/// records `ref` as migrated for that comparison). See
+		/// `Group.insertMigratedOwnUpdate`'s own doc comment for the different,
+		/// worse risk when a SIBLING local membership is the one committing a
+		/// wrongly-paired entry.
 		mutating func insertMigratedOwnUpdate(
 			_ ref: MLS.HashReference, _ proposal: StoredProposal
 		) throws {
@@ -195,6 +226,7 @@ extension MLS.RFC9420 {
 				throw MLS.RFC9420.GroupError.migratedUpdateRefAlreadyStored
 			}
 			entries[ref] = proposal
+			migratedRefs.insert(ref)
 		}
 
 		public subscript(_ ref: MLS.HashReference) -> StoredProposal? {
