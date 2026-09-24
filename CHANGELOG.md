@@ -1,5 +1,11 @@
 # @germ-network/swift-mls
 
+## 0.1.7
+
+### Patch Changes
+
+- [#113](https://github.com/germ-network/swift-mls/pull/113) [`4acf84c`](https://github.com/germ-network/swift-mls/commit/4acf84c24bd6346039d27cf9635a4c5a3b714a36) Thanks [@germ-mark](https://github.com/germ-mark)! - `CombinerGroup.establish` rejects a classical GroupContext extension list that repeats a type (RFC 9420 §13.4), and `establish`/`join` forget the founding `apq_psk` once it is folded. `verifyFullCommitAttestation`/`verifyFullCommit` decode a wrapped attestation at the `Codepoints`' own wire width, so they can be called outside that scope. `Group.exportSecret` throws `exportLengthOutOfRange` instead of trapping on a length outside `1...255·Nh`. `ProposalStore.insert` no longer overwrites a migration-restored entry: a matching verified proposal leaves it in place, and a mismatched one throws `migratedUpdateRefAlreadyStored`.
+
 ## 0.1.6
 
 ### Patch Changes
