@@ -98,6 +98,33 @@ import Testing
 				== MLS.Combiner.Codepoints.deployed.apqInfoExtensionType)
 	}
 
+	/// `establish` omits BOTH founding commits' UpdatePaths: each half's parent
+	/// node (index 1 in a two-leaf tree) stays blank. The pair still joins
+	/// cleanly from the returned Welcome: a joiner tolerates the blank parents.
+	@Test func establishOmitsBothFoundingPaths() throws {
+		let alice = try Support.member("alice")
+		let bob = try Support.member("bob")
+		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
+			classical: try Support.halfCreation(founder: alice, peer: bob),
+			pq: try Support.halfCreation(founder: alice, peer: bob),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+
+		// leafCount pinned so `isBlank(at: 1)` cannot pass vacuously on a
+		// regressed 1-node tree (node(at:) is nil out of range).
+		#expect(founder.pq.tree.leafCount.value == 2)
+		#expect(founder.pq.tree.isBlank(at: 1))
+		#expect(founder.classical.tree.leafCount.value == 2)
+		#expect(founder.classical.tree.isBlank(at: 1))
+
+		let peer = try MLS.Combiner.CombinerGroup.join(
+			welcome: welcome, classicalCredentials: bob.joinCredentials,
+			pqCredentials: bob.joinCredentials,
+			classicalProvider: Support.provider, pqProvider: Support.provider)
+		try peer.verifyPair()
+		#expect(founder.classical.context == peer.classical.context)
+		#expect(founder.pq.context == peer.pq.context)
+	}
+
 	/// RFC 9420 §13.4: an extra classical extension carrying the SAME type as the
 	/// combiner's own `APQInfo` extension throws `duplicateExtensionType`.
 	@Test func establishRejectsExtraExtensionDuplicatingApqInfo() throws {
