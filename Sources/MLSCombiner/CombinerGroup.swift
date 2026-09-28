@@ -98,6 +98,10 @@ extension MLS.Combiner.CombinerGroup {
 	///    classical peer + a `PreSharedKey` referencing the `apq_psk` + the attestation
 	///    → classical epoch 1.
 	///
+	/// Both founding commits carry no `UpdatePath`: `createAndAdd` adds the peer in
+	/// the commit immediately following the group's creation, so there is no gap for a
+	/// path to cover.
+	///
 	/// Returns the pair and the logical `APQWelcome{t, pq}`; the caller frames it (the
 	/// draft §7 codec, or twomlspq-swift's own framing). Runs under the codepoints'
 	/// component-id wire width so the `apq_psk` `PreSharedKeyID` and the `AppDataUpdate`
@@ -220,6 +224,7 @@ extension MLS.Combiner.CombinerGroup {
 			provider,
 			proposals: [.proposal(.add(creation.peerKeyPackage))] + extraProposals,
 			signingKey: creation.signingKey, randomness: creation.randomness,
+			includePath: false,
 			psk: pskStore.resolver())
 		let adopted = transition.group
 		let sent = transition.takeOutput()
