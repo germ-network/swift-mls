@@ -1,5 +1,11 @@
 # @germ-network/swift-mls
 
+## 0.1.8
+
+### Patch Changes
+
+- [#116](https://github.com/germ-network/swift-mls/pull/116) [`336f7ae`](https://github.com/germ-network/swift-mls/commit/336f7ae70a08364726ef24021a690d0a2e7e9658) Thanks [@germ-mark](https://github.com/germ-mark)! - Fixes an undefined-symbol link error in optimized Xcode builds of apps that drop a `SentCommit` or `PendingCommit`. The internal `Group.MessageSecrets` type now has public linkage. Its source visibility is unchanged.
+
 ## 0.1.7
 
 ### Patch Changes
