@@ -21,7 +21,9 @@ extension MLS.RFC9420.Group {
 	/// "Frozen" rather than "snapshot": `Snapshot` is the glossary term for
 	/// a whole group's persisted state (`spec/snapshot.md`), which this is
 	/// one section of.
-	struct MessageSecrets: Sendable {
+	// `@usableFromInline` for linkage only: optimized clients destroy a dropped
+	// `PendingCommit` field by field, which calls this type's metadata accessor.
+	@usableFromInline struct MessageSecrets: Sendable {
 		let groupContext: MLS.RFC9420.GroupContext
 		let senderDataSecret: SecretBytes
 		let signatureKeys: [MLS.LeafIndex: MLS.SignaturePublicKey]
