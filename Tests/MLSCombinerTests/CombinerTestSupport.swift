@@ -148,17 +148,19 @@ enum CombinerTestSupport {
 	/// with the `APQInfo` and the `apq_psk` binding under the caller's control — the
 	/// non-conforming founder cases a conforming `establish` cannot produce. `info`
 	/// receives the two group ids and returns the `APQInfo` both halves carry
-	/// (default: the truthful one). With `bindApqPsk` false the classical commit
+	/// (default: the truthful one). `pqFounder` founds the PQ half under a different
+	/// identity. With `bindApqPsk` false the classical commit
 	/// omits the `apq_psk` `PreSharedKey` proposal. Only the Welcomes are built, not
 	/// the founder's pair.
 	static func welcomePair(
-		founder: Member, peer: Member, bindApqPsk: Bool = true,
+		founder: Member, peer: Member, pqFounder: Member? = nil, bindApqPsk: Bool = true,
 		info: ((_ classicalID: Data, _ pqID: Data) -> MLS.Combiner.APQInfo)? = nil
 	) throws -> MLS.Combiner.APQWelcome {
 		let codepoints = MLS.Combiner.Codepoints.deployed
 		return try codepoints.withWireWidth {
 			let classicalCreation = try halfCreation(founder: founder, peer: peer)
-			let pqCreation = try halfCreation(founder: founder, peer: peer, half: .pq)
+			let pqCreation = try halfCreation(
+				founder: pqFounder ?? founder, peer: peer, half: .pq)
 			let apqInfo =
 				info?(classicalCreation.groupID, pqCreation.groupID)
 				?? MLS.Combiner.APQInfo(

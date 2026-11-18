@@ -205,6 +205,20 @@ private typealias Support = CombinerTestSupport
 		#expect(pending.classical.consumedKeyPackage != pending.pq.consumedKeyPackage)
 	}
 
+	/// `joining` refuses a Welcome pair whose halves were founded by different
+	/// members.
+	@Test func joiningRejectsDifferentFounderAcrossHalves() throws {
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let carol = try Support.member("carol")
+		let welcome = try Support.welcomePair(founder: alice, peer: bob, pqFounder: carol)
+		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
+			_ = try MLS.Combiner.CombinerGroup.joining(
+				welcome: welcome, classicalCredentials: bob.joinCredentials,
+				pqCredentials: bob.pqJoinCredentials,
+				classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+		}
+	}
+
 	/// The applied pair is the founder's pair: same group ids and epochs per half,
 	/// `verifyPair()` passes, the PSK store is empty, and a classical exported
 	/// secret equals the founder's.
@@ -226,7 +240,7 @@ private typealias Support = CombinerTestSupport
 		try joined.verifyPair()
 
 		// The apq_psk is forgotten: an independent re-derivation of it resolves
-		// from neither pair's store.
+		// from the joined pair's store.
 		var independentPq = try MLS.RFC9420.Group.joining(
 			Support.pqProvider, welcome: welcome.pqWelcome,
 			credentials: bob.pqJoinCredentials, psk: { _ in nil }

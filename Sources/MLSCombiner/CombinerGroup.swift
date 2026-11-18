@@ -109,16 +109,16 @@ extension MLS.Combiner {
 	public struct CombinerGroup: Sendable {
 		public internal(set) var classical: MLS.RFC9420.Group
 		public internal(set) var pq: MLS.RFC9420.Group
-		/// The store `establish`/`join` resolve the founding `apq_psk` from while
+		/// The store `establish`/`joining` resolve the founding `apq_psk` from while
 		/// building the pair. Empty on every `CombinerGroup` this module returns:
-		/// `establish` and `join` each forget the `apq_psk` once its commit or
+		/// `establish` and `joining` each forget the `apq_psk` once its commit or
 		/// Welcome has folded it, and `restore` never populates one either — there
 		/// is nothing left here for a caller to read, and the setter is `internal`
 		/// besides.
 		public internal(set) var pskStore: PSKStore
 		public let codepoints: Codepoints
 		// The memberwise initializer is intentionally internal (synthesized): a
-		// `CombinerGroup` is produced only by `establish` / `join` / `restore`.
+		// `CombinerGroup` is produced only by `establish` / `joining` / `join` / `restore`.
 	}
 }
 
@@ -324,8 +324,8 @@ extension MLS.Combiner.CombinerGroup {
 			// can carry `APQInfo` + the epoch attestation without ever referencing the
 			// `apq_psk` in a PreSharedKey proposal, in which case `joining` below
 			// succeeds having resolved nothing — the guard after it is what catches
-			// that (draft-ietf-mls-combiner-02 §6.2/§4.1: the T commit MUST include
-			// the PSK proposal).
+			// that (draft-ietf-mls-combiner-02 §6.2: the T commit MUST include the PSK
+			// proposal; §4.1 describes it).
 			let (resolver, record) = store.recordingResolver()
 			let classicalPending = try MLS.RFC9420.Group.joining(
 				classicalProvider, welcome: welcome.tWelcome,
