@@ -67,7 +67,9 @@ private typealias Support = CombinerTestSupport
 		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
 			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
 				classicalInfo: info, pqInfo: info,
-				classicalObserved: (groupID: classicalID, epoch: 1, cipherSuite: suite),
+				classicalObserved: (
+					groupID: classicalID, epoch: 1, cipherSuite: suite
+				),
 				pqObserved: (groupID: pqID, epoch: 1, cipherSuite: suite))
 		}
 	}
@@ -158,7 +160,8 @@ private typealias Support = CombinerTestSupport
 		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: try Support.halfCreation(founder: alice, peer: bob),
-				pq: try Support.halfCreation(founder: alice, peer: carol, half: .pq),
+				pq: try Support.halfCreation(
+					founder: alice, peer: carol, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
 				pqProvider: Support.pqProvider)
 		}
@@ -232,7 +235,8 @@ private typealias Support = CombinerTestSupport
 		let joined = try MLS.Combiner.CombinerGroup.joining(
 			welcome: welcome, classicalCredentials: bob.joinCredentials,
 			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
-			pqProvider: Support.pqProvider).apply()
+			pqProvider: Support.pqProvider
+		).apply()
 		#expect(joined.classical.context.groupID == founder.classical.context.groupID)
 		#expect(joined.pq.context.groupID == founder.pq.context.groupID)
 		#expect(joined.classical.context.epoch == founder.classical.context.epoch)
@@ -250,7 +254,8 @@ private typealias Support = CombinerTestSupport
 	/// `apqInfoMismatch` and yields no `PendingJoinPair`.
 	@Test func joiningRejectsAPQInfoMisstatingASuite() throws {
 		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
-		let welcome = try Support.welcomePair(founder: alice, peer: bob) { classicalID, pqID in
+		let welcome = try Support.welcomePair(founder: alice, peer: bob) {
+			classicalID, pqID in
 			MLS.Combiner.APQInfo(
 				tSessionGroupID: classicalID, pqSessionGroupID: pqID, mode: 0,
 				tCipherSuite: Support.pqProvider.cipherSuite,
@@ -259,7 +264,8 @@ private typealias Support = CombinerTestSupport
 		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
 			_ = try MLS.Combiner.CombinerGroup.joining(
 				welcome: welcome, classicalCredentials: bob.joinCredentials,
-				pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
+				pqCredentials: bob.pqJoinCredentials,
+				classicalProvider: Support.provider,
 				pqProvider: Support.pqProvider)
 		}
 	}

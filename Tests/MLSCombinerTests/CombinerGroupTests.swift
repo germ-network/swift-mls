@@ -52,7 +52,8 @@ import Testing
 		let (_, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
+		)
 
 		// establish's default codepoints run at .uint32; decode the Welcome's
 		// PreSharedKeyID at the same ambient width.
@@ -79,7 +80,8 @@ import Testing
 		let (group, _) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider,
+			mode: 0, classicalProvider: Support.provider,
+			pqProvider: Support.pqProvider,
 			classicalExtraExtensions: [extra])
 
 		#expect(group.classical.context.extensions.contains(extra))
@@ -90,7 +92,8 @@ import Testing
 		let (plainGroup, _) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
+		)
 		#expect(plainGroup.classical.context.extensions.count == 1)
 		#expect(plainGroup.pq.context.extensions.count == 1)
 		#expect(
@@ -107,7 +110,8 @@ import Testing
 		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
+		)
 
 		// leafCount pinned so `isBlank(at: 1)` cannot pass vacuously on a
 		// regressed 1-node tree (node(at:) is nil out of range).
@@ -402,7 +406,8 @@ import Testing
 		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
+		)
 		let peer = try MLS.Combiner.CombinerGroup.join(
 			welcome: welcome, classicalCredentials: bob.joinCredentials,
 			pqCredentials: bob.pqJoinCredentials,

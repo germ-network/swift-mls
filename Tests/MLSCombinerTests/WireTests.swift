@@ -107,7 +107,8 @@ import Testing
 		let (_, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
+		)
 
 		var reader = MLS.Reader(try welcome.mlsEncoded())
 		let decoded = try MLS.Combiner.APQWelcome(from: &reader)

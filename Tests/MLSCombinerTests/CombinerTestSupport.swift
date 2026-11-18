@@ -61,9 +61,11 @@ enum CombinerTestSupport {
 	static func member(_ name: String) throws -> Member {
 		let (signingKey, signatureKey) = try signingKeyPair()
 		let classical = try keyPackage(
-			name, provider: provider, signingKey: signingKey, signatureKey: signatureKey)
+			name, provider: provider, signingKey: signingKey, signatureKey: signatureKey
+		)
 		let pq = try keyPackage(
-			name, provider: pqProvider, signingKey: signingKey, signatureKey: signatureKey)
+			name, provider: pqProvider, signingKey: signingKey,
+			signatureKey: signatureKey)
 		return Member(
 			identity: Data(name.utf8), signingKey: signingKey,
 			signatureKey: signatureKey,
@@ -167,7 +169,8 @@ enum CombinerTestSupport {
 					tSessionGroupID: classicalCreation.groupID,
 					pqSessionGroupID: pqCreation.groupID, mode: 0,
 					tCipherSuite: provider.cipherSuite,
-					pqCipherSuite: pqProvider.cipherSuite, tEpoch: 1, pqEpoch: 1)
+					pqCipherSuite: pqProvider.cipherSuite, tEpoch: 1, pqEpoch: 1
+				)
 			let infoExtension = try apqInfo.asExtension(
 				type: codepoints.apqInfoExtensionType)
 			let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 1)
@@ -175,15 +178,18 @@ enum CombinerTestSupport {
 				try attestation.proposal(componentID: codepoints.apqComponentID))
 
 			let pqEpoch0 = try MLS.RFC9420.Group.create(
-				pqProvider, groupID: pqCreation.groupID, leafNode: pqCreation.leafNode,
+				pqProvider, groupID: pqCreation.groupID,
+				leafNode: pqCreation.leafNode,
 				leafSecretKey: pqCreation.leafSecretKey,
 				extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
 			let pqTransition = try pqEpoch0.committing(
 				pqProvider,
 				proposals: [
-					.proposal(.add(pqCreation.peerKeyPackage)), attestationProposal,
+					.proposal(.add(pqCreation.peerKeyPackage)),
+					attestationProposal,
 				],
-				signingKey: pqCreation.signingKey, randomness: pqCreation.randomness,
+				signingKey: pqCreation.signingKey,
+				randomness: pqCreation.randomness,
 				includePath: false, psk: { _ in nil })
 			let pqAdopted = pqTransition.group
 			let pqSent = pqTransition.takeOutput()
@@ -192,15 +198,21 @@ enum CombinerTestSupport {
 			}
 			var pqGroup = try pqSent.takePending().apply(onto: pqAdopted).group
 
-			var proposals = [MLS.RFC9420.ProposalOrRef.proposal(.add(classicalCreation.peerKeyPackage))]
+			var proposals = [
+				MLS.RFC9420.ProposalOrRef.proposal(
+					.add(classicalCreation.peerKeyPackage))
+			]
 			var store = MLS.Combiner.PSKStore()
 			if bindApqPsk {
 				let apqPsk = try MLS.Combiner.ExportedPsk.export(
-					from: &pqGroup, pqProvider, componentID: codepoints.apqComponentID)
+					from: &pqGroup, pqProvider,
+					componentID: codepoints.apqComponentID)
 				store.register(apqPsk)
 				proposals.append(
 					.proposal(
-						apqPsk.proposal(nonce: provider.randomBytes(provider.hashSize))))
+						apqPsk.proposal(
+							nonce: provider.randomBytes(
+								provider.hashSize))))
 			}
 			proposals.append(attestationProposal)
 
@@ -208,9 +220,11 @@ enum CombinerTestSupport {
 				provider, groupID: classicalCreation.groupID,
 				leafNode: classicalCreation.leafNode,
 				leafSecretKey: classicalCreation.leafSecretKey,
-				extensions: [infoExtension], epochSecret: classicalCreation.epochSecret)
+				extensions: [infoExtension],
+				epochSecret: classicalCreation.epochSecret)
 			let classicalTransition = try classicalEpoch0.committing(
-				provider, proposals: proposals, signingKey: classicalCreation.signingKey,
+				provider, proposals: proposals,
+				signingKey: classicalCreation.signingKey,
 				randomness: classicalCreation.randomness, includePath: false,
 				psk: store.resolver())
 			guard let classicalWelcome = classicalTransition.takeOutput().welcome else {

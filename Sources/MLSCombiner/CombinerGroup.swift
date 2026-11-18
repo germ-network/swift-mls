@@ -178,7 +178,10 @@ extension MLS.Combiner.CombinerGroup {
 				throw MLS.Combiner.Error.halvesNotDistinct
 			}
 			try checkMembershipConsistent(
-				[classical.leafNode.credential, classical.peerKeyPackage.leafNode.credential],
+				[
+					classical.leafNode.credential,
+					classical.peerKeyPackage.leafNode.credential,
+				],
 				[pq.leafNode.credential, pq.peerKeyPackage.leafNode.credential])
 			let infoExtension = try info.asExtension(
 				type: codepoints.apqInfoExtensionType)
