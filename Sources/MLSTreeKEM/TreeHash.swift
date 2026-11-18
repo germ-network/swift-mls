@@ -20,43 +20,56 @@ extension MLS.TreeKEM.RatchetTree {
 	/// added after some ancestor's chain was last computed shouldn't
 	/// affect what that ancestor's chain covers), as opposed to the plain
 	/// tree hash `GroupContext.tree_hash` carries (`nil`, no filtering).
-	/// Kept as one function with a parameter, not two, since they're the
-	/// same algorithm and a second copy would be a byte-exactness hazard
-	/// against this one.
+	/// The byte layout lives only in `leafHash` and `parentNodeHash`, which
+	/// this and the memoised traversal in `validateParentHashChain` share.
 	public func treeHash(
 		at index: UInt32, filteredUnmergedLeaves: Set<MLS.LeafIndex>? = nil,
 		_ provider: any MLS.CipherSuiteProvider
 	) throws -> Data {
-		var writer = MLS.Writer()
 		if MLS.TreeMath.isLeaf(index) {
-			writer.writeUInt8(1)
 			let leafIndex = MLS.LeafIndex(value: index / 2)
-			try leafIndex.encode(to: &writer)
-			let record =
-				(filteredUnmergedLeaves?.contains(leafIndex) ?? false)
-				? nil : leaf(at: leafIndex)
-			writer.writeUInt8(record == nil ? 0 : 1)
-			if let record { writer.writeBytes(record.encoded) }
-		} else {
-			writer.writeUInt8(2)
-			var parentNode = parent(at: index)
-			if let filteredUnmergedLeaves {
-				parentNode?.unmergedLeaves.removeAll {
-					filteredUnmergedLeaves.contains($0)
-				}
-			}
-			try writer.encodeOptional(parentNode)
-			let leftHash = try treeHash(
-				at: MLS.TreeMath.left(index),
-				filteredUnmergedLeaves: filteredUnmergedLeaves,
-				provider)
-			let rightHash = try treeHash(
-				at: MLS.TreeMath.right(index),
-				filteredUnmergedLeaves: filteredUnmergedLeaves,
-				provider)
-			try writer.writeOpaque(leftHash)
-			try writer.writeOpaque(rightHash)
+			let filtered = filteredUnmergedLeaves?.contains(leafIndex) ?? false
+			return try Self.leafHash(
+				leafIndex, record: filtered ? nil : leaf(at: leafIndex), provider)
 		}
+		var parentNode = parent(at: index)
+		if let filteredUnmergedLeaves {
+			parentNode?.unmergedLeaves.removeAll { filteredUnmergedLeaves.contains($0) }
+		}
+		let leftHash = try treeHash(
+			at: MLS.TreeMath.left(index),
+			filteredUnmergedLeaves: filteredUnmergedLeaves,
+			provider)
+		let rightHash = try treeHash(
+			at: MLS.TreeMath.right(index),
+			filteredUnmergedLeaves: filteredUnmergedLeaves,
+			provider)
+		return try Self.parentNodeHash(parentNode, leftHash, rightHash, provider)
+	}
+
+	/// The `TreeHashInput` hash of a leaf (tag 1).
+	static func leafHash(
+		_ leafIndex: MLS.LeafIndex, record: MLS.TreeKEM.LeafRecord?,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws -> Data {
+		var writer = MLS.Writer()
+		writer.writeUInt8(1)
+		try leafIndex.encode(to: &writer)
+		writer.writeUInt8(record == nil ? 0 : 1)
+		if let record { writer.writeBytes(record.encoded) }
+		return try provider.hash(Data(writer.bytes))
+	}
+
+	/// The `TreeHashInput` hash of a parent (tag 2) over its children's hashes.
+	static func parentNodeHash(
+		_ parentNode: MLS.TreeKEM.ParentNode?, _ leftHash: Data, _ rightHash: Data,
+		_ provider: any MLS.CipherSuiteProvider
+	) throws -> Data {
+		var writer = MLS.Writer()
+		writer.writeUInt8(2)
+		try writer.encodeOptional(parentNode)
+		try writer.writeOpaque(leftHash)
+		try writer.writeOpaque(rightHash)
 		return try provider.hash(Data(writer.bytes))
 	}
 
