@@ -66,6 +66,10 @@ extension MLS.RFC9420.Group {
 		epochSecret: SecretBytes,
 		lifetimeCheck: MLS.RFC9420.LifetimeCheck
 	) throws -> MLS.RFC9420.Group {
+		// `create` never encodes the new context, so nothing else would catch a
+		// repeated type here (§13.4); the leaf's own list is checked when it is
+		// encoded below.
+		try extensions.checkUniqueTypes()
 		let tree = MLS.TreeKEM.RatchetTree(singleLeaf: try leafNode.record)
 		let context = MLS.RFC9420.GroupContext(
 			version: .mls10, cipherSuite: provider.cipherSuite,

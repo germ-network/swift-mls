@@ -36,7 +36,7 @@ extension MLS.RFC9420.KeyPackage: MLSEncodable {
 		try writer.encode(cipherSuite)
 		try writer.encode(initKey)
 		try writer.encode(leafNode)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		try writer.writeOpaque(signature)
 	}
 }
@@ -60,7 +60,7 @@ extension MLS.RFC9420.KeyPackage {
 		try writer.encode(cipherSuite)
 		try writer.encode(initKey)
 		try writer.encode(leafNode)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		return Data(writer.bytes)
 	}
 

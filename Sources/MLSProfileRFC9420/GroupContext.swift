@@ -37,7 +37,7 @@ extension MLS.RFC9420 {
 			writer.writeUInt64(epoch)
 			try writer.writeOpaque(treeHash)
 			try writer.writeOpaque(confirmedTranscriptHash)
-			try writer.encodeVector(extensions)
+			try writer.encodeExtensionList(extensions)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {

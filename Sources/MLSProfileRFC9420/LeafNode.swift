@@ -81,7 +81,7 @@ extension MLS.RFC9420.LeafNode: MLSEncodable {
 		try writer.encode(credential)
 		try writer.encode(capabilities)
 		try writer.encode(source)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		try writer.writeOpaque(signature)
 	}
 }
@@ -158,7 +158,7 @@ extension MLS.RFC9420.LeafNode {
 		try writer.encode(credential)
 		try writer.encode(capabilities)
 		try writer.encode(source)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		switch (source, placement) {
 		case (.keyPackage, _):
 			break

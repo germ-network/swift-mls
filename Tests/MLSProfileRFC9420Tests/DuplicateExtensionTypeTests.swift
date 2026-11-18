@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import SecretBytes
 import Testing
 
 @testable import MLSProfileRFC9420
@@ -10,10 +11,10 @@ import Testing
 /// library refuses to build one, so everything it sends decodes.
 @Suite("Duplicate extension types are rejected (RFC 9420 §13.4)")
 struct DuplicateExtensionTypeTests {
-	private static let marker = MLS.RFC9420.Extension(
+	static let marker = MLS.RFC9420.Extension(
 		type: .known(.applicationID), data: Data([0xDE, 0xAD, 0xBE]))
 
-	private static func encoded(_ value: some MLSEncodable) throws -> Data {
+	static func encoded(_ value: some MLSEncodable) throws -> Data {
 		var writer = MLS.Writer()
 		try writer.encode(value)
 		return Data(writer.bytes)
@@ -41,7 +42,7 @@ struct DuplicateExtensionTypeTests {
 		return bytes[..<at] + Data(twice.bytes) + bytes[(at + needle.count)...]
 	}
 
-	private static func leafNode(extensions: [MLS.RFC9420.Extension]) -> MLS.RFC9420.LeafNode {
+	static func leafNode(extensions: [MLS.RFC9420.Extension]) -> MLS.RFC9420.LeafNode {
 		.init(
 			encryptionKey: .init(Data(repeating: 1, count: 32)),
 			signatureKey: .init(Data(repeating: 2, count: 32)),
@@ -53,7 +54,7 @@ struct DuplicateExtensionTypeTests {
 			source: .update, extensions: extensions, signature: Data([9]))
 	}
 
-	private static func keyPackage(
+	static func keyPackage(
 		extensions: [MLS.RFC9420.Extension], leafExtensions: [MLS.RFC9420.Extension] = []
 	) -> MLS.RFC9420.KeyPackage {
 		.init(
@@ -63,7 +64,7 @@ struct DuplicateExtensionTypeTests {
 			signature: Data([8]))
 	}
 
-	private static func groupContext(
+	static func groupContext(
 		extensions: [MLS.RFC9420.Extension]
 	) -> MLS.RFC9420.GroupContext {
 		.init(
@@ -73,7 +74,7 @@ struct DuplicateExtensionTypeTests {
 			extensions: extensions)
 	}
 
-	private static func groupInfo(
+	static func groupInfo(
 		extensions: [MLS.RFC9420.Extension]
 	) -> MLS.RFC9420.GroupInfo {
 		.init(
@@ -82,7 +83,7 @@ struct DuplicateExtensionTypeTests {
 			signer: .init(value: 0), signature: Data([7]))
 	}
 
-	private static func reInit(
+	static func reInit(
 		extensions: [MLS.RFC9420.Extension]
 	) -> MLS.RFC9420.ReInitProposal {
 		.init(
@@ -164,28 +165,122 @@ struct DuplicateExtensionTypeTests {
 		}
 	}
 
+	private static func expectDuplicateError(
+		_ body: () throws -> Void, sourceLocation: SourceLocation = #_sourceLocation
+	) {
+		#expect(
+			sourceLocation: sourceLocation, performing: body,
+			throws: { error in
+				guard case MLS.RFC9420.WireError.duplicateExtensionType = error
+				else {
+					return false
+				}
+				return true
+			})
+	}
+
+	typealias T = DuplicateExtensionTypeTests
+
+	enum Structure: String, CaseIterable, CustomTestStringConvertible {
+		case keyPackage, keyPackageToBeSigned, leafNode, leafNodeToBeSigned
+		case groupContext, groupInfo, groupInfoToBeSigned, reInit, groupContextExtensions
+
+		var testDescription: String { rawValue }
+
+		func encode(_ duplicated: [MLS.RFC9420.Extension]) throws {
+			switch self {
+			case .keyPackage:
+				_ = try T.encoded(T.keyPackage(extensions: duplicated))
+			case .keyPackageToBeSigned:
+				_ = try T.keyPackage(extensions: duplicated).toBeSigned()
+			case .leafNode:
+				_ = try T.encoded(T.leafNode(extensions: duplicated))
+			case .leafNodeToBeSigned:
+				_ = try T.leafNode(extensions: duplicated).toBeSigned(
+					placement: .keyPackage)
+			case .groupContext:
+				_ = try T.encoded(T.groupContext(extensions: duplicated))
+			case .groupInfo:
+				_ = try T.encoded(T.groupInfo(extensions: duplicated))
+			case .groupInfoToBeSigned:
+				_ = try T.groupInfo(extensions: duplicated).toBeSigned()
+			case .reInit:
+				_ = try T.encoded(T.reInit(extensions: duplicated))
+			case .groupContextExtensions:
+				_ = try T.encoded(
+					MLS.RFC9420.Proposal.groupContextExtensions(duplicated))
+			}
+		}
+	}
+
 	@Test(
 		"encoding any structure whose extension list repeats a type throws",
-		.disabled("not yet implemented"))
-	func encodingExtensionListWithRepeatedTypeThrows() throws {}
+		arguments: Structure.allCases)
+	func encodingExtensionListWithRepeatedTypeThrows(_ structure: Structure) throws {
+		Self.expectDuplicateError { try structure.encode([Self.marker, Self.marker]) }
+	}
+
+	private static func createGroup(
+		extensions: [MLS.RFC9420.Extension], leafExtensions: [MLS.RFC9420.Extension] = []
+	) throws -> MLS.RFC9420.Group {
+		let alice = try SelfInteropTests.member("alice")
+		var leaf = alice.keyPackage.leafNode
+		leaf.extensions = leafExtensions
+		return try MLS.RFC9420.Group.create(
+			SelfInteropTests.provider, groupID: Data([1]), leafNode: leaf,
+			leafSecretKey: alice.leafSecretKey, extensions: extensions,
+			epochSecret: SecretBytes(randomByteCount: 32), lifetimeCheck: .unchecked)
+	}
+
+	@Test("creating a group with repeated GroupContext extension types throws")
+	func createRejectsDuplicateGroupContextExtensionTypes() throws {
+		Self.expectDuplicateError {
+			_ = try Self.createGroup(extensions: [Self.marker, Self.marker])
+		}
+		Self.expectDuplicateError {
+			_ = try Self.createGroup(
+				extensions: [], leafExtensions: [Self.marker, Self.marker])
+		}
+	}
 
 	@Test(
-		"creating a group with a known and an unknown extension of the same wire type throws",
-		.disabled("not yet implemented"))
-	func createRejectsKnownAndUnknownExtensionWithSameWireType() throws {}
+		"creating a group with a known and an unknown extension of the same wire type throws"
+	)
+	func createRejectsKnownAndUnknownExtensionWithSameWireType() throws {
+		let known = MLS.RFC9420.Extension(type: .known(.applicationID), data: Data([1]))
+		let unknown = MLS.RFC9420.Extension(type: .unknown(1), data: Data([2]))
+		Self.expectDuplicateError {
+			_ = try Self.createGroup(extensions: [known, unknown])
+		}
+	}
 
-	@Test(
-		"creating a group with repeated GroupContext extension types throws",
-		.disabled("not yet implemented"))
-	func createRejectsDuplicateGroupContextExtensionTypes() throws {}
+	@Test("committing a GroupContextExtensions proposal with repeated types throws")
+	func committingRejectsGroupContextExtensionsProposalWithDuplicateTypes() throws {
+		let provider = SelfInteropTests.provider
+		let alice = try SelfInteropTests.member("alice")
+		var group = try SelfInteropTests.createGroup(alice)
+		Self.expectDuplicateError {
+			_ = try group.commit(
+				provider,
+				proposals: [
+					.proposal(
+						.groupContextExtensions([Self.marker, Self.marker]))
+				], signingKey: alice.signingKey, randomness: .generate(provider))
+		}
+	}
 
-	@Test(
-		"committing a GroupContextExtensions proposal with repeated types throws",
-		.disabled("not yet implemented"))
-	func committingRejectsGroupContextExtensionsProposalWithDuplicateTypes() throws {}
-
-	@Test(
-		"committing an Add of a KeyPackage with repeated extension types throws",
-		.disabled("not yet implemented"))
-	func committingRejectsAddOfKeyPackageWithDuplicateTypes() throws {}
+	@Test("committing an Add of a KeyPackage with repeated extension types throws")
+	func committingRejectsAddOfKeyPackageWithDuplicateTypes() throws {
+		let provider = SelfInteropTests.provider
+		let alice = try SelfInteropTests.member("alice")
+		let bob = try SelfInteropTests.member("bob")
+		var group = try SelfInteropTests.createGroup(alice)
+		var keyPackage = bob.keyPackage
+		keyPackage.extensions = [Self.marker, Self.marker]
+		Self.expectDuplicateError {
+			_ = try group.commit(
+				provider, proposals: [.proposal(.add(keyPackage))],
+				signingKey: alice.signingKey, randomness: .generate(provider))
+		}
+	}
 }

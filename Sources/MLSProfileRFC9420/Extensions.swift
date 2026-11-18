@@ -53,6 +53,7 @@ extension MLS.Writer {
 	/// breaks §13.4's one-extension-per-type rule (`checkUniqueTypes`), so
 	/// nothing this library encodes fails to decode.
 	mutating func encodeExtensionList(_ extensions: [MLS.RFC9420.Extension]) throws {
+		try extensions.checkUniqueTypes()
 		try encodeVector(extensions)
 	}
 }
