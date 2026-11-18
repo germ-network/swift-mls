@@ -353,7 +353,7 @@ extension MLS.RFC9420.Group {
 			// The filtered direct path on the post-apply tree — computed
 			// before `beginCommitPath` and kept, because `CommitPathStage`
 			// deliberately does not expose node indices. (Safe:
-			// `beginCommitPath` writes only direct-path parents, which
+			// `beginCommitPath` only touches direct-path nodes, which
 			// are not in any copath resolution, so the filtering is
 			// stable across the call.)
 			let directPath = MLS.TreeMath.directPath(
