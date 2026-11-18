@@ -112,7 +112,7 @@ extension MLS.RFC9420 {
 			groupID = Data(try reader.readOpaque())
 			version = try MLS.ProtocolVersion(from: &reader)
 			cipherSuite = try MLS.CipherSuite(from: &reader)
-			extensions = try reader.decodeVector()
+			extensions = try reader.decodeExtensionList()
 		}
 	}
 
@@ -340,7 +340,7 @@ extension MLS.RFC9420.Proposal: MLSDecodable {
 		case .known(.externalInit):
 			self = .externalInit(try MLS.RFC9420.ExternalInitProposal(from: &reader))
 		case .known(.groupContextExtensions):
-			self = .groupContextExtensions(try reader.decodeVector())
+			self = .groupContextExtensions(try reader.decodeExtensionList())
 		case .known(.appDataUpdate):
 			self = .appDataUpdate(try MLS.Extensions.AppDataUpdate(from: &reader))
 		case .unknown(let raw): throw MLS.RFC9420.WireError.unknownProposalType(raw)

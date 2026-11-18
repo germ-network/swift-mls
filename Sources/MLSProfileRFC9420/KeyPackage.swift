@@ -47,7 +47,7 @@ extension MLS.RFC9420.KeyPackage: MLSDecodable {
 		cipherSuite = try MLS.CipherSuite(from: &reader)
 		initKey = try MLS.HpkePublicKey(from: &reader)
 		leafNode = try MLS.RFC9420.LeafNode(from: &reader)
-		extensions = try reader.decodeVector()
+		extensions = try reader.decodeExtensionList()
 		signature = Data(try reader.readOpaque())
 	}
 }

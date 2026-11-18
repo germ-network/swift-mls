@@ -47,7 +47,7 @@ extension MLS.RFC9420 {
 			epoch = try reader.readUInt64()
 			treeHash = Data(try reader.readOpaque())
 			confirmedTranscriptHash = Data(try reader.readOpaque())
-			extensions = try reader.decodeVector()
+			extensions = try reader.decodeExtensionList()
 		}
 	}
 }

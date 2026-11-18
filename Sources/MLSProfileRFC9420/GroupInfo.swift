@@ -41,7 +41,7 @@ extension MLS.RFC9420.GroupInfo: MLSEncodable {
 extension MLS.RFC9420.GroupInfo: MLSDecodable {
 	public init(from reader: inout MLS.Reader) throws {
 		groupContext = try MLS.RFC9420.GroupContext(from: &reader)
-		extensions = try reader.decodeVector()
+		extensions = try reader.decodeExtensionList()
 		confirmationTag = try MLS.ConfirmationTag(from: &reader)
 		signer = try MLS.LeafIndex(from: &reader)
 		signature = Data(try reader.readOpaque())

@@ -42,7 +42,9 @@ extension MLS.Reader {
 	/// Decodes an `Extension extensions<V>` field, enforcing §13.4's
 	/// one-extension-per-type rule (`checkUniqueTypes`).
 	mutating func decodeExtensionList() throws -> [MLS.RFC9420.Extension] {
-		try decodeVector()
+		let extensions: [MLS.RFC9420.Extension] = try decodeVector()
+		try extensions.checkUniqueTypes()
+		return extensions
 	}
 }
 
@@ -62,5 +64,9 @@ extension [MLS.RFC9420.Extension] {
 	/// hand-built `.unknown(raw)` is unequal to the `.known` case with the same
 	/// raw value.
 	func checkUniqueTypes() throws {
+		var seen = Set<UInt16>()
+		for ext in self where !seen.insert(ext.type.rawValue).inserted {
+			throw MLS.RFC9420.WireError.duplicateExtensionType(ext.type)
+		}
 	}
 }
