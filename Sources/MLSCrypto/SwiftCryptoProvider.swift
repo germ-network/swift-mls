@@ -167,8 +167,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	/// x = 0 (y = 1 or y = p - 1) with the sign bit set. Neither
 	/// backend rejects these when the key is constructed, and BoringSSL
 	/// verifies signatures under them, so check here. A wrong-length key is
-	/// rejected; a y with no matching x is left to the backend. Canonical
-	/// small-order keys pass: the RFC has no rule against them.
+	/// rejected; a y with no matching x is left to the backend.
 	private static func isCanonicalEd25519Encoding(_ key: Data) -> Bool {
 		let bytes = [UInt8](key)
 		guard bytes.count == 32 else { return false }
@@ -181,6 +180,44 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		return !(signBit && (yIsOne || yIsPMinusOne))
 	}
 
+	private static let smallOrderEd25519Encodings: Set<Data> = Set(
+		[
+			// The eight canonical encodings, orders 1, 2, 4, 4, 8, 8, 8, 8.
+			"0100000000000000000000000000000000000000000000000000000000000000",
+			"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"0000000000000000000000000000000000000000000000000000000000000000",
+			"0000000000000000000000000000000000000000000000000000000000000080",
+			"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+			"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+			"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+			"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+			// Non-canonical encodings that a lenient decoder reduces to
+			// one of the above: y = 1 with the sign bit, y = p - 1 with
+			// the sign bit, y = p and p + 1 with either sign bit.
+			"0100000000000000000000000000000000000000000000000000000000000080",
+			"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		].map { hex in
+			Data(
+				stride(from: 0, to: hex.count, by: 2).map {
+					let start = hex.index(hex.startIndex, offsetBy: $0)
+					return UInt8(
+						hex[start..<hex.index(start, offsetBy: 2)],
+						radix: 16)!
+				})
+		})
+
+	/// True for the 14 encodings that decode to a point of order 1, 2, 4 or
+	/// 8. Policy matching ed25519-dalek's `verify_strict`, which rejects a
+	/// small-order public key and a small-order R; RFC 8032 has no such
+	/// rule.
+	private static func isSmallOrderEd25519Encoding(_ bytes: Data) -> Bool {
+		smallOrderEd25519Encodings.contains(bytes)
+	}
+
 	func verify(publicKey: MLS.SignaturePublicKey, content: Data, signature: Data) throws
 		-> Bool
 	{
@@ -188,6 +225,14 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		case .curve25519Aes128, .curve25519ChaCha:
 			guard Self.isCanonicalEd25519Encoding(publicKey.data) else {
 				throw MLS.CryptoError.invalidPublicKey
+			}
+			guard !Self.isSmallOrderEd25519Encoding(publicKey.data) else {
+				throw MLS.CryptoError.invalidPublicKey
+			}
+			if signature.count == 64,
+				Self.isSmallOrderEd25519Encoding(signature.prefix(32))
+			{
+				return false
 			}
 			return try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
 				.isValidSignature(signature, for: content)

@@ -212,6 +212,7 @@ struct Ed25519PublicKeyEncodingTests {
 		"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 		"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		"efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 	].map { Data(hex: $0) }
 
 	static let identity = Data(
@@ -245,7 +246,10 @@ struct Ed25519PublicKeyEncodingTests {
 	@Test("keys next to the rejected patterns are not rejected", arguments: suites)
 	func nearBoundaryKeysAreAccepted(_ suite: MLS.CipherSuite) throws {
 		let provider = try HpkePublicKeyValidationTests.provider(suite)
-		let signature = Self.identity + Data(repeating: 0, count: 32)
+		// R is the base point, not small-order, so verify reaches the backend.
+		let signature =
+			Data([0x58] + Array(repeating: 0x66, count: 31))
+			+ Data(repeating: 0, count: 32)
 		for key in Self.nearBoundaryCanonical {
 			#expect(throws: Never.self) {
 				_ = try provider.verify(
@@ -281,23 +285,42 @@ struct Ed25519PublicKeyEncodingTests {
 		}
 	}
 
-	/// Canonical small-order keys stay accepted by policy: RFC 8032 §5.1.7 has no rule rejecting them. The identity key
-	/// admits R = identity, S = 0 for any message on both backends.
-	@Test("canonical small-order keys are not rejected", arguments: suites)
-	func canonicalSmallOrderKeysAreAccepted(_ suite: MLS.CipherSuite) throws {
+	/// Small-order keys are rejected by policy, matching ed25519-dalek's
+	/// `verify_strict`; RFC 8032 has no rule either way. The identity key
+	/// with R = identity, S = 0 is the signature that verifies for any
+	/// message under a lenient check.
+	@Test("small-order public keys are rejected", arguments: suites)
+	func verifyRejectsSmallOrderKeys(_ suite: MLS.CipherSuite) throws {
 		let provider = try HpkePublicKeyValidationTests.provider(suite)
 		let signature = Self.identity + Data(repeating: 0, count: 32)
 		for key in Self.canonicalSmallOrder {
-			#expect(throws: Never.self) {
+			HpkePublicKeyValidationTests.expectInvalid {
 				_ = try provider.verify(
 					publicKey: .init(key), content: Data("m".utf8),
 					signature: signature)
 			}
 		}
+	}
+
+	/// A = [a]B + T with T of order 8, and R = -[k]T of small order, so
+	/// [S]B = R + [k]A holds for k reduced mod L and for the unreduced
+	/// hash alike, and a cofactorless check accepts it. A is
+	/// canonical and not small-order, so only the check on R rejects it.
+	@Test("a signature whose R is small-order is invalid", arguments: suites)
+	func verifyRejectsSmallOrderR(_ suite: MLS.CipherSuite) throws {
+		let provider = try HpkePublicKeyValidationTests.provider(suite)
+		let publicKey = Data(
+			hex: "992e04a0bfebfb85f504a0599b17f3ddd13a507999f366816cf0333970a1b129")
+		let message = Data(hex: "736d616c6c2d6f726465722052203137")
+		let signature = Data(
+			hex:
+				"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa"
+				+ "e0e33e342eee06d2be0faf9241d94783e92d1a8cdef1ba4892f84624dd43be09"
+		)
 		#expect(
-			try provider.verify(
-				publicKey: .init(Self.identity), content: Data("m".utf8),
-				signature: signature))
+			try !provider.verify(
+				publicKey: .init(publicKey), content: message, signature: signature)
+		)
 	}
 }
 
