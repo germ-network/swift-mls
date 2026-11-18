@@ -74,18 +74,18 @@ extension MLS.Combiner {
 		/// the application adopts the pair, so a declined join still deletes it.
 		public let consumedKeyPackage: MLS.HashReference
 		/// The joined half's context — `groupID`, `epoch`, `cipherSuite` — for the
-		/// caller-side checks RFC 9420 §12.4.3.1 leaves to the application, such as
+		/// RFC 9420 §12.4.3.1 checks this library leaves to its caller, such as
 		/// `group_id` uniqueness among the client's other groups.
 		public let context: MLS.RFC9420.GroupContext
 		/// The joiner's own leaf in this half.
 		public let myLeafIndex: MLS.LeafIndex
 	}
 
-	/// A combiner join that passed every check the draft and RFC 9420 place on the
-	/// library but is not yet adopted: the application reads `classical` and `pq`
+	/// A combiner join that passed each half's RFC 9420 join validation and this
+	/// module's pair checks but is not yet adopted: the application reads `classical` and `pq`
 	/// — the rosters and signers it is about to trust — and adopts with `apply()`
 	/// or drops the value to decline. Single-use, like the `PendingJoin`s it
-	/// replaces.
+	/// consumes.
 	public struct PendingJoinPair: ~Copyable, Sendable {
 		public let classical: HalfJoin
 		public let pq: HalfJoin

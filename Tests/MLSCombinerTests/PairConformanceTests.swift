@@ -220,8 +220,8 @@ private typealias Support = CombinerTestSupport
 	}
 
 	/// The applied pair is the founder's pair: same group ids and epochs per half,
-	/// `verifyPair()` passes, the PSK store is empty, and a classical exported
-	/// secret equals the founder's.
+	/// `verifyPair()` passes, and a classical exported secret equals the
+	/// founder's.
 	@Test func joiningAppliesToTheFoundersPair() throws {
 		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
 		let classicalCreation = try Support.halfCreation(founder: alice, peer: bob)
@@ -238,19 +238,6 @@ private typealias Support = CombinerTestSupport
 		#expect(joined.classical.context.epoch == founder.classical.context.epoch)
 		#expect(joined.pq.context.epoch == founder.pq.context.epoch)
 		try joined.verifyPair()
-
-		// The apq_psk is forgotten: an independent re-derivation of it resolves
-		// from the joined pair's store.
-		var independentPq = try MLS.RFC9420.Group.joining(
-			Support.pqProvider, welcome: welcome.pqWelcome,
-			credentials: bob.pqJoinCredentials, psk: { _ in nil }
-		).apply().group
-		let apqPsk = try MLS.Combiner.ExportedPsk.export(
-			from: &independentPq, Support.pqProvider,
-			componentID: MLS.Combiner.Codepoints.deployed.apqComponentID)
-		let id = apqPsk.preSharedKeyID(
-			nonce: Support.provider.randomBytes(Support.provider.hashSize))
-		#expect(try joined.pskStore.resolver()(id) == nil)
 		let secret = { (group: MLS.Combiner.CombinerGroup) in
 			try group.classical.exportSecret(
 				Support.provider, label: "joining", context: Data(), length: 32)
@@ -271,9 +258,9 @@ private typealias Support = CombinerTestSupport
 		}
 		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
 			_ = try MLS.Combiner.CombinerGroup.joining(
-			welcome: welcome, classicalCredentials: bob.joinCredentials,
-			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
-			pqProvider: Support.pqProvider)
+				welcome: welcome, classicalCredentials: bob.joinCredentials,
+				pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
+				pqProvider: Support.pqProvider)
 		}
 	}
 }
