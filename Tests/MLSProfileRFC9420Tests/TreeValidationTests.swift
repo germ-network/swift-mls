@@ -120,11 +120,9 @@ struct TreeValidationTests {
 		#expect(throws: (any Error).self) { try tree.validateParentHashChain(provider) }
 	}
 
-	/// S6: an extra unmerged-leaf entry at node 11 changes what its
-	/// filtered ("original") tree hash covers when a descendant's chain
-	/// checks against it, so the previously-valid chain now mismatches --
-	/// this is exactly the resolution-membership rule the tree phase
-	/// exists for.
+	/// S6: an extra unmerged-leaf entry appended at node 11 breaks the list's
+	/// order, which the `unmerged_leaves` check that `validateParentHashChain`
+	/// runs first rejects.
 	@Test("S6: an extra unmerged leaf breaks validation")
 	func mutationExtraUnmergedLeafBreaksChain() throws {
 		var tree = try Self.decodeTree(try Self.unmergedLeavesRecord())
@@ -141,7 +139,9 @@ struct TreeValidationTests {
 		p.unmergedLeaves.append(bogus)
 		try tree.setParent(11, to: p)
 
-		#expect(throws: (any Error).self) { try tree.validateParentHashChain(provider) }
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
+			try tree.validateParentHashChain(provider)
+		}
 	}
 
 	/// The node at the top of a parent-hash chain legitimately carries an

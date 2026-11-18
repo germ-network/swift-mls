@@ -6,21 +6,6 @@ import Testing
 
 @testable import MLSTreeKEM
 
-/// Synthetic leaf payloads throughout — no `LeafNode`, no profile linked at
-/// all, which is the actual proof that `MLSTreeKEM` doesn't secretly depend
-/// on `MLSProfileRFC9420`. The official tree vectors, which do need a real
-/// `LeafNode` decoder, run in `MLSProfileRFC9420Tests` instead.
-private func syntheticLeaf(_ tag: UInt8) -> MLS.TreeKEM.LeafRecord {
-	MLS.TreeKEM.LeafRecord(
-		encryptionKey: .init(Data([tag])), parentHash: nil, encoded: Data([tag, tag]))
-}
-
-private func syntheticParent(_ tag: UInt8, unmerged: [UInt32] = []) -> MLS.TreeKEM.ParentNode {
-	MLS.TreeKEM.ParentNode(
-		encryptionKey: .init(Data([tag])), parentHash: Data(),
-		unmergedLeaves: unmerged.map { MLS.LeafIndex(value: $0) })
-}
-
 @Suite("RatchetTree structure and mutation")
 struct RatchetTreeTests {
 	@Test("a fresh single-leaf tree has one leaf, no parents, and the right leaf count")

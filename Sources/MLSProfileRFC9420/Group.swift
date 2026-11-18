@@ -370,7 +370,6 @@ extension MLS.RFC9420.Group {
 		// which aren't this function's job to adjudicate.
 		try tree.validateNodeKinds()
 		try tree.validateParentHashChain(provider)
-		try tree.validateUnmergedLeaves()
 		try tree.validateNoDuplicateEncryptionKeys()
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch

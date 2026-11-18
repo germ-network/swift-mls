@@ -76,7 +76,11 @@ extension MLS.TreeKEM.RatchetTree {
 	/// that's simply as far as the most recent committer through that
 	/// region got. What makes an unmatched node an error is the coverage
 	/// sweep at the end, not the mismatch itself.
+	///
+	/// ``validateUnmergedLeaves()`` runs first: it needs no hashing, so an
+	/// invalid `unmerged_leaves` list is rejected before any hash is computed.
 	public func validateParentHashChain(_ provider: any MLS.CipherSuiteProvider) throws {
+		try validateUnmergedLeaves()
 		var toValidate = Set<UInt32>()
 		for i in stride(from: UInt32(1), to: serializedNodeCount, by: 2) {
 			if parent(at: i) != nil { toValidate.insert(i) }

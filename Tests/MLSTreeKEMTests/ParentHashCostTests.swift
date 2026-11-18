@@ -12,14 +12,35 @@ import Testing
 /// provider, not wall-clock.
 @Suite("Parent-hash validation cost")
 struct ParentHashCostTests {
+	/// Four non-blank leaves under a non-blank root listing `rootUnmerged`;
+	/// the other parents are blank.
+	static func fourLeafTree(rootUnmerged: [UInt32]) throws -> MLS.TreeKEM.RatchetTree {
+		try MLS.TreeKEM.RatchetTree(
+			nodes: [
+				.leaf(syntheticLeaf(1)), nil, .leaf(syntheticLeaf(2)),
+				.parent(syntheticParent(10, unmerged: rootUnmerged)),
+				.leaf(syntheticLeaf(3)), nil, .leaf(syntheticLeaf(4)),
+			])
+	}
+
 	@Test("unmerged_leaves entries no leaf's walk reaches are rejected with zero hash calls")
 	func unreachedUnmergedLeavesRejectedWithoutHashing() throws {
-		Issue.record("pending")
+		let tree = try Self.fourLeafTree(rootUnmerged: (0..<UInt32(1 << 16)).map { $0 })
+		let provider = HashCountingProvider()
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeafNotAtExpectedPosition) {
+			try tree.validateParentHashChain(provider)
+		}
+		#expect(provider.hashCalls == 0)
 	}
 
 	@Test("an unsorted unmerged_leaves list is rejected with zero hash calls")
 	func unsortedUnmergedLeavesRejectedWithoutHashing() throws {
-		Issue.record("pending")
+		let tree = try Self.fourLeafTree(rootUnmerged: [1, 0])
+		let provider = HashCountingProvider()
+		#expect(throws: MLS.TreeKEM.TreeError.unmergedLeavesNotSorted) {
+			try tree.validateParentHashChain(provider)
+		}
+		#expect(provider.hashCalls == 0)
 	}
 
 	@Test(
