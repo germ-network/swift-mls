@@ -37,7 +37,8 @@ import Testing
 	@Test func joinRejectsClassicalWelcomeMissingPskProposal() throws {
 		let alice = try Support.member("alice")
 		let bob = try Support.member("bob")
-		let welcome = try establishWithoutApqPskProposal(founder: alice, peer: bob)
+		let welcome = try Support.welcomePair(
+			founder: alice, peer: bob, bindApqPsk: false)
 
 		#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
 			_ = try MLS.Combiner.CombinerGroup.join(
@@ -322,78 +323,6 @@ import Testing
 			return applied.output
 		case .rejected(let rejection):
 			throw rejection.reason
-		}
-	}
-
-	// MARK: founder half without the PSK proposal
-
-	/// Mirrors `CombinerGroup.establish`, but the classical half's founding commit
-	/// carries the epoch attestation and `APQInfo` while deliberately OMITTING the
-	/// `apq_psk` `PreSharedKey` proposal — the non-conforming/buggy peer case under
-	/// test above. Only the resulting `APQWelcome` is needed by the tests above, so
-	/// unlike `establish` this does not bother advancing past the founder's own
-	/// committed (pre-apply) state.
-	private func establishWithoutApqPskProposal(
-		founder: CombinerTestSupport.Member, peer: CombinerTestSupport.Member
-	) throws -> MLS.Combiner.APQWelcome {
-		let codepoints = MLS.Combiner.Codepoints.deployed
-		return try codepoints.withWireWidth {
-			let classicalCreation = try Support.halfCreation(
-				founder: founder, peer: peer)
-			let pqCreation = try Support.halfCreation(
-				founder: founder, peer: peer, half: .pq)
-			let info = MLS.Combiner.APQInfo(
-				tSessionGroupID: classicalCreation.groupID,
-				pqSessionGroupID: pqCreation.groupID, mode: 0,
-				tCipherSuite: Support.provider.cipherSuite,
-				pqCipherSuite: Support.pqProvider.cipherSuite, tEpoch: 1, pqEpoch: 1)
-			let infoExtension = try info.asExtension(
-				type: codepoints.apqInfoExtensionType)
-			let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 1)
-			let attestationProposal = MLS.RFC9420.ProposalOrRef.proposal(
-				try attestation.proposal(componentID: codepoints.apqComponentID))
-
-			// PQ half, exactly as `establish` builds it — unbound, as always.
-			let pqEpoch0 = try MLS.RFC9420.Group.create(
-				Support.pqProvider, groupID: pqCreation.groupID,
-				leafNode: pqCreation.leafNode,
-				leafSecretKey: pqCreation.leafSecretKey,
-				extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
-			let pqTransition = try pqEpoch0.committing(
-				Support.pqProvider,
-				proposals: [
-					.proposal(.add(pqCreation.peerKeyPackage)),
-					attestationProposal,
-				],
-				signingKey: pqCreation.signingKey,
-				randomness: pqCreation.randomness,
-				psk: { _ in nil })
-			guard let pqWelcome = pqTransition.takeOutput().welcome else {
-				throw MLS.Combiner.Error.missingWelcome
-			}
-
-			// Classical half: the attestation and APQInfo ride along, but the
-			// apq_psk PreSharedKey proposal is deliberately dropped.
-			let classicalEpoch0 = try MLS.RFC9420.Group.create(
-				Support.provider, groupID: classicalCreation.groupID,
-				leafNode: classicalCreation.leafNode,
-				leafSecretKey: classicalCreation.leafSecretKey,
-				extensions: [infoExtension],
-				epochSecret: classicalCreation.epochSecret)
-			let classicalTransition = try classicalEpoch0.committing(
-				Support.provider,
-				proposals: [
-					.proposal(.add(classicalCreation.peerKeyPackage)),
-					attestationProposal,
-				],
-				signingKey: classicalCreation.signingKey,
-				randomness: classicalCreation.randomness, psk: { _ in nil })
-			guard let classicalWelcome = classicalTransition.takeOutput().welcome else {
-				throw MLS.Combiner.Error.missingWelcome
-			}
-
-			return MLS.Combiner.APQWelcome(
-				tWelcome: classicalWelcome, pqWelcome: pqWelcome)
 		}
 	}
 }

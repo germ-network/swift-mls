@@ -151,6 +151,11 @@ extension MLS.Combiner.CombinerGroup {
 	/// the PQ half. Defaults to empty, so existing callers are unaffected. A type
 	/// repeated among them, or equal to the `APQInfo` extension type, throws
 	/// `duplicateExtensionType` (RFC 9420 §13.4).
+	///
+	/// The halves must be distinct sessions (`halvesNotDistinct`: equal cipher suites
+	/// or group ids) and carry the same members (`membershipInconsistent`: the
+	/// founder and peer identities differ across halves, or any of those credentials
+	/// is not Basic); both are checked before either half is built.
 	public static func establish(
 		classical: MLS.Combiner.HalfCreation,
 		pq: MLS.Combiner.HalfCreation,
@@ -296,26 +301,17 @@ extension MLS.Combiner.CombinerGroup {
 		pqProvider: any MLS.CipherSuiteProvider,
 		codepoints: MLS.Combiner.Codepoints = .deployed
 	) throws -> MLS.Combiner.PendingJoinPair {
-		throw MLS.Combiner.Error.internalInconsistency
-	}
-
-	/// Join both halves of a combiner group and adopt them at once:
-	/// `joining(...)` followed by `apply()`, for callers that do no adjudication of
-	/// their own.
-	public static func join(
-		welcome: MLS.Combiner.APQWelcome,
-		classicalCredentials: MLS.RFC9420.Group.JoinerCredentials,
-		pqCredentials: MLS.RFC9420.Group.JoinerCredentials,
-		classicalProvider: any MLS.CipherSuiteProvider,
-		pqProvider: any MLS.CipherSuiteProvider,
-		codepoints: MLS.Combiner.Codepoints = .deployed
-	) throws -> MLS.Combiner.CombinerGroup {
-		try codepoints.withWireWidth {
+		let (classical, pq, group) = try codepoints.withWireWidth {
 			// PQ half first, resolving no PSK (its creation commit bound none).
 			let pqPending = try MLS.RFC9420.Group.joining(
 				pqProvider, welcome: welcome.pqWelcome, credentials: pqCredentials,
 				psk: { _ in nil })
-			let pqRoster = pqPending.roster
+			let pqJoin = MLS.Combiner.HalfJoin(
+				roster: pqPending.roster, signer: pqPending.signer,
+				consumedKeyPackage: pqPending.consumedKeyPackage,
+				context: pqPending.context, myLeafIndex: pqPending.myLeafIndex)
+			// Applied here, not at `PendingJoinPair.apply()`: the `apq_psk` below is
+			// exported from this group. Nothing is adopted until the pair is applied.
 			var pqGroup = pqPending.apply().group
 
 			// Re-derive the same apq_psk the creator bound the classical half with.
@@ -339,7 +335,11 @@ extension MLS.Combiner.CombinerGroup {
 			guard record.resolved(apqPsk.storageID) else {
 				throw MLS.Combiner.Error.apqPskNotBound
 			}
-			let classicalRoster = classicalPending.roster
+			let classicalJoin = MLS.Combiner.HalfJoin(
+				roster: classicalPending.roster, signer: classicalPending.signer,
+				consumedKeyPackage: classicalPending.consumedKeyPackage,
+				context: classicalPending.context,
+				myLeafIndex: classicalPending.myLeafIndex)
 			let classicalGroup = classicalPending.apply().group
 
 			store.forget(storageID: apqPsk.storageID)
@@ -348,10 +348,29 @@ extension MLS.Combiner.CombinerGroup {
 				codepoints: codepoints)
 			try group.verifyPair()
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(
-				classicalRoster.map(\.presentation.credential),
-				pqRoster.map(\.presentation.credential))
-			return group
+				classicalJoin.roster.map(\.presentation.credential),
+				pqJoin.roster.map(\.presentation.credential))
+			return (classicalJoin, pqJoin, group)
 		}
+		return MLS.Combiner.PendingJoinPair(classical: classical, pq: pq, group: group)
+	}
+
+	/// Join both halves of a combiner group and adopt them at once:
+	/// `joining(...)` followed by `apply()`, for callers that do no adjudication of
+	/// their own.
+	public static func join(
+		welcome: MLS.Combiner.APQWelcome,
+		classicalCredentials: MLS.RFC9420.Group.JoinerCredentials,
+		pqCredentials: MLS.RFC9420.Group.JoinerCredentials,
+		classicalProvider: any MLS.CipherSuiteProvider,
+		pqProvider: any MLS.CipherSuiteProvider,
+		codepoints: MLS.Combiner.Codepoints = .deployed
+	) throws -> MLS.Combiner.CombinerGroup {
+		try joining(
+			welcome: welcome, classicalCredentials: classicalCredentials,
+			pqCredentials: pqCredentials, classicalProvider: classicalProvider,
+			pqProvider: pqProvider, codepoints: codepoints
+		).apply()
 	}
 }
 
@@ -396,7 +415,9 @@ extension MLS.Combiner.CombinerGroup {
 	/// APQInfo", and §4.2.1 requires the `APQInfo` indicating "the GroupID and
 	/// ciphersuites of the two sessions" in the Welcome "in order to validate joining
 	/// the combined sessions". An `APQInfo` stating suites the groups do not run
-	/// states nothing true. `observed` is `(groupID, epoch, cipherSuite)` read off each half's live
+	/// states nothing true.
+	///
+	/// `observed` is `(groupID, epoch, cipherSuite)` read off each half's live
 	/// `GroupContext`, so the check itself takes no `Group` and is exercisable
 	/// against hand-built values.
 	static func checkAPQInfoConsistent(

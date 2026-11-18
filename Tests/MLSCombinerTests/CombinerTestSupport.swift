@@ -143,4 +143,79 @@ enum CombinerTestSupport {
 	static func credential(_ identity: String) -> MLS.RFC9420.Credential {
 		.basic(identity: Data(identity.utf8))
 	}
+
+	/// An `APQWelcome` for `peer`, built group by group as `establish` builds it but
+	/// with the `APQInfo` and the `apq_psk` binding under the caller's control — the
+	/// non-conforming founder cases a conforming `establish` cannot produce. `info`
+	/// receives the two group ids and returns the `APQInfo` both halves carry
+	/// (default: the truthful one). With `bindApqPsk` false the classical commit
+	/// omits the `apq_psk` `PreSharedKey` proposal. Only the Welcomes are built, not
+	/// the founder's pair.
+	static func welcomePair(
+		founder: Member, peer: Member, bindApqPsk: Bool = true,
+		info: ((_ classicalID: Data, _ pqID: Data) -> MLS.Combiner.APQInfo)? = nil
+	) throws -> MLS.Combiner.APQWelcome {
+		let codepoints = MLS.Combiner.Codepoints.deployed
+		return try codepoints.withWireWidth {
+			let classicalCreation = try halfCreation(founder: founder, peer: peer)
+			let pqCreation = try halfCreation(founder: founder, peer: peer, half: .pq)
+			let apqInfo =
+				info?(classicalCreation.groupID, pqCreation.groupID)
+				?? MLS.Combiner.APQInfo(
+					tSessionGroupID: classicalCreation.groupID,
+					pqSessionGroupID: pqCreation.groupID, mode: 0,
+					tCipherSuite: provider.cipherSuite,
+					pqCipherSuite: pqProvider.cipherSuite, tEpoch: 1, pqEpoch: 1)
+			let infoExtension = try apqInfo.asExtension(
+				type: codepoints.apqInfoExtensionType)
+			let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 1)
+			let attestationProposal = MLS.RFC9420.ProposalOrRef.proposal(
+				try attestation.proposal(componentID: codepoints.apqComponentID))
+
+			let pqEpoch0 = try MLS.RFC9420.Group.create(
+				pqProvider, groupID: pqCreation.groupID, leafNode: pqCreation.leafNode,
+				leafSecretKey: pqCreation.leafSecretKey,
+				extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
+			let pqTransition = try pqEpoch0.committing(
+				pqProvider,
+				proposals: [
+					.proposal(.add(pqCreation.peerKeyPackage)), attestationProposal,
+				],
+				signingKey: pqCreation.signingKey, randomness: pqCreation.randomness,
+				includePath: false, psk: { _ in nil })
+			let pqAdopted = pqTransition.group
+			let pqSent = pqTransition.takeOutput()
+			guard let pqWelcome = pqSent.welcome else {
+				throw MLS.Combiner.Error.missingWelcome
+			}
+			var pqGroup = try pqSent.takePending().apply(onto: pqAdopted).group
+
+			var proposals = [MLS.RFC9420.ProposalOrRef.proposal(.add(classicalCreation.peerKeyPackage))]
+			var store = MLS.Combiner.PSKStore()
+			if bindApqPsk {
+				let apqPsk = try MLS.Combiner.ExportedPsk.export(
+					from: &pqGroup, pqProvider, componentID: codepoints.apqComponentID)
+				store.register(apqPsk)
+				proposals.append(
+					.proposal(
+						apqPsk.proposal(nonce: provider.randomBytes(provider.hashSize))))
+			}
+			proposals.append(attestationProposal)
+
+			let classicalEpoch0 = try MLS.RFC9420.Group.create(
+				provider, groupID: classicalCreation.groupID,
+				leafNode: classicalCreation.leafNode,
+				leafSecretKey: classicalCreation.leafSecretKey,
+				extensions: [infoExtension], epochSecret: classicalCreation.epochSecret)
+			let classicalTransition = try classicalEpoch0.committing(
+				provider, proposals: proposals, signingKey: classicalCreation.signingKey,
+				randomness: classicalCreation.randomness, includePath: false,
+				psk: store.resolver())
+			guard let classicalWelcome = classicalTransition.takeOutput().welcome else {
+				throw MLS.Combiner.Error.missingWelcome
+			}
+			return MLS.Combiner.APQWelcome(
+				tWelcome: classicalWelcome, pqWelcome: pqWelcome)
+		}
+	}
 }

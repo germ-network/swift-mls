@@ -8,8 +8,8 @@ extension MLS.Combiner {
 		/// An `APQInfo` GroupContext extension is missing where one is required, or is
 		/// present but inconsistent across a pair's halves — mismatched identity
 		/// fields, a group id or cipher suite that does not name the joined group, or
-		/// an epoch field that does not match the observed epoch. A missing `APQInfo` on a welcome is
-		/// a downgrade attempt and fails the same way.
+		/// an epoch field that does not match the observed epoch. A missing `APQInfo`
+		/// on a welcome is a downgrade attempt and fails the same way.
 		case apqInfoMismatch
 
 		/// An `AppDataUpdate` epoch attestation on a FULL commit failed verification:

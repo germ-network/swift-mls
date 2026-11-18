@@ -183,20 +183,83 @@ private typealias Support = CombinerTestSupport
 	/// consumed KeyPackage, the group context and the joiner's own leaf — before
 	/// anything is adopted.
 	@Test func joiningReportsBothHalvesBeforeAdoption() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let welcome = try Support.welcomePair(founder: alice, peer: bob)
+		let pending = try MLS.Combiner.CombinerGroup.joining(
+			welcome: welcome, classicalCredentials: bob.joinCredentials,
+			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
+			pqProvider: Support.pqProvider)
+		let identities = [Support.credential("alice"), Support.credential("bob")]
+		let halves = [
+			(pending.classical, Support.provider, bob.keyPackage),
+			(pending.pq, Support.pqProvider, bob.pqKeyPackage),
+		]
+		for (half, provider, keyPackage) in halves {
+			#expect(half.signer.value == 0)
+			#expect(half.myLeafIndex.value == 1)
+			#expect(half.consumedKeyPackage == (try keyPackage.reference(provider)))
+			#expect(half.context.cipherSuite == provider.cipherSuite)
+			#expect(half.roster.map(\.presentation.credential) == identities)
+		}
+		#expect(pending.classical.context.groupID != pending.pq.context.groupID)
+		#expect(pending.classical.consumedKeyPackage != pending.pq.consumedKeyPackage)
 	}
 
 	/// The applied pair is the founder's pair: same group ids and epochs per half,
 	/// `verifyPair()` passes, the PSK store is empty, and a classical exported
 	/// secret equals the founder's.
 	@Test func joiningAppliesToTheFoundersPair() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let classicalCreation = try Support.halfCreation(founder: alice, peer: bob)
+		let pqCreation = try Support.halfCreation(founder: alice, peer: bob, half: .pq)
+		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
+			classical: classicalCreation, pq: pqCreation, mode: 0,
+			classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+		let joined = try MLS.Combiner.CombinerGroup.joining(
+			welcome: welcome, classicalCredentials: bob.joinCredentials,
+			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
+			pqProvider: Support.pqProvider).apply()
+		#expect(joined.classical.context.groupID == founder.classical.context.groupID)
+		#expect(joined.pq.context.groupID == founder.pq.context.groupID)
+		#expect(joined.classical.context.epoch == founder.classical.context.epoch)
+		#expect(joined.pq.context.epoch == founder.pq.context.epoch)
+		try joined.verifyPair()
+
+		// The apq_psk is forgotten: an independent re-derivation of it resolves
+		// from neither pair's store.
+		var independentPq = try MLS.RFC9420.Group.joining(
+			Support.pqProvider, welcome: welcome.pqWelcome,
+			credentials: bob.pqJoinCredentials, psk: { _ in nil }
+		).apply().group
+		let apqPsk = try MLS.Combiner.ExportedPsk.export(
+			from: &independentPq, Support.pqProvider,
+			componentID: MLS.Combiner.Codepoints.deployed.apqComponentID)
+		let id = apqPsk.preSharedKeyID(
+			nonce: Support.provider.randomBytes(Support.provider.hashSize))
+		#expect(try joined.pskStore.resolver()(id) == nil)
+		let secret = { (group: MLS.Combiner.CombinerGroup) in
+			try group.classical.exportSecret(
+				Support.provider, label: "joining", context: Data(), length: 32)
+		}
+		#expect(try secret(joined) == secret(founder))
 	}
 
 	/// `joining` runs the pair checks before handing anything back: a Welcome pair
 	/// that binds the `apq_psk` but whose `APQInfo` misstates a half's suite throws
 	/// `apqInfoMismatch` and yields no `PendingJoinPair`.
 	@Test func joiningRejectsAPQInfoMisstatingASuite() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let welcome = try Support.welcomePair(founder: alice, peer: bob) { classicalID, pqID in
+			MLS.Combiner.APQInfo(
+				tSessionGroupID: classicalID, pqSessionGroupID: pqID, mode: 0,
+				tCipherSuite: Support.pqProvider.cipherSuite,
+				pqCipherSuite: Support.provider.cipherSuite, tEpoch: 1, pqEpoch: 1)
+		}
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			_ = try MLS.Combiner.CombinerGroup.joining(
+			welcome: welcome, classicalCredentials: bob.joinCredentials,
+			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,
+			pqProvider: Support.pqProvider)
+		}
 	}
 }
