@@ -1,7 +1,7 @@
 # Vendored test vectors
 
 Committed, not fetched at test time — `swift test` never needs network access.
-Refresh with `Scripts/fetch-vectors.sh` and commit the diff.
+Refresh with `Scripts/fetch-vectors.sh` and commit the diff. The script fetches from commits pinned by `MLS_IMPL_REF` and `HPKE_REF` at its top; to update vectors, bump a ref deliberately, re-run, and review the diff.
 
 | file | source | official? |
 |---|---|---|

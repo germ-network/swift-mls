@@ -153,14 +153,16 @@ let package = Package(
             // the §7 paired structures. An above-profile consumer -- it runs two
             // RFC 9420 Groups and layers the combiner on MLSExtensions' exporter/
             // application-PSK/AppDataUpdate substrate; it adds no crypto. Deps are
-            // exactly MLSProfileRFC9420 + MLSExtensions (+ the codec/crypto/secret
-            // primitives they expose), never a downstream/session type -- the
-            // structural proof this stays IETF-generic. The Germ private suites,
+            // exactly MLSProfileRFC9420 + MLSExtensions (+ the codec, crypto,
+            // secret, tree-math and framing primitives they expose), never a
+            // downstream/session type -- the structural proof this stays
+            // IETF-generic. The Germ private suites,
             // wire framing, 2-party rules, and session live downstream
             // (twomlspq-swift).
             name: "MLSCombiner",
             dependencies: [
                 "MLSProfileRFC9420", "MLSExtensions", "MLSCodec", "MLSCrypto",
+                "MLSTreeMath", "MLSFraming",
                 .product(name: "SecretBytes", package: "swift-secret-bytes"),
             ]
         ),
