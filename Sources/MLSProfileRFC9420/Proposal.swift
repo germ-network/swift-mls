@@ -309,7 +309,8 @@ extension MLS.RFC9420.Proposal: MLSEncodable {
 		case .preSharedKey(let psk): try writer.encode(psk)
 		case .reInit(let reInit): try writer.encode(reInit)
 		case .externalInit(let externalInit): try writer.encode(externalInit)
-		case .groupContextExtensions(let extensions): try writer.encodeExtensionList(extensions)
+		case .groupContextExtensions(let extensions):
+			try writer.encodeExtensionList(extensions)
 		case .appDataUpdate(let update): try writer.encode(update)
 		// `type ‖ opaque<V>(body)`; the tag was written above.
 		case .custom(_, let body): try writer.writeOpaque(body)

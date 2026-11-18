@@ -58,14 +58,17 @@ enum CombinerTestSupport {
 		)
 	}
 
-	static func member(_ name: String) throws -> Member {
+	static func member(
+		_ name: String, lifetime: MLS.RFC9420.Lifetime = .init(notBefore: 0, notAfter: .max)
+	) throws -> Member {
 		let (signingKey, signatureKey) = try signingKeyPair()
 		let classical = try keyPackage(
-			name, provider: provider, signingKey: signingKey, signatureKey: signatureKey
-		)
+			name, provider: provider, signingKey: signingKey,
+			signatureKey: signatureKey,
+			lifetime: lifetime)
 		let pq = try keyPackage(
 			name, provider: pqProvider, signingKey: signingKey,
-			signatureKey: signatureKey)
+			signatureKey: signatureKey, lifetime: lifetime)
 		return Member(
 			identity: Data(name.utf8), signingKey: signingKey,
 			signatureKey: signatureKey,
@@ -77,7 +80,8 @@ enum CombinerTestSupport {
 
 	private static func keyPackage(
 		_ name: String, provider: any MLS.CipherSuiteProvider,
-		signingKey: MLS.SignatureSecretKey, signatureKey: MLS.SignaturePublicKey
+		signingKey: MLS.SignatureSecretKey, signatureKey: MLS.SignaturePublicKey,
+		lifetime: MLS.RFC9420.Lifetime
 	) throws -> (
 		leafSecret: MLS.HpkeSecretKey, initSecret: MLS.HpkeSecretKey,
 		keyPackage: MLS.RFC9420.KeyPackage
@@ -92,7 +96,7 @@ enum CombinerTestSupport {
 				cipherSuites: [.curve25519Aes128, .curve25519ChaCha],
 				extensions: [], proposals: [.init(.appDataUpdate)],
 				credentials: [.init(.basic)]),
-			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
+			source: .keyPackage(lifetime),
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(
 			provider, privateKey: signingKey, label: "LeafNodeTBS",

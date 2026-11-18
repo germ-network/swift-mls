@@ -1249,7 +1249,8 @@ extension MLS.RFC9420.Group {
 					provider, groupContext: context,
 					groupRequirements: groupRequirements,
 					memberCredentialTypes: memberCredentialTypes,
-					memberCapabilities: memberCapabilities)
+					memberCapabilities: memberCapabilities,
+					currentTime: currentTime)
 
 			case .update(let leafNode):
 				guard case .member(let updateSender) = stored.sender else {

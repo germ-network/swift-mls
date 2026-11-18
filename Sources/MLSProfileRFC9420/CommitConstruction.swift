@@ -82,6 +82,14 @@ extension MLS.RFC9420.Group {
 		// a group that cannot grow.
 		try validateLeaves(
 			tree, groupID: groupID, groupExtensions: extensions, provider)
+		if let now = lifetimeCheck.unixSeconds {
+			// `.treeWalk` accepts any leaf source, as `validateLeaves` above
+			// does; this call contributes only the lifetime range.
+			try leafNode.validatePolicy(
+				.treeWalk, groupRequirements: try extensions.requiredCapabilities(),
+				memberCredentialTypes: [leafNode.credential.credentialType],
+				memberCapabilities: [leafNode.capabilities], currentTime: now)
+		}
 
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(
 			provider, epochSecret: epochSecret)
