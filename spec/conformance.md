@@ -117,11 +117,24 @@ that a caller gets an error, not a plausible-looking result.
 §7.3 leaf validation runs in full — the authenticity half (every leaf's own
 signature) and the policy half (capability/extension consistency, mutual
 credential support, `required_capabilities`) at join, on every proposal leaf,
-and on every `UpdatePath` leaf. The two deliberate carve-outs: lifetime
-bounds are caller opt-ins (the receive-side check is RECOMMENDED-not-
-mandatory and hundreds of official-vector leaves are already expired; the
-maximum-total-lifetime is an application MUST), and §5.3.1 credential
-validation stays the application's — credentials are opaque here by design.
+and on every `UpdatePath` leaf. Two deliberate carve-outs: §5.3.1 credential
+validation stays the application's — credentials are opaque here by design —
+and the maximum total lifetime is an application MUST (§7.2), so the library's
+maximum is `UInt64.max` unless the application sets a lower one.
+
+| RFC 9420 | rule | here |
+|---|---|---|
+| §7.5 | blank the sender's whole direct path | `beginCommitPath` and `applyUpdatePath` both blank it before setting the filtered path |
+| §13.4 | an extension list MUST NOT repeat a type | `WireError.duplicateExtensionType` at decode and at encode (all nine extension-list fields, including the to-be-signed forms), and in `Group.create`. A group already holding a duplicate can't restore, commit or sign |
+| §7.3 | MUST check a sent leaf's lifetime against the current time | `lifetimeCheck: .at(unixSeconds:)` on `committing`, `Group.create` and `CombinerGroup.establish`; `.unchecked` skips it and deviates from the MUST. The library reads no clock |
+| §7.3 | receive-side check RECOMMENDED | opt-in through `lifetimeCheck` on `validating`; the default is `.unchecked`. The join path doesn't check |
+
+Beyond the spec, this implementation also: checks by-reference Adds and a
+`key_package` creator leaf against the same time; runs §12.4.2's pre-merge key
+checks when sending; enforces §16.7's key distinctness on every commit's final
+tree (a tree already holding a duplicate fails every later commit); reports the
+committer on `membershipRemoved`, including on a full eviction; and throws
+`GroupError.epochExhausted` at epoch `UInt64.max`.
 
 ---
 
