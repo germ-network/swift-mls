@@ -221,6 +221,41 @@ struct Ed25519PublicKeyEncodingTests {
 		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
 	].map { Data(hex: $0) }
 
+	/// Valid encodings one bit away from the rejected patterns: the check
+	/// must not reject them.
+	static let nearBoundaryCanonical: [Data] = [
+		"edfeffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+		"edfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb7f",
+		"efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7e",
+		"0101000000000000000000000000000000000000000000000000000000000080",
+	].map { Data(hex: $0) }
+
+	@Test("keys next to the rejected patterns are not rejected", arguments: suites)
+	func nearBoundaryKeysAreAccepted(_ suite: MLS.CipherSuite) throws {
+		let provider = try HpkePublicKeyValidationTests.provider(suite)
+		let signature = Self.identity + Data(repeating: 0, count: 32)
+		for key in Self.nearBoundaryCanonical {
+			#expect(throws: Never.self) {
+				_ = try provider.verify(
+					publicKey: .init(key), content: Data("m".utf8),
+					signature: signature)
+			}
+		}
+	}
+
+	@Test("a wrong-length key throws instead of trapping", arguments: suites)
+	func wrongLengthKeyThrows(_ suite: MLS.CipherSuite) throws {
+		let provider = try HpkePublicKeyValidationTests.provider(suite)
+		let signature = Self.identity + Data(repeating: 0, count: 32)
+		for key in [Self.identity.dropLast(), Self.identity + [0]] {
+			#expect(throws: (any Error).self) {
+				_ = try provider.verify(
+					publicKey: .init(key), content: Data("m".utf8),
+					signature: signature)
+			}
+		}
+	}
+
 	@Test("verify rejects a non-canonical key encoding", arguments: suites)
 	func verifyRejectsNonCanonicalKeys(_ suite: MLS.CipherSuite) throws {
 		let provider = try HpkePublicKeyValidationTests.provider(suite)

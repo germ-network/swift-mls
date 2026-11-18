@@ -163,29 +163,50 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
+	/// RFC 8032 §5.1.3 decoding fails when y >= p = 2^255 - 19, or when
+	/// x = 0 (y = 1 or y = p - 1) with the sign bit set. Neither
+	/// backend rejects these when the key is constructed, and BoringSSL
+	/// verifies signatures under them, so check here. A y with no
+	/// matching x, and a wrong-length key, are left to the backend. Canonical
+	/// small-order keys pass: the RFC has no rule against them.
+	private static func isCanonicalEd25519Encoding(_ key: Data) -> Bool {
+		let bytes = [UInt8](key)
+		guard bytes.count == 32 else { return true }
+		let signBit = bytes[31] & 0x80 != 0
+		let highBytes = bytes[1..<31].allSatisfy { $0 == 0xff } && bytes[31] & 0x7f == 0x7f
+		if highBytes && bytes[0] >= 0xed { return false }
+		let middleZero = bytes[1..<31].allSatisfy { $0 == 0 } && bytes[31] & 0x7f == 0
+		let yIsOne = middleZero && bytes[0] == 0x01
+		let yIsPMinusOne = highBytes && bytes[0] == 0xec
+		return !(signBit && (yIsOne || yIsPMinusOne))
+	}
+
 	func verify(publicKey: MLS.SignaturePublicKey, content: Data, signature: Data) throws
 		-> Bool
 	{
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:
-			try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
+			guard Self.isCanonicalEd25519Encoding(publicKey.data) else {
+				throw MLS.CryptoError.invalidPublicKey
+			}
+			return try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
 				.isValidSignature(signature, for: content)
 		case .p256Aes128:
 			// MLS encodes an ECDSA public key as an uncompressed point
 			// (RFC 9420 §5.1.1 / RFC 8446 §4.2.8.2), 0x04 || X || Y —
 			// swift-crypto's `rawRepresentation` omits the 0x04, so decode
 			// with `x963Representation`.
-			try P256.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P256.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P256.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
 		case .p384Aes256:
-			try P384.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P384.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P384.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
 		case .p521Aes256:
-			try P521.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P521.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P521.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
