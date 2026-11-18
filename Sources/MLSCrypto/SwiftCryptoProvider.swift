@@ -163,29 +163,95 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
+	/// RFC 8032 §5.1.3 decoding fails when y >= p = 2^255 - 19, or when
+	/// x = 0 (y = 1 or y = p - 1) with the sign bit set. Neither
+	/// backend rejects these when the key is constructed, and BoringSSL
+	/// verifies signatures under them, so check here. A wrong-length key is
+	/// rejected; a y with no matching x is left to the backend.
+	private static func isCanonicalEd25519Encoding(_ key: Data) -> Bool {
+		let bytes = [UInt8](key)
+		guard bytes.count == 32 else { return false }
+		let signBit = bytes[31] & 0x80 != 0
+		let highBytes = bytes[1..<31].allSatisfy { $0 == 0xff } && bytes[31] & 0x7f == 0x7f
+		if highBytes && bytes[0] >= 0xed { return false }
+		let middleZero = bytes[1..<31].allSatisfy { $0 == 0 } && bytes[31] & 0x7f == 0
+		let yIsOne = middleZero && bytes[0] == 0x01
+		let yIsPMinusOne = highBytes && bytes[0] == 0xec
+		return !(signBit && (yIsOne || yIsPMinusOne))
+	}
+
+	private static let smallOrderEd25519Encodings: Set<Data> = Set(
+		[
+			// The eight canonical encodings, orders 1, 2, 4, 4, 8, 8, 8, 8.
+			"0100000000000000000000000000000000000000000000000000000000000000",
+			"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"0000000000000000000000000000000000000000000000000000000000000000",
+			"0000000000000000000000000000000000000000000000000000000000000080",
+			"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+			"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+			"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+			"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+			// Non-canonical encodings that a lenient decoder reduces to
+			// one of the above: y = 1 with the sign bit, y = p - 1 with
+			// the sign bit, y = p and p + 1 with either sign bit.
+			"0100000000000000000000000000000000000000000000000000000000000080",
+			"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+			"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		].map { hex in
+			Data(
+				stride(from: 0, to: hex.count, by: 2).map {
+					let start = hex.index(hex.startIndex, offsetBy: $0)
+					return UInt8(
+						hex[start..<hex.index(start, offsetBy: 2)],
+						radix: 16)!
+				})
+		})
+
+	/// True for the 14 encodings that decode to a point of order 1, 2, 4 or
+	/// 8. Policy matching ed25519-dalek's `verify_strict`, which rejects a
+	/// small-order public key and a small-order R; RFC 8032 has no such
+	/// rule.
+	private static func isSmallOrderEd25519Encoding(_ bytes: Data) -> Bool {
+		smallOrderEd25519Encodings.contains(bytes)
+	}
+
 	func verify(publicKey: MLS.SignaturePublicKey, content: Data, signature: Data) throws
 		-> Bool
 	{
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:
-			try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
+			guard Self.isCanonicalEd25519Encoding(publicKey.data) else {
+				throw MLS.CryptoError.invalidPublicKey
+			}
+			guard !Self.isSmallOrderEd25519Encoding(publicKey.data) else {
+				throw MLS.CryptoError.invalidPublicKey
+			}
+			if signature.count == 64,
+				Self.isSmallOrderEd25519Encoding(signature.prefix(32))
+			{
+				return false
+			}
+			return try Curve25519.Signing.PublicKey(rawRepresentation: publicKey.data)
 				.isValidSignature(signature, for: content)
 		case .p256Aes128:
 			// MLS encodes an ECDSA public key as an uncompressed point
 			// (RFC 9420 §5.1.1 / RFC 8446 §4.2.8.2), 0x04 || X || Y —
 			// swift-crypto's `rawRepresentation` omits the 0x04, so decode
 			// with `x963Representation`.
-			try P256.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P256.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P256.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
 		case .p384Aes256:
-			try P384.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P384.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P384.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
 		case .p521Aes256:
-			try P521.Signing.PublicKey(x963Representation: publicKey.data)
+			return try P521.Signing.PublicKey(x963Representation: publicKey.data)
 				.isValidSignature(
 					P521.Signing.ECDSASignature(derRepresentation: signature),
 					for: content)
@@ -318,9 +384,45 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
+	private static let x25519Probe: Curve25519.KeyAgreement.PrivateKey = {
+		do {
+			return try .init(rawRepresentation: Data(repeating: 0x2a, count: 32))
+		} catch {
+			preconditionFailure("a 32-byte X25519 scalar is always valid")
+		}
+	}()
+
+	func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {
+		do {
+			switch cipherSuite {
+			case .curve25519Aes128, .curve25519ChaCha:
+				// X25519 clamps the scalar to a multiple of 8, so every
+				// small-order u, canonical or not, yields the all-zero
+				// secret. CryptoKit throws on it; BoringSSL returns it.
+				let shared = try Self.x25519Probe.sharedSecretFromKeyAgreement(
+					with: Curve25519.KeyAgreement.PublicKey(
+						rawRepresentation: key.data))
+				let allZero = shared.withUnsafeBytes { $0.allSatisfy { $0 == 0 } }
+				if allZero { throw MLS.CryptoError.invalidPublicKey }
+			case .p256Aes128:
+				_ = try P256.KeyAgreement.PublicKey(x963Representation: key.data)
+			case .p384Aes256:
+				_ = try P384.KeyAgreement.PublicKey(x963Representation: key.data)
+			case .p521Aes256:
+				_ = try P521.KeyAgreement.PublicKey(x963Representation: key.data)
+			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+			}
+		} catch let error as MLS.CryptoError {
+			throw error
+		} catch {
+			throw MLS.CryptoError.invalidPublicKey
+		}
+	}
+
 	func hpkeSeal(publicKey: MLS.HpkePublicKey, info: Data, aad: Data?, plaintext: Data) throws
 		-> (enc: Data, ciphertext: Data)
 	{
+		try validateHpkePublicKey(publicKey)
 		let suite = hpkeCiphersuite
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:

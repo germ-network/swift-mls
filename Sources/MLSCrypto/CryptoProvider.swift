@@ -120,6 +120,22 @@ extension MLS {
 		/// key (nothing to check against); only fixed-size suites are
 		/// length-checked at restore.
 		var hpkeSecretKeySize: Int? { get }
+
+		/// Throws `CryptoError.invalidPublicKey` for a key this suite's KEM
+		/// cannot seal to safely. For callers to check a key where it enters
+		/// group state, so a malformed key fails on arrival instead of in
+		/// some later committer's `hpkeSeal`. This is this library's policy,
+		/// not an RFC 9420 rule: §5.1.1 treats HPKE public keys as opaque,
+		/// and RFC 9180 §7.1.4 puts validation on the sender at seal time.
+		///
+		/// A requirement with a default below (the `hpkeSecretKeySize`
+		/// pattern), so a wrapper's override is visible through
+		/// `any CipherSuiteProvider`. The default probe-seals, so a
+		/// conformer that doesn't implement this still rejects every key
+		/// its own `hpkeSeal` would, and reports any seal failure (an
+		/// unsupported suite included) as an invalid key. A conformer whose
+		/// `hpkeSeal` calls this must implement it, or the two recurse.
+		func validateHpkePublicKey(_ key: HpkePublicKey) throws
 	}
 
 	/// Looks up the `CipherSuiteProvider` for a suite id. An app composes
@@ -186,4 +202,12 @@ extension MLS.CipherSuiteProvider {
 	/// has one; a suite with no fixed width leaves this `nil` and keeps the
 	/// non-empty check only (spec/snapshot.md §3.1).
 	public var hpkeSecretKeySize: Int? { nil }
+
+	public func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {
+		do {
+			_ = try hpkeSeal(publicKey: key, info: Data(), aad: nil, plaintext: Data())
+		} catch {
+			throw MLS.CryptoError.invalidPublicKey
+		}
+	}
 }
