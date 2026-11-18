@@ -35,8 +35,9 @@ extension MLS.RFC9420 {
 	}
 
 	/// Errors from `MLS.RFC9420.Group`'s join/commit-processing pipeline —
-	/// `WireError` is decode-only and doesn't cover semantic failures like
-	/// a mismatched cipher suite or an unresolved PSK.
+	/// `WireError` covers malformed wire data (and a repeated extension type at
+	/// encode) and doesn't cover semantic failures like a mismatched cipher
+	/// suite or an unresolved PSK.
 	public enum GroupError: Error, Sendable, Equatable {
 		/// S1: no `Welcome.secrets` entry matches our own `KeyPackageRef`.
 		case noMatchingWelcomeSecret
@@ -290,7 +291,9 @@ extension MLS.RFC9420 {
 		/// mutation-invisible).
 		case updatePathReusesCommitterKey
 		/// S20: an `UpdatePath` public key already appears in the new
-		/// ratchet tree — including the committer's own previous leaf key.
+		/// ratchet tree — including the committer's own previous leaf key. Also
+		/// thrown when the path repeats a key within itself, which is this
+		/// implementation's choice (§16.7's distinctness), not a §12.4.2 check.
 		case updatePathReusesEncryptionKey
 		/// §12.4.3.1: "the set of Welcome messages produced in this step
 		/// MUST cover every new member added in the Commit." An added

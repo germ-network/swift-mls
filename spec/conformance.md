@@ -125,7 +125,7 @@ maximum is `UInt64.max` unless the application sets a lower one.
 | RFC 9420 | rule | here |
 |---|---|---|
 | §7.5 | blank the sender's whole direct path | `beginCommitPath` and `applyUpdatePath` both blank it before setting the filtered path |
-| §13.4 | an extension list MUST NOT repeat a type | `WireError.duplicateExtensionType` at decode and at encode (all nine extension-list fields, including the to-be-signed forms), and in `Group.create`. A group already holding a duplicate can't restore, commit or sign |
+| §13.4 | an extension list MUST NOT repeat a type | `WireError.duplicateExtensionType` at decode (six structures) and at encode (nine extension-list fields, including the to-be-signed forms), and in `Group.create`. A group already holding a duplicate can't restore, commit or sign |
 | §7.3 | MUST check a sent leaf's lifetime against the current time | `lifetimeCheck: .at(unixSeconds:)` on `committing`, `Group.create` and `CombinerGroup.establish`; `.unchecked` skips it and deviates from the MUST. The library reads no clock |
 | §7.3 | receive-side check RECOMMENDED | opt-in through `lifetimeCheck` on `validating`; the default is `.unchecked`. The join path doesn't check |
 
@@ -246,7 +246,7 @@ chose the call sequence, not us.
 
 **swift ↔ mls-rs — the independent-implementation half, now run.** The same
 harness, a second `-client` pointed at mls-rs's own `harness_client` (Wickr
-MLS), suite 1, both handshake-public. Under `ClientModeAll` the runner runs
+MLS), suites 1, 2, 3, 5 and 7, both handshake-public. Under `ClientModeAll` the runner runs
 every actor→client assignment, so each scenario runs with swift creating and
 mls-rs joining, mls-rs creating and swift joining, and each same-stack pair —
 the same wire bytes leaving one implementation and consumed by the other:
@@ -255,10 +255,10 @@ the same wire bytes leaving one implementation and consumed by the other:
 |---|---|
 | `application` (all 3 scripts) | **pass, both directions** |
 | `welcome_join` (path, no-path, external-tree, with-psk) | **pass, both directions** |
-| `commit`: add, empty, remove, external_psk, group_context_extensions | **pass, both directions** |
+| `commit`: add (256/256), remove (32/32), empty, external_psk, group_context_extensions | **pass, both directions** |
 | `commit`: `update` with mls-rs proposing, swift committing | **pass** — our commit-of-a-peer's-Update path agrees with mls-rs |
 | `commit`: `update` with swift proposing | swift-side deferred (the updater key-handoff) |
-| `commit`: `resumption_psk`, `all_together_*` | swift-side deferred (reinit/branch resumption PSKs) |
+| `commit`: `resumption_psk`, `all_together_*` | swift-side deferred (reinit/branch resumption PSKs; `all_together_bob_proposes` also uses a by-value proposal type the harness has never supported) |
 
 Every failure is a swift-side **documented deferred feature** being invoked,
 never a wire disagreement: when both stacks use only implemented paths, they

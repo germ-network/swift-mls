@@ -6,7 +6,7 @@ import Testing
 @testable import MLSProfileRFC9420
 
 /// `establish` passes its `lifetimeCheck` to both halves' group creation and Add.
-@Suite("Combiner establish checks KeyPackage lifetimes (RFC 9420 §7.3)")
+@Suite("Combiner establish checks KeyPackage lifetimes")
 struct EstablishLifetimeTests {
 	typealias Support = CombinerTestSupport
 	static let window = MLS.RFC9420.Lifetime(notBefore: 100, notAfter: 200)

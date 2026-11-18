@@ -1623,9 +1623,9 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
-		// A key repeated within the path itself is refused by the same error:
-		// §16.7's distinctness is this implementation's choice here, and the
-		// merged tree could not show it before the path is signed or merged.
+		// A key repeated within the path itself is refused with the same error.
+		// This is this implementation's choice (§16.7's distinctness), checked
+		// here because it must be refused before the path is signed or merged.
 		var seen = Set<MLS.HpkePublicKey>()
 		for key in keys where existing.contains(key) || !seen.insert(key).inserted {
 			throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
