@@ -10,26 +10,34 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions: {}
+
 jobs:
+  test:
+    if: ${{ github.ref == 'refs/heads/main' && github.repository_owner == 'germ-network' }}
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
+    needs: test
     if: ${{ github.ref == 'refs/heads/main' && github.repository_owner == 'germ-network' }}
     name: Release
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       pull-requests: write
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           run_install: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: ".node-version"
           check-latest: true
@@ -37,7 +45,7 @@ jobs:
 
       - name: Create Pull Request for next release or Publish a new github release
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
 
         with:
           title: Prepare next release
