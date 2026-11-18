@@ -203,5 +203,11 @@ extension MLS.CipherSuiteProvider {
 	/// non-empty check only (spec/snapshot.md §3.1).
 	public var hpkeSecretKeySize: Int? { nil }
 
-	public func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {}
+	public func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {
+		do {
+			_ = try hpkeSeal(publicKey: key, info: Data(), aad: nil, plaintext: Data())
+		} catch {
+			throw MLS.CryptoError.invalidPublicKey
+		}
+	}
 }
