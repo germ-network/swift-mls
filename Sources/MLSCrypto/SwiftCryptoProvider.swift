@@ -350,6 +350,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	func hpkeSeal(publicKey: MLS.HpkePublicKey, info: Data, aad: Data?, plaintext: Data) throws
 		-> (enc: Data, ciphertext: Data)
 	{
+		try validateHpkePublicKey(publicKey)
 		let suite = hpkeCiphersuite
 		switch cipherSuite {
 		case .curve25519Aes128, .curve25519ChaCha:
