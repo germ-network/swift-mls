@@ -571,7 +571,9 @@ extension MLS.RFC9420.Group {
 	/// opened from a sealed blob by the consumer). `provider` must back the
 	/// suite named in the snapshot's `group_context`; it is used only for the
 	/// §3.1 length checks and suite match, never for a cryptographic operation
-	/// at decode (spec/snapshot.md §4.1.1).
+	/// at decode (spec/snapshot.md §4.1.1). A context epoch at or above
+	/// ``GroupContext/restoreEpochLimit`` throws
+	/// ``MLS/RFC9420/GroupError/epochOutOfRange(_:)``.
 	public static func restore(
 		from archive: SecretArchive, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
@@ -593,7 +595,9 @@ extension MLS.RFC9420.Group {
 	/// Restores a group from a decoded **format 2** `Snapshot` (D18): validates
 	/// the core section (spec/snapshot.md §4.1.1/§4.3 cross-consistency MUSTs)
 	/// and each membership, then composes them. Every failure is a thrown
-	/// `SnapshotError` (or a propagated codec/tree error), never a trap.
+	/// `SnapshotError` (or a propagated codec/tree error), never a trap. A
+	/// context epoch at or above ``GroupContext/restoreEpochLimit`` throws
+	/// ``MLS/RFC9420/GroupError/epochOutOfRange(_:)``.
 	public static func restore(
 		from snapshot: Snapshot, _ provider: any MLS.CipherSuiteProvider
 	) throws -> MLS.RFC9420.Group {
@@ -756,6 +760,7 @@ extension MLS.RFC9420.Group {
 		}
 
 		let context = try MLS.RFC9420.GroupContext(mlsEncoded: core.groupContext)
+		try context.requireEpoch(below: MLS.RFC9420.GroupContext.restoreEpochLimit)
 		guard provider.cipherSuite == context.cipherSuite else {
 			throw MLS.RFC9420.SnapshotError.cipherSuiteMismatch
 		}

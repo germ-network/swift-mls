@@ -132,7 +132,7 @@ struct GroupMutationTests {
 	/// `join()` fails HPKE authentication before ever reaching whatever
 	/// the test actually means to exercise -- confirmed by tracing a
 	/// first attempt that skipped this and got exactly that failure.
-	private static func reseal(
+	static func reseal(
 		_ scenario: Scenario, groupInfo: MLS.RFC9420.GroupInfo
 	) throws -> MLS.RFC9420.Welcome {
 		let keyPackageRef = try scenario.keyPackage.reference(scenario.provider)

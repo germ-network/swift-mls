@@ -15,5 +15,8 @@ extension MLS.RFC9420.GroupContext {
 	/// Throws ``MLS/RFC9420/GroupError/epochOutOfRange(_:)`` when `epoch` is
 	/// at or above `limit`.
 	func requireEpoch(below limit: UInt64) throws {
+		guard epoch < limit else {
+			throw MLS.RFC9420.GroupError.epochOutOfRange(epoch)
+		}
 	}
 }
