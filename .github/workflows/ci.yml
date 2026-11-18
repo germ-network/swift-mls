@@ -1,13 +1,9 @@
 name: CI
 
-# Pull-request-scoped only: `main` is a bare bootstrap skeleton (empty
-# Package.swift, no Sources/Tests) until the phase PR stack merges, so a
-# push-to-main run would have nothing to lint or test. Every phase PR runs
-# this against its own populated branch, which is the gate that actually
-# matters here. Re-add `push: branches: [main]` once the stack has landed
-# and main carries real sources.
+# Pushes to main are tested by release.yml, which calls this workflow.
 on:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,9 +18,11 @@ jobs:
     # toolchain); older releases order `@_spi … @testable import` lines
     # differently. The build and test jobs keep proving the 6.2.3 minimum.
     runs-on: ubuntu-latest
-    container: swift:6.4.0
+    container: swift:6.4.0@sha256:4601bf61dab9485a3e93087770b72d268737e945a5b000e2286b6cc48bb048b6
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # --strict: warnings fail the job too, not only errors — .swift-format
       # here matches AtprotoTypes/jxl-encoder-swift's config exactly, but
       # unlike those two repos this is actually enforced in CI, not merely
@@ -35,23 +33,27 @@ jobs:
       # directory's *parent* still walks back down into it. Pass an
       # explicit flat file list instead (paths, not --recursive dirs).
       - run: |
-          swift format lint --configuration .swift-format --strict \
-            $(find Sources Tests -name Generated -prune -o -name '*.swift' -print)
+          find Sources Tests -name Generated -prune -o -name '*.swift' -print0 \
+            | xargs -0 swift format lint --configuration .swift-format --strict
 
   macos:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
       - run: swift test
 
   linux:
     runs-on: ubuntu-latest
-    container: swift:6.2.3
+    container: swift:6.2.3@sha256:6dd90eb2359663a2cde8f03e9951f488b23134b3b8fce20e9dcb6cada75dd803
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - run: swift test
 
   ios-build:
@@ -59,8 +61,10 @@ jobs:
     # tests on macOS/Linux — swift test does not run on a simulator here.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
       # SwiftPM auto-generates one scheme per product, plus an umbrella
