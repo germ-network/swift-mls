@@ -13,12 +13,14 @@ import Testing
 struct RatchetTreeDecodeLimitTests {
 	@Test("a decoded profile node costs one word in an array")
 	func decodedNodeIsCompact() throws {
-		Issue.record("pending")
+		#expect(
+			MemoryLayout<MLS.RFC9420.Node?>.stride == MemoryLayout<Int>.stride)
 	}
 
 	@Test("a tree node costs one word in a ratchet tree's storage")
 	func treeNodeIsCompact() throws {
-		Issue.record("pending")
+		#expect(
+			MemoryLayout<MLS.TreeKEM.TreeNode?>.stride == MemoryLayout<Int>.stride)
 	}
 
 	@Test("maxRatchetTreeNodeCount is the longest array LeafCount admits")
