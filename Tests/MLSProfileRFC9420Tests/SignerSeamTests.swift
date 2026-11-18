@@ -2,6 +2,7 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSFraming
+import MLSTreeKEM
 import SecretBytes
 import Testing
 
@@ -352,5 +353,59 @@ struct SignerSeamTests {
 		#expect(
 			group.memberships[0].ownSend.nextGeneration(isHandshake: false) == before
 				+ 1)
+	}
+
+	// MARK: - refusals precede the leaf signature
+
+	/// A committed-to rule: a refused commit never requests a `.leafNode`
+	/// signature, which a stateful signer may be unable to un-consume.
+	private static func expectRefusedBeforeSigning(
+		_ error: some Error & Equatable, group: MLS.RFC9420.Group,
+		alice: SelfInteropTests.Member, proposals: [MLS.RFC9420.ProposalOrRef] = [],
+		randomness: MLS.RFC9420.Group.CommitRandomness,
+		sourceLocation: SourceLocation = #_sourceLocation
+	) {
+		let recorder = RoleRecorder(provider: provider, key: alice.signingKey)
+		#expect(throws: error, sourceLocation: sourceLocation) {
+			_ = try group.committing(
+				provider, proposals: proposals, sign: recorder.sign,
+				randomness: randomness,
+				lifetimeCheck: .unchecked)
+		}
+		#expect(recorder.roles.isEmpty, sourceLocation: sourceLocation)
+	}
+
+	@Test("a refused path with a repeated key requests no leaf signature")
+	func refusedPathWithRepeatedKeyRequestsNoLeafSignature() throws {
+		let pair = try ProposalValidationTests.pair()
+		var randomness = try MLS.RFC9420.Group.CommitRandomness.generate(Self.provider)
+		randomness.leafEncryptionPublicKey = try MLS.TreeKEM.nodeKeyPair(
+			Self.provider, pathSecret: randomness.firstPathSecret
+		).1
+		Self.expectRefusedBeforeSigning(
+			MLS.RFC9420.GroupError.updatePathReusesEncryptionKey, group: pair.groupA,
+			alice: pair.alice, randomness: randomness)
+	}
+
+	@Test("a refused duplicate GroupContext extension list requests no leaf signature")
+	func refusedDuplicateGroupContextExtensionsRequestNoLeafSignature() throws {
+		let pair = try ProposalValidationTests.pair()
+		let marker = MLS.RFC9420.Extension(type: .known(.applicationID), data: Data([1]))
+		Self.expectRefusedBeforeSigning(
+			MLS.RFC9420.WireError.duplicateExtensionType(marker.type),
+			group: pair.groupA,
+			alice: pair.alice,
+			proposals: [.proposal(.groupContextExtensions([marker, marker]))],
+			randomness: try .generate(Self.provider))
+	}
+
+	@Test("a refused epoch overflow requests no leaf signature")
+	func refusedEpochExhaustionRequestsNoLeafSignature() throws {
+		let pair = try ProposalValidationTests.pair()
+		var group = pair.groupA
+		group.context.epoch = .max
+		Self.expectRefusedBeforeSigning(
+			MLS.RFC9420.GroupError.epochExhausted, group: group, alice: pair.alice,
+			randomness: try .generate(Self.provider))
 	}
 }

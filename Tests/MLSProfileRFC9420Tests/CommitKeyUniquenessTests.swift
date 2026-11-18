@@ -96,7 +96,7 @@ struct CommitKeyUniquenessTests {
 		randomness.leafEncryptionPublicKey = try MLS.TreeKEM.nodeKeyPair(
 			Self.provider, pathSecret: randomness.firstPathSecret
 		).1
-		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 1)) {
+		#expect(throws: MLS.RFC9420.GroupError.updatePathReusesEncryptionKey) {
 			_ = try pair.groupA.committing(
 				Self.provider, proposals: [], signingKey: pair.alice.signingKey,
 				randomness: randomness, lifetimeCheck: .unchecked)
@@ -149,7 +149,7 @@ struct CommitKeyUniquenessTests {
 			.init(alice: trio.alice, groupA: trio.groupA, groupB: trio.groupB),
 			proposals: [], path: path)
 		var receiver = trio.groupB
-		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 3)) {
+		#expect(throws: MLS.RFC9420.GroupError.updatePathReusesEncryptionKey) {
 			try receiver.process(
 				provider, commit: message, proposals: .init(), psk: { _ in nil })
 		}

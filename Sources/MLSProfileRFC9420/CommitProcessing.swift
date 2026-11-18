@@ -849,10 +849,6 @@ extension MLS.RFC9420.Group {
 			try provisionalTree.applyUpdatePath(
 				sender: senderIndex, leaf: try path.leafNode.record,
 				pathNodes: path.nodes.map(\.pathNode), provider)
-			// This implementation's choice (§16.7's distinctness on the merged
-			// tree): the pre-merge freshness check cannot see a key repeated
-			// within one path.
-			try provisionalTree.validateNoDuplicateEncryptionKeys()
 
 			// §12.4.2/§7.6: "Verify that the following fields are unique among the
 			// members of the group: signature_key" -- the whole-tree half of that
@@ -1627,7 +1623,11 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
-		for key in keys where existing.contains(key) {
+		// A key repeated within the path itself is refused by the same error:
+		// §16.7's distinctness is this implementation's choice here, and the
+		// merged tree could not show it before the path is signed or merged.
+		var seen = Set<MLS.HpkePublicKey>()
+		for key in keys where existing.contains(key) || !seen.insert(key).inserted {
 			throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
 		}
 	}

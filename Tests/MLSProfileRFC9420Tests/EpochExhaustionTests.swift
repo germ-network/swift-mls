@@ -45,4 +45,21 @@ struct EpochExhaustionTests {
 			}
 		}
 	}
+
+	@Test("validating a pathless commit at epoch UInt64.max throws epochExhausted")
+	func validatingAtMaximumEpochThrowsEpochExhausted() throws {
+		var pair = try ProposalValidationTests.pair()
+		let carol = try SelfInteropTests.member("carol")
+		pair.groupA.context.epoch = .max
+		pair.groupB.context.epoch = .max
+		let message = try ConstructedRejectionTests.craftedCommit(
+			.init(alice: pair.alice, groupA: pair.groupA, groupB: pair.groupB),
+			proposals: [.proposal(.add(carol.keyPackage))], path: nil)
+		let receiver = pair.groupB
+		#expect(throws: MLS.RFC9420.GroupError.epochExhausted) {
+			_ = try receiver.validating(
+				SelfInteropTests.provider, commit: message, proposals: .init(),
+				psk: { _ in nil })
+		}
+	}
 }

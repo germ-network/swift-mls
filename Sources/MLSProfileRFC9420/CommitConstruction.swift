@@ -276,6 +276,9 @@ extension MLS.RFC9420.Group {
 				provisionalExtensions = extensions
 			}
 		}
+		// Refusals that need no tree work come before any signature is requested.
+		try provisionalExtensions.checkUniqueTypes()
+		let nextEpoch = try context.nextEpoch()
 		let updateChanges = try validateProposalList(
 			resolved, committer: committerLeaf,
 			provisionalExtensions: provisionalExtensions,
@@ -467,9 +470,6 @@ extension MLS.RFC9420.Group {
 				placement: .inGroup(
 					groupID: context.groupID, leafIndex: committerLeaf))
 			try newTree.setLeaf(committerLeaf, to: newLeaf.record)
-			// The same whole-tree check the receiver runs; it also catches a key
-			// repeated within the new path, which the checks above cannot see.
-			try newTree.validateNoDuplicateEncryptionKeys()
 			committerChange = (
 				leaf: committerLeaf,
 				old: MLS.RFC9420.CredentialPresentation(
@@ -484,7 +484,7 @@ extension MLS.RFC9420.Group {
 			// confirmed transcript hash, new extensions (§12.4.1).
 			let provisionalContext = MLS.RFC9420.GroupContext(
 				version: context.version, cipherSuite: context.cipherSuite,
-				groupID: context.groupID, epoch: try context.nextEpoch(),
+				groupID: context.groupID, epoch: nextEpoch,
 				treeHash: try newTree.treeHash(provider),
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
@@ -547,7 +547,7 @@ extension MLS.RFC9420.Group {
 
 		let newContext = MLS.RFC9420.GroupContext(
 			version: context.version, cipherSuite: context.cipherSuite,
-			groupID: context.groupID, epoch: try context.nextEpoch(),
+			groupID: context.groupID, epoch: nextEpoch,
 			treeHash: try newTree.treeHash(provider),
 			confirmedTranscriptHash: confirmedTranscriptHash,
 			extensions: provisionalExtensions)
