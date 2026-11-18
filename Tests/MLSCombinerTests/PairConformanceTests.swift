@@ -20,7 +20,13 @@ private typealias Support = CombinerTestSupport
 	/// The shared fixtures run each pair's halves on two different cipher suites,
 	/// as a conforming pair must.
 	@Test func establishedPairRunsHalvesOnDistinctSuites() throws {
-		Issue.record("pending")
+		let (founder, peer) = try Support.establishedPair(
+			founder: try Support.member("alice"), peer: try Support.member("bob"))
+		for group in [founder, peer] {
+			#expect(group.classical.context.cipherSuite == Support.provider.cipherSuite)
+			#expect(group.pq.context.cipherSuite == Support.pqProvider.cipherSuite)
+			#expect(group.classical.context.cipherSuite != group.pq.context.cipherSuite)
+		}
 	}
 
 	// MARK: distinct halves

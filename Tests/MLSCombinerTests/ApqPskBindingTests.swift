@@ -42,9 +42,9 @@ import Testing
 		#expect(throws: MLS.Combiner.Error.apqPskNotBound) {
 			_ = try MLS.Combiner.CombinerGroup.join(
 				welcome: welcome, classicalCredentials: bob.joinCredentials,
-				pqCredentials: bob.joinCredentials,
+				pqCredentials: bob.pqJoinCredentials,
 				classicalProvider: Support.provider,
-				pqProvider: Support.provider)
+				pqProvider: Support.pqProvider)
 		}
 	}
 
@@ -340,12 +340,13 @@ import Testing
 		return try codepoints.withWireWidth {
 			let classicalCreation = try Support.halfCreation(
 				founder: founder, peer: peer)
-			let pqCreation = try Support.halfCreation(founder: founder, peer: peer)
+			let pqCreation = try Support.halfCreation(
+				founder: founder, peer: peer, half: .pq)
 			let info = MLS.Combiner.APQInfo(
 				tSessionGroupID: classicalCreation.groupID,
 				pqSessionGroupID: pqCreation.groupID, mode: 0,
 				tCipherSuite: Support.provider.cipherSuite,
-				pqCipherSuite: Support.provider.cipherSuite, tEpoch: 1, pqEpoch: 1)
+				pqCipherSuite: Support.pqProvider.cipherSuite, tEpoch: 1, pqEpoch: 1)
 			let infoExtension = try info.asExtension(
 				type: codepoints.apqInfoExtensionType)
 			let attestation = MLS.Combiner.ApqInfoUpdate(tEpoch: 1, pqEpoch: 1)
@@ -354,12 +355,12 @@ import Testing
 
 			// PQ half, exactly as `establish` builds it — unbound, as always.
 			let pqEpoch0 = try MLS.RFC9420.Group.create(
-				Support.provider, groupID: pqCreation.groupID,
+				Support.pqProvider, groupID: pqCreation.groupID,
 				leafNode: pqCreation.leafNode,
 				leafSecretKey: pqCreation.leafSecretKey,
 				extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
 			let pqTransition = try pqEpoch0.committing(
-				Support.provider,
+				Support.pqProvider,
 				proposals: [
 					.proposal(.add(pqCreation.peerKeyPackage)),
 					attestationProposal,

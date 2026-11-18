@@ -51,8 +51,8 @@ import Testing
 		let bob = try Support.member("bob")
 		let (_, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
-			pq: try Support.halfCreation(founder: alice, peer: bob),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 
 		// establish's default codepoints run at .uint32; decode the Welcome's
 		// PreSharedKeyID at the same ambient width.
@@ -78,8 +78,8 @@ import Testing
 
 		let (group, _) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
-			pq: try Support.halfCreation(founder: alice, peer: bob),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider,
+			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider,
 			classicalExtraExtensions: [extra])
 
 		#expect(group.classical.context.extensions.contains(extra))
@@ -89,8 +89,8 @@ import Testing
 		// halves carry only APQInfo, the classical half carries no extra extension.
 		let (plainGroup, _) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
-			pq: try Support.halfCreation(founder: alice, peer: bob),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 		#expect(plainGroup.classical.context.extensions.count == 1)
 		#expect(plainGroup.pq.context.extensions.count == 1)
 		#expect(
@@ -106,8 +106,8 @@ import Testing
 		let bob = try Support.member("bob")
 		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
-			pq: try Support.halfCreation(founder: alice, peer: bob),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 
 		// leafCount pinned so `isBlank(at: 1)` cannot pass vacuously on a
 		// regressed 1-node tree (node(at:) is nil out of range).
@@ -118,8 +118,8 @@ import Testing
 
 		let peer = try MLS.Combiner.CombinerGroup.join(
 			welcome: welcome, classicalCredentials: bob.joinCredentials,
-			pqCredentials: bob.joinCredentials,
-			classicalProvider: Support.provider, pqProvider: Support.provider)
+			pqCredentials: bob.pqJoinCredentials,
+			classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 		try peer.verifyPair()
 		#expect(founder.classical.context == peer.classical.context)
 		#expect(founder.pq.context == peer.pq.context)
@@ -139,9 +139,9 @@ import Testing
 		) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: try Support.halfCreation(founder: alice, peer: bob),
-				pq: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.provider, classicalExtraExtensions: [extra])
+				pqProvider: Support.pqProvider, classicalExtraExtensions: [extra])
 		}
 	}
 
@@ -160,9 +160,9 @@ import Testing
 		) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: try Support.halfCreation(founder: alice, peer: bob),
-				pq: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.provider,
+				pqProvider: Support.pqProvider,
 				classicalExtraExtensions: [first, second])
 		}
 	}
@@ -183,9 +183,9 @@ import Testing
 		) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: try Support.halfCreation(founder: alice, peer: bob),
-				pq: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.provider, classicalExtraExtensions: [extra])
+				pqProvider: Support.pqProvider, classicalExtraExtensions: [extra])
 		}
 	}
 
@@ -209,9 +209,9 @@ import Testing
 		) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: try Support.halfCreation(founder: alice, peer: bob),
-				pq: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.provider,
+				pqProvider: Support.pqProvider,
 				classicalExtraExtensions: [known, unknown])
 		}
 	}
@@ -384,7 +384,7 @@ import Testing
 		let state = try founder.exportState()
 		let restored = try MLS.Combiner.CombinerGroup.restore(
 			from: state, classicalProvider: Support.provider,
-			pqProvider: Support.provider)
+			pqProvider: Support.pqProvider)
 
 		#expect(restored.classical.context == founder.classical.context)
 		#expect(restored.pq.context == founder.pq.context)
@@ -401,22 +401,22 @@ import Testing
 
 		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
-			pq: try Support.halfCreation(founder: alice, peer: bob),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.provider)
+			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
+			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 		let peer = try MLS.Combiner.CombinerGroup.join(
 			welcome: welcome, classicalCredentials: bob.joinCredentials,
-			pqCredentials: bob.joinCredentials,
-			classicalProvider: Support.provider, pqProvider: Support.provider)
+			pqCredentials: bob.pqJoinCredentials,
+			classicalProvider: Support.provider, pqProvider: Support.pqProvider)
 
 		// Independently re-derive the SAME epoch-1 apq_psk by joining the PQ
 		// Welcome a second time, into a fresh Group instance — exporting from it
 		// doesn't touch either party's actual PQ half.
 		let independentPqPending = try MLS.RFC9420.Group.joining(
-			Support.provider, welcome: welcome.pqWelcome,
-			credentials: bob.joinCredentials, psk: { _ in nil })
+			Support.pqProvider, welcome: welcome.pqWelcome,
+			credentials: bob.pqJoinCredentials, psk: { _ in nil })
 		var independentPq = independentPqPending.apply().group
 		let apqPsk = try MLS.Combiner.ExportedPsk.export(
-			from: &independentPq, Support.provider,
+			from: &independentPq, Support.pqProvider,
 			componentID: MLS.Combiner.Codepoints.deployed.apqComponentID)
 		let id = apqPsk.preSharedKeyID(
 			nonce: Support.provider.randomBytes(Support.provider.hashSize))
