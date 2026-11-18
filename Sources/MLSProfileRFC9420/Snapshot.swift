@@ -778,9 +778,7 @@ extension MLS.RFC9420.Group {
 		try requireLength(
 			core.epochSecrets.membershipKey.byteCount, nh, "membership_key")
 
-		var reader = MLS.Reader(core.ratchetTree)
-		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector()
-		try reader.finish()
+		let nodes = try MLS.RFC9420.decodeRatchetTree(core.ratchetTree)
 		try MLS.RFC9420.validateNoTrailingBlank(nodes)
 		let tree = try MLS.TreeKEM.RatchetTree(nodes)
 		try tree.validateNodeKinds()

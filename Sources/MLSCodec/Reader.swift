@@ -118,7 +118,20 @@ extension MLS {
 		public mutating func decodeVector<T: MLSDecodable>(
 			_ type: T.Type = T.self, maxCount: Int
 		) throws -> [T] {
-			try decodeVector(type)
+			var contents = Reader(try readOpaque())
+			var values: [T] = []
+			while !contents.isEmpty {
+				guard values.count < maxCount else {
+					throw CodecError.vectorElementLimitExceeded(limit: maxCount)
+				}
+				let before = contents.bytesRemaining
+				values.append(try T(from: &contents))
+				guard contents.bytesRemaining < before else {
+					throw CodecError.vectorNotFullyConsumed(
+						remaining: contents.bytesRemaining)
+				}
+			}
+			return values
 		}
 
 		/// `optional<T>`
