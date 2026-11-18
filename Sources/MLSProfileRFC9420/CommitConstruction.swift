@@ -484,7 +484,7 @@ extension MLS.RFC9420.Group {
 			// confirmed transcript hash, new extensions (§12.4.1).
 			let provisionalContext = MLS.RFC9420.GroupContext(
 				version: context.version, cipherSuite: context.cipherSuite,
-				groupID: context.groupID, epoch: context.epoch + 1,
+				groupID: context.groupID, epoch: try context.nextEpoch(),
 				treeHash: try newTree.treeHash(provider),
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
@@ -547,7 +547,7 @@ extension MLS.RFC9420.Group {
 
 		let newContext = MLS.RFC9420.GroupContext(
 			version: context.version, cipherSuite: context.cipherSuite,
-			groupID: context.groupID, epoch: context.epoch + 1,
+			groupID: context.groupID, epoch: try context.nextEpoch(),
 			treeHash: try newTree.treeHash(provider),
 			confirmedTranscriptHash: confirmedTranscriptHash,
 			extensions: provisionalExtensions)

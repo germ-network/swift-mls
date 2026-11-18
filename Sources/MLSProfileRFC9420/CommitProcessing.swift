@@ -881,7 +881,7 @@ extension MLS.RFC9420.Group {
 			// silent decap failure rather than a useful error.
 			let provisionalContext = MLS.RFC9420.GroupContext(
 				version: context.version, cipherSuite: context.cipherSuite,
-				groupID: context.groupID, epoch: context.epoch + 1,
+				groupID: context.groupID, epoch: try context.nextEpoch(),
 				treeHash: try provisionalTree.treeHash(provider),
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
@@ -957,7 +957,7 @@ extension MLS.RFC9420.Group {
 		// 12
 		let newContext = MLS.RFC9420.GroupContext(
 			version: context.version, cipherSuite: context.cipherSuite,
-			groupID: context.groupID, epoch: context.epoch + 1,
+			groupID: context.groupID, epoch: try context.nextEpoch(),
 			treeHash: try provisionalTree.treeHash(provider),
 			confirmedTranscriptHash: confirmedTranscriptHash,
 			extensions: provisionalExtensions)
