@@ -32,6 +32,23 @@ extension MLS.RFC9420 {
 		guard let last = nodes.last else { throw MLS.TreeKEM.TreeError.emptyTree }
 		guard last != nil else { throw MLS.TreeKEM.TreeError.trailingBlankLeaves }
 	}
+
+	/// The longest node array a ratchet tree may have: the largest tree
+	/// `MLS.LeafCount` admits (leaf count below `MLS.LeafIndex.ceiling`), in
+	/// full width. This library's own ceiling, not an RFC rule.
+	public static let maxRatchetTreeNodeCount = Int(MLS.LeafIndex.ceiling) - 1
+
+	/// Decodes a complete `optional<Node> ratchet_tree<V>` encoding. Decoding
+	/// stops with ``MLS/CodecError/vectorElementLimitExceeded(limit:)`` at
+	/// the first node past ``maxRatchetTreeNodeCount``. Trailing bytes are
+	/// rejected; the trailing-blank rule stays with
+	/// ``validateNoTrailingBlank(_:)``.
+	public static func decodeRatchetTree(_ bytes: Data) throws -> [MLS.RFC9420.Node?] {
+		var reader = MLS.Reader(bytes)
+		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector()
+		try reader.finish()
+		return nodes
+	}
 }
 
 extension MLS.TreeKEM.RatchetTree {

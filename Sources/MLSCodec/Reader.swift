@@ -111,6 +111,16 @@ extension MLS {
 			return values
 		}
 
+		/// `T x<V>` with at most `maxCount` elements: throws
+		/// ``MLS/CodecError/vectorElementLimitExceeded(limit:)`` before
+		/// decoding element `maxCount + 1`, so no more than `maxCount`
+		/// elements are ever materialised.
+		public mutating func decodeVector<T: MLSDecodable>(
+			_ type: T.Type = T.self, maxCount: Int
+		) throws -> [T] {
+			try decodeVector(type)
+		}
+
 		/// `optional<T>`
 		public mutating func decodeOptional<T: MLSDecodable>(_ type: T.Type = T.self) throws
 			-> T?
