@@ -163,6 +163,14 @@ struct HpkePublicKeyValidationTests {
 		Self.expectInvalid {
 			try wrapper.validateHpkePublicKey(.init(publicKey.data.dropLast()))
 		}
+
+		struct ForeignError: Error {}
+		let failing = ForwardingProvider(inner: inner, sealFailure: ForeignError())
+		Self.expectInvalid { try failing.validateHpkePublicKey(publicKey) }
+		let unsupported = ForwardingProvider(
+			inner: inner,
+			sealFailure: MLS.CryptoError.unsupportedCipherSuite(.p256Aes128))
+		Self.expectInvalid { try unsupported.validateHpkePublicKey(publicKey) }
 	}
 
 	@Test("hpkeSeal refuses a small-order X25519 key on every backend", arguments: x25519Suites)
@@ -221,13 +229,17 @@ struct Ed25519PublicKeyEncodingTests {
 		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
 	].map { Data(hex: $0) }
 
-	/// Valid encodings one bit away from the rejected patterns: the check
+	/// Valid encodings next to the rejected patterns: the check
 	/// must not reject them.
 	static let nearBoundaryCanonical: [Data] = [
 		"edfeffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 		"edfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb7f",
 		"efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7e",
 		"0101000000000000000000000000000000000000000000000000000000000080",
+		"eaffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		"01000000000000000000000000000000000000000000000000000000000000c0",
+		"0100000000000000000000000000000000000000000000000000000000000180",
+		"0300000000000000000000000000000000000000000000000000000000000080",
 	].map { Data(hex: $0) }
 
 	@Test("keys next to the rejected patterns are not rejected", arguments: suites)
@@ -243,12 +255,12 @@ struct Ed25519PublicKeyEncodingTests {
 		}
 	}
 
-	@Test("a wrong-length key throws instead of trapping", arguments: suites)
+	@Test("a wrong-length key is rejected", arguments: suites)
 	func wrongLengthKeyThrows(_ suite: MLS.CipherSuite) throws {
 		let provider = try HpkePublicKeyValidationTests.provider(suite)
 		let signature = Self.identity + Data(repeating: 0, count: 32)
 		for key in [Self.identity.dropLast(), Self.identity + [0]] {
-			#expect(throws: (any Error).self) {
+			HpkePublicKeyValidationTests.expectInvalid {
 				_ = try provider.verify(
 					publicKey: .init(key), content: Data("m".utf8),
 					signature: signature)
@@ -269,8 +281,7 @@ struct Ed25519PublicKeyEncodingTests {
 		}
 	}
 
-	/// Canonical small-order keys stay accepted by policy, matching every
-	/// peer: RFC 8032 §5.1.7 has no rule rejecting them. The identity key
+	/// Canonical small-order keys stay accepted by policy: RFC 8032 §5.1.7 has no rule rejecting them. The identity key
 	/// admits R = identity, S = 0 for any message on both backends.
 	@Test("canonical small-order keys are not rejected", arguments: suites)
 	func canonicalSmallOrderKeysAreAccepted(_ suite: MLS.CipherSuite) throws {
@@ -294,6 +305,7 @@ struct Ed25519PublicKeyEncodingTests {
 /// protocol's default is the one under test.
 private struct ForwardingProvider: MLS.CipherSuiteProvider {
 	let inner: any MLS.CipherSuiteProvider
+	var sealFailure: (any Error)?
 
 	var cipherSuite: MLS.CipherSuite { inner.cipherSuite }
 	var hashSize: Int { inner.hashSize }
@@ -329,7 +341,9 @@ private struct ForwardingProvider: MLS.CipherSuiteProvider {
 	func hpkeSeal(publicKey: MLS.HpkePublicKey, info: Data, aad: Data?, plaintext: Data)
 		throws -> (enc: Data, ciphertext: Data)
 	{
-		try inner.hpkeSeal(publicKey: publicKey, info: info, aad: aad, plaintext: plaintext)
+		if let sealFailure { throw sealFailure }
+		return try inner.hpkeSeal(
+			publicKey: publicKey, info: info, aad: aad, plaintext: plaintext)
 	}
 	func hpkeOpen(
 		enc: Data, secretKey: MLS.HpkeSecretKey, info: Data, aad: Data?, ciphertext: Data

@@ -166,12 +166,12 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 	/// RFC 8032 §5.1.3 decoding fails when y >= p = 2^255 - 19, or when
 	/// x = 0 (y = 1 or y = p - 1) with the sign bit set. Neither
 	/// backend rejects these when the key is constructed, and BoringSSL
-	/// verifies signatures under them, so check here. A y with no
-	/// matching x, and a wrong-length key, are left to the backend. Canonical
+	/// verifies signatures under them, so check here. A wrong-length key is
+	/// rejected; a y with no matching x is left to the backend. Canonical
 	/// small-order keys pass: the RFC has no rule against them.
 	private static func isCanonicalEd25519Encoding(_ key: Data) -> Bool {
 		let bytes = [UInt8](key)
-		guard bytes.count == 32 else { return true }
+		guard bytes.count == 32 else { return false }
 		let signBit = bytes[31] & 0x80 != 0
 		let highBytes = bytes[1..<31].allSatisfy { $0 == 0xff } && bytes[31] & 0x7f == 0x7f
 		if highBytes && bytes[0] >= 0xed { return false }
@@ -339,6 +339,14 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
+	private static let x25519Probe: Curve25519.KeyAgreement.PrivateKey = {
+		do {
+			return try .init(rawRepresentation: Data(repeating: 0x2a, count: 32))
+		} catch {
+			preconditionFailure("a 32-byte X25519 scalar is always valid")
+		}
+	}()
+
 	func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {
 		do {
 			switch cipherSuite {
@@ -346,9 +354,7 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 				// X25519 clamps the scalar to a multiple of 8, so every
 				// small-order u, canonical or not, yields the all-zero
 				// secret. CryptoKit throws on it; BoringSSL returns it.
-				let probe = try Curve25519.KeyAgreement.PrivateKey(
-					rawRepresentation: Data(repeating: 0x2a, count: 32))
-				let shared = try probe.sharedSecretFromKeyAgreement(
+				let shared = try Self.x25519Probe.sharedSecretFromKeyAgreement(
 					with: Curve25519.KeyAgreement.PublicKey(
 						rawRepresentation: key.data))
 				let allZero = shared.withUnsafeBytes { $0.allSatisfy { $0 == 0 } }

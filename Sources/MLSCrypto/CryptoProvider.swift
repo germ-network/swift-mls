@@ -122,11 +122,11 @@ extension MLS {
 		var hpkeSecretKeySize: Int? { get }
 
 		/// Throws `CryptoError.invalidPublicKey` for a key this suite's KEM
-		/// cannot seal to safely. Called where a key enters group state, so a
-		/// malformed key fails on arrival instead of in some later
-		/// committer's `hpkeSeal`. This is this library's policy, not an
-		/// RFC 9420 rule: §5.1.1 treats HPKE public keys as opaque, and
-		/// RFC 9180 §7.1.4 puts validation on the sender at seal time.
+		/// cannot seal to safely. For callers to check a key where it enters
+		/// group state, so a malformed key fails on arrival instead of in
+		/// some later committer's `hpkeSeal`. This is this library's policy,
+		/// not an RFC 9420 rule: §5.1.1 treats HPKE public keys as opaque,
+		/// and RFC 9180 §7.1.4 puts validation on the sender at seal time.
 		///
 		/// A requirement with a default below (the `hpkeSecretKeySize`
 		/// pattern), so a wrapper's override is visible through
