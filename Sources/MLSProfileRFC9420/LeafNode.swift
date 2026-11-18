@@ -81,7 +81,7 @@ extension MLS.RFC9420.LeafNode: MLSEncodable {
 		try writer.encode(credential)
 		try writer.encode(capabilities)
 		try writer.encode(source)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		try writer.writeOpaque(signature)
 	}
 }
@@ -93,7 +93,7 @@ extension MLS.RFC9420.LeafNode: MLSDecodable {
 		credential = try MLS.RFC9420.Credential(from: &reader)
 		capabilities = try MLS.RFC9420.Capabilities(from: &reader)
 		source = try MLS.RFC9420.LeafNodeSource(from: &reader)
-		extensions = try reader.decodeVector()
+		extensions = try reader.decodeExtensionList()
 		signature = Data(try reader.readOpaque())
 	}
 }
@@ -158,7 +158,7 @@ extension MLS.RFC9420.LeafNode {
 		try writer.encode(credential)
 		try writer.encode(capabilities)
 		try writer.encode(source)
-		try writer.encodeVector(extensions)
+		try writer.encodeExtensionList(extensions)
 		switch (source, placement) {
 		case (.keyPackage, _):
 			break

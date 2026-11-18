@@ -65,6 +65,7 @@ struct UpdateProposalAuthenticatedDataTests {
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		t.aliceView = transition.group
 		let sent = transition.takeOutput()

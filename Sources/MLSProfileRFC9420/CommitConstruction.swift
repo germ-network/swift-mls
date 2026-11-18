@@ -52,14 +52,24 @@ extension MLS.RFC9420.Group {
 	/// which is why this takes the `EpochFanOut` path rather than
 	/// fabricating them through `advance`). `leafNode` is the creator's
 	/// own `key_package`-sourced, already-signed leaf.
+	///
+	/// `lifetimeCheck` also applies to the creator leaf's lifetime. Nothing is
+	/// sent here and §11 is silent on the creator leaf, so this is this
+	/// implementation's choice, not §7.3's MUST: a group born from an expired
+	/// leaf could not add anyone who checks it.
 	public static func create(
 		_ provider: any MLS.CipherSuiteProvider,
 		groupID: Data,
 		leafNode: MLS.RFC9420.LeafNode,
 		leafSecretKey: MLS.HpkeSecretKey,
 		extensions: [MLS.RFC9420.Extension] = [],
-		epochSecret: SecretBytes
+		epochSecret: SecretBytes,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck
 	) throws -> MLS.RFC9420.Group {
+		// `create` never encodes the new context, so nothing else would catch a
+		// repeated type here (§13.4); the leaf's own list is checked when it is
+		// encoded below.
+		try extensions.checkUniqueTypes()
 		let tree = MLS.TreeKEM.RatchetTree(singleLeaf: try leafNode.record)
 		let context = MLS.RFC9420.GroupContext(
 			version: .mls10, cipherSuite: provider.cipherSuite,
@@ -72,6 +82,14 @@ extension MLS.RFC9420.Group {
 		// a group that cannot grow.
 		try validateLeaves(
 			tree, groupID: groupID, groupExtensions: extensions, provider)
+		if let now = lifetimeCheck.unixSeconds {
+			// `.treeWalk` accepts any leaf source, as `validateLeaves` above
+			// does; this call contributes only the lifetime range.
+			try leafNode.validatePolicy(
+				.treeWalk, groupRequirements: try extensions.requiredCapabilities(),
+				memberCredentialTypes: [leafNode.credential.credentialType],
+				memberCapabilities: [leafNode.capabilities], currentTime: now)
+		}
 
 		let fanOut = try MLS.KeySchedule.fromEpochSecret(
 			provider, epochSecret: epochSecret)
@@ -99,6 +117,14 @@ extension MLS.RFC9420.Group {
 	/// proposals, encap, sign, chain the transcript, advance the schedule,
 	/// tag, seal — and generate the Welcome for any added members.
 	///
+	/// `lifetimeCheck` applies to the `key_package` leaf of every Add, the only
+	/// sent leaves that carry a lifetime (see `LifetimeCheck` for the §7.3
+	/// rule). For an Add carried in this commit that is §7.3's send-side MUST;
+	/// for an Add this commit only references, checking it too is this
+	/// implementation's choice, so drop a stored Add whose KeyPackage expired.
+	/// Leaves already in the tree, including those a Welcome's ratchet tree
+	/// carries, are not checked. It is required so every caller decides.
+	///
 	/// `includePath: false` requests §12.4's MAY-omit; it throws
 	/// `pathRequired` when the list does not permit omission (empty
 	/// commits and path-required proposal types MUST carry one).
@@ -116,6 +142,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -128,7 +155,8 @@ extension MLS.RFC9420.Group {
 		try committing(
 			committerIndex: try soleMembershipIndex(), provider,
 			proposals: proposalList, proposalStore: proposalStore,
-			sign: sign, randomness: randomness, includePath: includePath,
+			sign: sign, randomness: randomness, lifetimeCheck: lifetimeCheck,
+			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
 			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
 			newIdentity: newIdentity)
@@ -146,6 +174,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		signingKey: MLS.SignatureSecretKey,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -157,7 +186,7 @@ extension MLS.RFC9420.Group {
 		try committing(
 			provider, proposals: proposalList, proposalStore: proposalStore,
 			sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			randomness: randomness,
+			randomness: randomness, lifetimeCheck: lifetimeCheck,
 			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
 			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
@@ -177,6 +206,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -246,9 +276,14 @@ extension MLS.RFC9420.Group {
 				provisionalExtensions = extensions
 			}
 		}
+		// Refusals that need no tree work come before any signature is requested.
+		try provisionalExtensions.checkUniqueTypes()
+		let nextEpoch = try context.nextEpoch()
 		let updateChanges = try validateProposalList(
 			resolved, committer: committerLeaf,
-			provisionalExtensions: provisionalExtensions, provider: provider)
+			provisionalExtensions: provisionalExtensions,
+			currentTime: lifetimeCheck.unixSeconds,
+			provider: provider)
 
 		let pskIDs = resolved.compactMap { stored -> MLS.RFC9420.PreSharedKeyIdentifier? in
 			guard case .preSharedKey(let id) = stored.proposal else { return nil }
@@ -333,7 +368,7 @@ extension MLS.RFC9420.Group {
 			// The filtered direct path on the post-apply tree — computed
 			// before `beginCommitPath` and kept, because `CommitPathStage`
 			// deliberately does not expose node indices. (Safe:
-			// `beginCommitPath` writes only direct-path parents, which
+			// `beginCommitPath` only touches direct-path nodes, which
 			// are not in any copath resolution, so the filtering is
 			// stable across the call.)
 			let directPath = MLS.TreeMath.directPath(
@@ -342,9 +377,23 @@ extension MLS.RFC9420.Group {
 			unfilteredNodeIndices = zip(directPath, filtered)
 				.filter { !$0.1 }.map(\.0.path)
 
+			let treeBeforePath = newTree
 			let pathStage = try newTree.beginCommitPath(
 				sender: committerLeaf,
 				firstPathSecret: randomness.firstPathSecret, provider)
+
+			// §12.4.2's two pre-merge key checks, run here as the receiver
+			// runs them so a commit this library builds is one it accepts, and
+			// before the leaf signature is requested.
+			guard randomness.leafEncryptionPublicKey != senderLeaf.encryptionKey else {
+				throw MLS.RFC9420.GroupError.updatePathReusesCommitterKey
+			}
+			try checkUpdatePathKeysAreFresh(
+				[randomness.leafEncryptionPublicKey]
+					+ unfilteredNodeIndices.compactMap {
+						newTree.parent(at: $0)?.encryptionKey
+					},
+				in: treeBeforePath)
 
 			var newLeaf = MLS.RFC9420.LeafNode(
 				encryptionKey: randomness.leafEncryptionPublicKey,
@@ -435,7 +484,7 @@ extension MLS.RFC9420.Group {
 			// confirmed transcript hash, new extensions (§12.4.1).
 			let provisionalContext = MLS.RFC9420.GroupContext(
 				version: context.version, cipherSuite: context.cipherSuite,
-				groupID: context.groupID, epoch: context.epoch + 1,
+				groupID: context.groupID, epoch: nextEpoch,
 				treeHash: try newTree.treeHash(provider),
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
@@ -498,7 +547,7 @@ extension MLS.RFC9420.Group {
 
 		let newContext = MLS.RFC9420.GroupContext(
 			version: context.version, cipherSuite: context.cipherSuite,
-			groupID: context.groupID, epoch: context.epoch + 1,
+			groupID: context.groupID, epoch: nextEpoch,
 			treeHash: try newTree.treeHash(provider),
 			confirmedTranscriptHash: confirmedTranscriptHash,
 			extensions: provisionalExtensions)
@@ -581,6 +630,7 @@ extension MLS.RFC9420.Group {
 			applicationExportSecret: newEpoch.applicationExportSecret,
 			tree: newTree, provider)
 		let effects = commitMembershipEffects(
+			committer: committerLeaf,
 			epochAdvanced: .epochAdvanced(
 				from: context.epoch, to: newContext.epoch, committer: committerLeaf),
 			added: applied.added, updateChanges: updateChanges,

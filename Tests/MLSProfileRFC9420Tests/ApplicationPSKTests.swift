@@ -213,7 +213,8 @@ struct ApplicationPSKTests {
 		) {
 			_ = try group.committing(
 				provider, proposals: [.proposal(.preSharedKey(badID))],
-				signingKey: solo.signingKey, randomness: .generate(provider))
+				signingKey: solo.signingKey, randomness: .generate(provider),
+				lifetimeCheck: .unchecked)
 		}
 	}
 }

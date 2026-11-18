@@ -37,7 +37,7 @@ extension MLS.RFC9420 {
 			writer.writeUInt64(epoch)
 			try writer.writeOpaque(treeHash)
 			try writer.writeOpaque(confirmedTranscriptHash)
-			try writer.encodeVector(extensions)
+			try writer.encodeExtensionList(extensions)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {
@@ -47,7 +47,17 @@ extension MLS.RFC9420 {
 			epoch = try reader.readUInt64()
 			treeHash = Data(try reader.readOpaque())
 			confirmedTranscriptHash = Data(try reader.readOpaque())
-			extensions = try reader.decodeVector()
+			extensions = try reader.decodeExtensionList()
 		}
+	}
+}
+
+extension MLS.RFC9420.GroupContext {
+	/// The epoch a commit on this context advances to. Throws
+	/// `GroupError.epochExhausted` at `UInt64.max` rather than trapping.
+	func nextEpoch() throws -> UInt64 {
+		let (next, overflow) = epoch.addingReportingOverflow(1)
+		guard !overflow else { throw MLS.RFC9420.GroupError.epochExhausted }
+		return next
 	}
 }

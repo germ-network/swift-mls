@@ -105,14 +105,14 @@ extension MLS.RFC9420 {
 			try writer.writeOpaque(groupID)
 			try writer.encode(version)
 			try writer.encode(cipherSuite)
-			try writer.encodeVector(extensions)
+			try writer.encodeExtensionList(extensions)
 		}
 
 		public init(from reader: inout MLS.Reader) throws {
 			groupID = Data(try reader.readOpaque())
 			version = try MLS.ProtocolVersion(from: &reader)
 			cipherSuite = try MLS.CipherSuite(from: &reader)
-			extensions = try reader.decodeVector()
+			extensions = try reader.decodeExtensionList()
 		}
 	}
 
@@ -309,7 +309,8 @@ extension MLS.RFC9420.Proposal: MLSEncodable {
 		case .preSharedKey(let psk): try writer.encode(psk)
 		case .reInit(let reInit): try writer.encode(reInit)
 		case .externalInit(let externalInit): try writer.encode(externalInit)
-		case .groupContextExtensions(let extensions): try writer.encodeVector(extensions)
+		case .groupContextExtensions(let extensions):
+			try writer.encodeExtensionList(extensions)
 		case .appDataUpdate(let update): try writer.encode(update)
 		// `type ‖ opaque<V>(body)`; the tag was written above.
 		case .custom(_, let body): try writer.writeOpaque(body)
@@ -340,7 +341,7 @@ extension MLS.RFC9420.Proposal: MLSDecodable {
 		case .known(.externalInit):
 			self = .externalInit(try MLS.RFC9420.ExternalInitProposal(from: &reader))
 		case .known(.groupContextExtensions):
-			self = .groupContextExtensions(try reader.decodeVector())
+			self = .groupContextExtensions(try reader.decodeExtensionList())
 		case .known(.appDataUpdate):
 			self = .appDataUpdate(try MLS.Extensions.AppDataUpdate(from: &reader))
 		case .unknown(let raw): throw MLS.RFC9420.WireError.unknownProposalType(raw)

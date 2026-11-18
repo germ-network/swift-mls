@@ -1226,7 +1226,8 @@ struct MigratedOwnUpdateTests {
 		let groupA = try MLS.RFC9420.Group.create(
 			p521, groupID: p521.randomBytes(p521.hashSize),
 			leafNode: founderLeaf, leafSecretKey: founderLeafSecret,
-			epochSecret: SecretBytes(randomByteCount: p521.hashSize))
+			epochSecret: SecretBytes(randomByteCount: p521.hashSize),
+			lifetimeCheck: .unchecked)
 		let aliceLeaf = groupA.myLeafIndex
 
 		// Hunt for a genuine P-521 HPKE key pair whose 66-byte raw secret has

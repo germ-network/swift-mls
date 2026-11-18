@@ -30,7 +30,8 @@ struct CommitEffectsTests {
 		let groupA = try SelfInteropTests.createGroup(alice)
 		let transition = try groupA.committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
-			signingKey: alice.signingKey, randomness: .generate(provider))
+			signingKey: alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		let expected = MLS.RFC9420.CredentialPresentation(
 			credential: bob.keyPackage.leafNode.credential,
 			signatureKey: bob.keyPackage.leafNode.signatureKey)
@@ -46,7 +47,8 @@ struct CommitEffectsTests {
 		let carolLeaf = t.carolView.myLeafIndex
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.proposal(.remove(carolLeaf))],
-			signingKey: t.alice.signingKey, randomness: .generate(provider))
+			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		#expect(Self.effects(of: transition).contains(.removed(leaf: carolLeaf)))
 	}
 
@@ -68,7 +70,8 @@ struct CommitEffectsTests {
 		let ref = try store.insert(verified, provider)
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
-			signingKey: t.alice.signingKey, randomness: .generate(provider))
+			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		let events = Self.effects(of: transition)
 		#expect(events.contains(.updated(leaf: bobLeaf)))
 		#expect(
@@ -115,7 +118,8 @@ struct CommitEffectsTests {
 
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
-			signingKey: t.alice.signingKey, randomness: .generate(provider))
+			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		let old = MLS.RFC9420.CredentialPresentation(
 			credential: oldLeaf.credential, signatureKey: oldLeaf.signatureKey)
 		let new = MLS.RFC9420.CredentialPresentation(
@@ -146,7 +150,10 @@ struct CommitEffectsTests {
 		let pending = try t.multi.validating(
 			provider, commit: removeCommit, proposals: .init(), psk: { _ in nil })
 		#expect(pending.effects.events.contains(.removed(leaf: bobLeaf)))
-		#expect(pending.effects.events.contains(.membershipRemoved(leaf: bobLeaf)))
+		#expect(
+			pending.effects.events.contains(
+				.membershipRemoved(
+					leaf: bobLeaf, committer: t.carolView.myLeafIndex)))
 
 		var multi = t.multi
 		try multi.process(
@@ -177,7 +184,10 @@ struct CommitEffectsTests {
 		let pending = try t.bobView.validating(
 			provider, commit: removeCommit, proposals: .init(), psk: { _ in nil })
 		#expect(pending.effects.events.contains(.removed(leaf: bobLeaf)))
-		#expect(pending.effects.events.contains(.membershipRemoved(leaf: bobLeaf)))
+		#expect(
+			pending.effects.events.contains(
+				.membershipRemoved(
+					leaf: bobLeaf, committer: t.aliceView.myLeafIndex)))
 		let terminal = try pending.apply(onto: t.bobView).group
 		#expect(terminal.context.epoch == baseEpoch)  // empty delta: no advance
 		#expect(terminal.memberships.map(\.leafIndex) == [bobLeaf])  // never shrinks to 0
@@ -215,7 +225,10 @@ struct CommitEffectsTests {
 		switch transition.takeOutput() {
 		case .pending(let pending):
 			#expect(pending.effects.events.contains(.removed(leaf: bobLeaf)))
-			#expect(pending.effects.events.contains(.membershipRemoved(leaf: bobLeaf)))
+			#expect(
+				pending.effects.events.contains(
+					.membershipRemoved(
+						leaf: bobLeaf, committer: alice.myLeafIndex)))
 			_ = try pending.apply(onto: consumed)
 		case .rejected(let rejection):
 			Issue.record("expected .pending, got .rejected: \(rejection.reason)")
@@ -242,7 +255,8 @@ struct CommitEffectsTests {
 		let transition = try t.carolView.committing(
 			provider,
 			proposals: [.proposal(.remove(bobLeaf)), .proposal(.add(dave.keyPackage))],
-			signingKey: t.carol.signingKey, randomness: .generate(provider))
+			signingKey: t.carol.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		let events = Self.effects(of: transition)
 		let removedIndex = try #require(events.firstIndex(of: .removed(leaf: bobLeaf)))
 		let addedIndex = try #require(
@@ -274,8 +288,14 @@ struct CommitEffectsTests {
 		let pending = try t.multi.validating(
 			provider, commit: removeCommit, proposals: .init(), psk: { _ in nil })
 		// Both reported removed + membership-removed; no epoch advance (terminal).
-		#expect(pending.effects.events.contains(.membershipRemoved(leaf: aliceLeaf)))
-		#expect(pending.effects.events.contains(.membershipRemoved(leaf: bobLeaf)))
+		#expect(
+			pending.effects.events.contains(
+				.membershipRemoved(
+					leaf: aliceLeaf, committer: t.carolView.myLeafIndex)))
+		#expect(
+			pending.effects.events.contains(
+				.membershipRemoved(
+					leaf: bobLeaf, committer: t.carolView.myLeafIndex)))
 		#expect(
 			!pending.effects.events.contains {
 				if case .epochAdvanced = $0 { return true }

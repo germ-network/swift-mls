@@ -54,6 +54,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -65,7 +66,8 @@ extension MLS.RFC9420.Group {
 		try committing(
 			committerIndex: try membershipIndex(of: leaf), provider,
 			proposals: proposalList, proposalStore: proposalStore,
-			sign: sign, randomness: randomness, includePath: includePath,
+			sign: sign, randomness: randomness, lifetimeCheck: lifetimeCheck,
+			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
 			psk: psk, newIdentity: newIdentity)
@@ -79,6 +81,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		signingKey: MLS.SignatureSecretKey,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -90,7 +93,7 @@ extension MLS.RFC9420.Group {
 		try committing(
 			as: leaf, provider, proposals: proposalList, proposalStore: proposalStore,
 			sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			randomness: randomness,
+			randomness: randomness, lifetimeCheck: lifetimeCheck,
 			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,

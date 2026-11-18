@@ -96,7 +96,7 @@ extension MLS.RFC9420.Group {
 			committerIndex: committerIndex, provider, proposals: proposalList,
 			proposalStore: proposalStore,
 			sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			randomness: randomness, includePath: includePath,
+			randomness: randomness, lifetimeCheck: .unchecked, includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension,
 			framing: framing, reuseGuard: reuseGuard, paddingLength: paddingLength,
 			psk: psk)

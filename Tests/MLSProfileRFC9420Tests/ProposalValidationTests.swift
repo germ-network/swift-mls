@@ -638,7 +638,7 @@ struct ProposalValidationTests {
 			_ = try advanced.committing(
 				Self.provider, proposals: [.reference(ref)], proposalStore: store,
 				signingKey: p.alice.signingKey,
-				randomness: .generate(Self.provider))
+				randomness: .generate(Self.provider), lifetimeCheck: .unchecked)
 		}
 	}
 

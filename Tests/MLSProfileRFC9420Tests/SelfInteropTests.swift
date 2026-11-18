@@ -36,7 +36,8 @@ struct SelfInteropTests {
 
 	static func member(
 		_ name: String, capabilityExtensions: [MLS.RFC9420.ExtensionType] = [],
-		capabilityProposals: [MLS.RFC9420.ProposalType] = []
+		capabilityProposals: [MLS.RFC9420.ProposalType] = [],
+		lifetime: MLS.RFC9420.Lifetime = .init(notBefore: 0, notAfter: .max)
 	) throws -> Member {
 		let provider = Self.provider
 		let (signingKey, signatureKey) = try GroupMutationTests.signingKeyPair(provider)
@@ -49,7 +50,7 @@ struct SelfInteropTests {
 				versions: [.mls10], cipherSuites: [.curve25519Aes128],
 				extensions: capabilityExtensions, proposals: capabilityProposals,
 				credentials: [.init(.basic)]),
-			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
+			source: .keyPackage(lifetime),
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(
 			provider, privateKey: signingKey, label: "LeafNodeTBS",
@@ -71,7 +72,8 @@ struct SelfInteropTests {
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: founder.keyPackage.leafNode,
 			leafSecretKey: founder.leafSecretKey,
-			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
+			lifetimeCheck: .unchecked)
 	}
 
 	/// The convergence assertion: everything two members' views must agree

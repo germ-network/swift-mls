@@ -58,14 +58,17 @@ enum CombinerTestSupport {
 		)
 	}
 
-	static func member(_ name: String) throws -> Member {
+	static func member(
+		_ name: String, lifetime: MLS.RFC9420.Lifetime = .init(notBefore: 0, notAfter: .max)
+	) throws -> Member {
 		let (signingKey, signatureKey) = try signingKeyPair()
 		let classical = try keyPackage(
-			name, provider: provider, signingKey: signingKey, signatureKey: signatureKey
-		)
+			name, provider: provider, signingKey: signingKey,
+			signatureKey: signatureKey,
+			lifetime: lifetime)
 		let pq = try keyPackage(
 			name, provider: pqProvider, signingKey: signingKey,
-			signatureKey: signatureKey)
+			signatureKey: signatureKey, lifetime: lifetime)
 		return Member(
 			identity: Data(name.utf8), signingKey: signingKey,
 			signatureKey: signatureKey,
@@ -77,7 +80,8 @@ enum CombinerTestSupport {
 
 	private static func keyPackage(
 		_ name: String, provider: any MLS.CipherSuiteProvider,
-		signingKey: MLS.SignatureSecretKey, signatureKey: MLS.SignaturePublicKey
+		signingKey: MLS.SignatureSecretKey, signatureKey: MLS.SignaturePublicKey,
+		lifetime: MLS.RFC9420.Lifetime
 	) throws -> (
 		leafSecret: MLS.HpkeSecretKey, initSecret: MLS.HpkeSecretKey,
 		keyPackage: MLS.RFC9420.KeyPackage
@@ -92,7 +96,7 @@ enum CombinerTestSupport {
 				cipherSuites: [.curve25519Aes128, .curve25519ChaCha],
 				extensions: [], proposals: [.init(.appDataUpdate)],
 				credentials: [.init(.basic)]),
-			source: .keyPackage(.init(notBefore: 0, notAfter: .max)),
+			source: .keyPackage(lifetime),
 			extensions: [], signature: Data())
 		leaf.signature = try MLS.signWithLabel(
 			provider, privateKey: signingKey, label: "LeafNodeTBS",
@@ -131,7 +135,9 @@ enum CombinerTestSupport {
 			classical: try halfCreation(founder: founder, peer: peer),
 			pq: try halfCreation(founder: founder, peer: peer, half: .pq),
 			mode: 0,
-			classicalProvider: provider, pqProvider: pqProvider, codepoints: codepoints)
+			classicalProvider: provider, pqProvider: pqProvider,
+			lifetimeCheck: .unchecked,
+			codepoints: codepoints)
 		let joined = try MLS.Combiner.CombinerGroup.join(
 			welcome: welcome,
 			classicalCredentials: peer.joinCredentials,
@@ -181,7 +187,8 @@ enum CombinerTestSupport {
 				pqProvider, groupID: pqCreation.groupID,
 				leafNode: pqCreation.leafNode,
 				leafSecretKey: pqCreation.leafSecretKey,
-				extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
+				extensions: [infoExtension], epochSecret: pqCreation.epochSecret,
+				lifetimeCheck: .unchecked)
 			let pqTransition = try pqEpoch0.committing(
 				pqProvider,
 				proposals: [
@@ -190,6 +197,7 @@ enum CombinerTestSupport {
 				],
 				signingKey: pqCreation.signingKey,
 				randomness: pqCreation.randomness,
+				lifetimeCheck: .unchecked,
 				includePath: false, psk: { _ in nil })
 			let pqAdopted = pqTransition.group
 			let pqSent = pqTransition.takeOutput()
@@ -221,11 +229,13 @@ enum CombinerTestSupport {
 				leafNode: classicalCreation.leafNode,
 				leafSecretKey: classicalCreation.leafSecretKey,
 				extensions: [infoExtension],
-				epochSecret: classicalCreation.epochSecret)
+				epochSecret: classicalCreation.epochSecret,
+				lifetimeCheck: .unchecked)
 			let classicalTransition = try classicalEpoch0.committing(
 				provider, proposals: proposals,
 				signingKey: classicalCreation.signingKey,
-				randomness: classicalCreation.randomness, includePath: false,
+				randomness: classicalCreation.randomness,
+				lifetimeCheck: .unchecked, includePath: false,
 				psk: store.resolver())
 			guard let classicalWelcome = classicalTransition.takeOutput().welcome else {
 				throw MLS.Combiner.Error.missingWelcome

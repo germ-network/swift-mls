@@ -209,7 +209,8 @@
 			let group = try MLS.RFC9420.Group.create(
 				p, groupID: request.groupID, leafNode: creds.keyPackage.leafNode,
 				leafSecretKey: creds.encryptionKey,
-				epochSecret: SecretBytes(randomByteCount: p.hashSize))
+				epochSecret: SecretBytes(randomByteCount: p.hashSize),
+				lifetimeCheck: .at(unixSeconds: unixNow()))
 			let id = allocate()
 			entries[id] = .group(
 				ClientState(group: group, credentials: creds))
@@ -444,6 +445,7 @@
 				p, proposals: proposals, proposalStore: store,
 				signingKey: state.credentials.signingKey,
 				randomness: .generate(p),
+				lifetimeCheck: .at(unixSeconds: unixNow()),
 				includePath: request.forcePath || pathRequired,
 				// external_tree TRUE = deliver the tree out of band (in the
 				// CommitResponse, omitted from GroupInfo); FALSE = in band via
@@ -710,5 +712,13 @@
 		) async throws -> MlsClient_ProposalResponse {
 			throw unsupported("ExternalSignerProposal")
 		}
+	}
+#endif
+
+#if os(macOS) || os(Linux)
+	/// The harness is an application, so it reads the wall clock for RFC 9420
+	/// §7.3's send-side lifetime check; the library itself never does.
+	private func unixNow() -> UInt64 {
+		UInt64(Date().timeIntervalSince1970)
 	}
 #endif

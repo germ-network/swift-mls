@@ -22,7 +22,8 @@ struct ExportSecretTests {
 		return try MLS.RFC9420.Group.create(
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: founder.keyPackage.leafNode,
-			leafSecretKey: founder.leafSecretKey, epochSecret: epochSecret)
+			leafSecretKey: founder.leafSecretKey, epochSecret: epochSecret,
+			lifetimeCheck: .unchecked)
 	}
 
 	/// `group.exportSecret` is declared on a `let` group below: a non-consuming,

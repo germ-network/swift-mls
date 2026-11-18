@@ -237,12 +237,15 @@ extension MLS.RFC9420.KeyPackage {
 	/// RFC 9420 §10.1, all four bullets, for a KeyPackage received in an
 	/// Add proposal. §7.3's signature half runs too — an Add is exactly
 	/// where an unverified leaf could otherwise enter the tree.
+	/// `currentTime` is the leaf lifetime check's time, as in
+	/// `LeafNode.validatePolicy`; nil skips it.
 	public func validate(
 		_ provider: any MLS.CipherSuiteProvider,
 		groupContext: MLS.RFC9420.GroupContext,
 		groupRequirements: MLS.RFC9420.RequiredCapabilities?,
 		memberCredentialTypes: some Collection<MLS.RFC9420.CredentialType>,
-		memberCapabilities: some Collection<MLS.RFC9420.Capabilities>
+		memberCapabilities: some Collection<MLS.RFC9420.Capabilities>,
+		currentTime: UInt64? = nil
 	) throws {
 		// Structural checks first, signatures last: §10.1 lists bullets,
 		// not a sequence, and a structural violation (a reused init key,
@@ -263,7 +266,8 @@ extension MLS.RFC9420.KeyPackage {
 			.keyPackage,
 			groupRequirements: groupRequirements,
 			memberCredentialTypes: memberCredentialTypes,
-			memberCapabilities: memberCapabilities)
+			memberCapabilities: memberCapabilities,
+			currentTime: currentTime)
 		try verifySignature(provider)
 		try leafNode.verifySignature(provider, placement: .keyPackage)
 	}
