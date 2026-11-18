@@ -52,13 +52,19 @@ extension MLS.RFC9420.Group {
 	/// which is why this takes the `EpochFanOut` path rather than
 	/// fabricating them through `advance`). `leafNode` is the creator's
 	/// own `key_package`-sourced, already-signed leaf.
+	///
+	/// `lifetimeCheck` also applies to the creator leaf's lifetime. Nothing is
+	/// sent here and §11 is silent on the creator leaf, so this is this
+	/// implementation's choice, not §7.3's MUST: a group born from an expired
+	/// leaf could not add anyone who checks it.
 	public static func create(
 		_ provider: any MLS.CipherSuiteProvider,
 		groupID: Data,
 		leafNode: MLS.RFC9420.LeafNode,
 		leafSecretKey: MLS.HpkeSecretKey,
 		extensions: [MLS.RFC9420.Extension] = [],
-		epochSecret: SecretBytes
+		epochSecret: SecretBytes,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck
 	) throws -> MLS.RFC9420.Group {
 		let tree = MLS.TreeKEM.RatchetTree(singleLeaf: try leafNode.record)
 		let context = MLS.RFC9420.GroupContext(
@@ -99,6 +105,14 @@ extension MLS.RFC9420.Group {
 	/// proposals, encap, sign, chain the transcript, advance the schedule,
 	/// tag, seal — and generate the Welcome for any added members.
 	///
+	/// `lifetimeCheck` applies to the `key_package` leaf of every Add, the only
+	/// sent leaves that carry a lifetime (see `LifetimeCheck` for the §7.3
+	/// rule). For an Add carried in this commit that is §7.3's send-side MUST;
+	/// for an Add this commit only references, checking it too is this
+	/// implementation's choice, so drop a stored Add whose KeyPackage expired.
+	/// Leaves already in the tree, including those a Welcome's ratchet tree
+	/// carries, are not checked. It is required so every caller decides.
+	///
 	/// `includePath: false` requests §12.4's MAY-omit; it throws
 	/// `pathRequired` when the list does not permit omission (empty
 	/// commits and path-required proposal types MUST carry one).
@@ -116,6 +130,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -128,7 +143,8 @@ extension MLS.RFC9420.Group {
 		try committing(
 			committerIndex: try soleMembershipIndex(), provider,
 			proposals: proposalList, proposalStore: proposalStore,
-			sign: sign, randomness: randomness, includePath: includePath,
+			sign: sign, randomness: randomness, lifetimeCheck: lifetimeCheck,
+			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
 			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
 			newIdentity: newIdentity)
@@ -146,6 +162,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		signingKey: MLS.SignatureSecretKey,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -157,7 +174,7 @@ extension MLS.RFC9420.Group {
 		try committing(
 			provider, proposals: proposalList, proposalStore: proposalStore,
 			sign: MLS.RFC9420.signingClosure(provider, signingKey),
-			randomness: randomness,
+			randomness: randomness, lifetimeCheck: lifetimeCheck,
 			includePath: includePath,
 			includeRatchetTreeExtension: includeRatchetTreeExtension, framing: framing,
 			reuseGuard: reuseGuard, paddingLength: paddingLength, psk: psk,
@@ -177,6 +194,7 @@ extension MLS.RFC9420.Group {
 		proposalStore: MLS.RFC9420.ProposalStore = MLS.RFC9420.ProposalStore(),
 		sign: MLS.RFC9420.SigningClosure,
 		randomness: CommitRandomness,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		includePath: Bool = true,
 		includeRatchetTreeExtension: Bool = true,
 		framing: HandshakeFraming = .privateMessage,
@@ -248,7 +266,9 @@ extension MLS.RFC9420.Group {
 		}
 		let updateChanges = try validateProposalList(
 			resolved, committer: committerLeaf,
-			provisionalExtensions: provisionalExtensions, provider: provider)
+			provisionalExtensions: provisionalExtensions,
+			currentTime: lifetimeCheck.unixSeconds,
+			provider: provider)
 
 		let pskIDs = resolved.compactMap { stored -> MLS.RFC9420.PreSharedKeyIdentifier? in
 			guard case .preSharedKey(let id) = stored.proposal else { return nil }
@@ -581,6 +601,7 @@ extension MLS.RFC9420.Group {
 			applicationExportSecret: newEpoch.applicationExportSecret,
 			tree: newTree, provider)
 		let effects = commitMembershipEffects(
+			committer: committerLeaf,
 			epochAdvanced: .epochAdvanced(
 				from: context.epoch, to: newContext.epoch, committer: committerLeaf),
 			added: applied.added, updateChanges: updateChanges,

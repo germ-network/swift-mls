@@ -51,3 +51,11 @@ extension MLS.RFC9420 {
 		}
 	}
 }
+
+extension MLS.RFC9420.GroupContext {
+	/// The epoch a commit on this context advances to. Throws
+	/// `GroupError.epochExhausted` at `UInt64.max` rather than trapping.
+	func nextEpoch() throws -> UInt64 {
+		epoch + 1
+	}
+}

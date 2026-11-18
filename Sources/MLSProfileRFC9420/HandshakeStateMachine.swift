@@ -164,7 +164,12 @@ extension MLS.RFC9420 {
 		/// cannot derive the new epoch to check the confirmation tag), and the
 		/// terminal `apply` records the consumption without advancing — the app
 		/// tears the group down on seeing its last membership removed.
-		case membershipRemoved(leaf: MLS.LeafIndex)
+		///
+		/// `committer` is the commit's sender. On a full eviction it is the only
+		/// report of who removed this device, since `epochAdvanced` is absent; like
+		/// the rest of that delta it is framing-authenticated, not tag-confirmed.
+		/// Reporting it is this implementation's choice, not an RFC 9420 rule.
+		case membershipRemoved(leaf: MLS.LeafIndex, committer: MLS.LeafIndex)
 		/// A commit carried an `AppDataUpdate` proposal (draft-ietf-mls-extensions
 		/// §4.7) — the profile surfaces the envelope for the application to act on;
 		/// the library itself makes no state change for it (the §4.7

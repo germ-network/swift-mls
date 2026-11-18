@@ -229,7 +229,7 @@ struct PerMembershipSendTests {
 			_ = try f.multi.committing(
 				as: bobLeaf, provider, proposals: [],
 				signingKey: f.alice.signingKey,
-				randomness: .generate(provider))
+				randomness: .generate(provider), lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -247,12 +247,13 @@ struct PerMembershipSendTests {
 		let transition = try f.multi.committing(
 			as: aliceLeaf, provider, proposals: [.proposal(.remove(bobLeaf))],
 			signingKey: f.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		let adopted = transition.group
 		let sent = transition.takeOutput()
 		let effects = sent.pending.effects.events
 		#expect(effects.contains(.removed(leaf: bobLeaf)))
-		#expect(effects.contains(.membershipRemoved(leaf: bobLeaf)))
+		#expect(effects.contains(.membershipRemoved(leaf: bobLeaf, committer: aliceLeaf)))
 		#expect(
 			effects.contains(
 				.epochAdvanced(

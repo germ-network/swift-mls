@@ -32,7 +32,8 @@ struct HandshakeStateMachineTests {
 
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pubCommit) = commitOut.output.message else {
 			Issue.record("expected a public commit")
 			return
@@ -88,7 +89,8 @@ struct HandshakeStateMachineTests {
 
 		let commit = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pub) = commit.output.message else {
 			Issue.record("expected a public commit")
 			return
@@ -116,10 +118,12 @@ struct HandshakeStateMachineTests {
 		// Two distinct public commits from the same epoch-N base.
 		let commitA = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		let commitD = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pubA) = commitA.output.message,
 			case .publicMessage(let pubD) = commitD.output.message
 		else {
@@ -157,7 +161,8 @@ struct HandshakeStateMachineTests {
 
 		let commit = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pub) = commit.output.message else {
 			Issue.record("expected a public commit")
 			return
@@ -189,7 +194,8 @@ struct HandshakeStateMachineTests {
 
 		let commit = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pub) = commit.output.message else {
 			Issue.record("expected a public commit")
 			return
@@ -219,7 +225,8 @@ struct HandshakeStateMachineTests {
 
 		let commit = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		guard case .publicMessage(let pub) = commit.output.message else {
 			Issue.record("expected a public commit")
 			return

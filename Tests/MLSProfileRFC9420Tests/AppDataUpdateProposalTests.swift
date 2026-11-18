@@ -89,6 +89,7 @@ struct AppDataUpdateProposalTests {
 		let transition = try groupA.committing(
 			provider, proposals: [.proposal(.appDataUpdate(update))],
 			signingKey: alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			includePath: false)
 		#expect(Self.sendEffects(of: transition).contains(.appDataUpdate(update)))
 	}
@@ -140,7 +141,8 @@ struct AppDataUpdateProposalTests {
 								componentID: 0xFF01,
 								operation: .remove))),
 				],
-				signingKey: alice.signingKey, randomness: .generate(provider))
+				signingKey: alice.signingKey, randomness: .generate(provider),
+				lifetimeCheck: .unchecked)
 		}
 	}
 

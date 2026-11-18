@@ -242,7 +242,8 @@ extension MLS.RFC9420.KeyPackage {
 		groupContext: MLS.RFC9420.GroupContext,
 		groupRequirements: MLS.RFC9420.RequiredCapabilities?,
 		memberCredentialTypes: some Collection<MLS.RFC9420.CredentialType>,
-		memberCapabilities: some Collection<MLS.RFC9420.Capabilities>
+		memberCapabilities: some Collection<MLS.RFC9420.Capabilities>,
+		currentTime: UInt64? = nil
 	) throws {
 		// Structural checks first, signatures last: §10.1 lists bullets,
 		// not a sequence, and a structural violation (a reused init key,

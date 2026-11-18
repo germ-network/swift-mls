@@ -111,6 +111,7 @@ struct SignerSeamTests {
 		let transition = try SelfInteropTests.createGroup(alice).committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			sign: commitSigner.sign, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 
 		guard case .publicMessage(let pub) = transition.output.message else {
@@ -174,7 +175,7 @@ struct SignerSeamTests {
 		let transition = try SelfInteropTests.createGroup(alice).committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			sign: Self.plainClosure(provider, alice.signingKey),
-			randomness: .generate(provider))
+			randomness: .generate(provider), lifetimeCheck: .unchecked)
 		let welcomeOption: MLS.RFC9420.Welcome? = transition.output.welcome
 		let welcome = try #require(welcomeOption)
 		var groupB = try MLS.RFC9420.Group.join(
@@ -218,7 +219,8 @@ struct SignerSeamTests {
 			let recorder = RoleRecorder(provider: provider, key: alice.signingKey)
 			_ = try group.committing(
 				provider, proposals: [.proposal(.add(bob.keyPackage))],
-				sign: recorder.sign, randomness: .generate(provider))
+				sign: recorder.sign, randomness: .generate(provider),
+				lifetimeCheck: .unchecked)
 			#expect(recorder.roles == [.leafNode, .framedContent, .groupInfo])
 		}
 
@@ -229,7 +231,7 @@ struct SignerSeamTests {
 			let recorder = RoleRecorder(provider: provider, key: alice.signingKey)
 			_ = try group.committing(
 				provider, proposals: [], sign: recorder.sign,
-				randomness: .generate(provider))
+				randomness: .generate(provider), lifetimeCheck: .unchecked)
 			#expect(recorder.roles == [.leafNode, .framedContent])
 		}
 
@@ -242,6 +244,7 @@ struct SignerSeamTests {
 			_ = try group.committing(
 				provider, proposals: [.proposal(.add(bob.keyPackage))],
 				sign: recorder.sign, randomness: .generate(provider),
+				lifetimeCheck: .unchecked,
 				includePath: false)
 			#expect(recorder.roles == [.framedContent, .groupInfo])
 		}
@@ -264,6 +267,7 @@ struct SignerSeamTests {
 			_ = try group.committing(
 				provider, proposals: [.proposal(.add(bob.keyPackage))],
 				sign: recorder.sign, randomness: .generate(provider),
+				lifetimeCheck: .unchecked,
 				framing: .publicMessage)
 			#expect(recorder.roles == [.leafNode, .framedContent, .groupInfo])
 		}
@@ -301,7 +305,8 @@ struct SignerSeamTests {
 
 		let transition = try SelfInteropTests.createGroup(alice).committing(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
-			signingKey: alice.signingKey, randomness: .generate(provider))
+			signingKey: alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked)
 		let welcomeOption: MLS.RFC9420.Welcome? = transition.output.welcome
 		let welcome = try #require(welcomeOption)
 		let groupB = try MLS.RFC9420.Group.join(

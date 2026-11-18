@@ -364,11 +364,16 @@ extension MLS.RFC9420.Group {
 	/// `psk` resolves *external* PSK ids. Resumption ids are resolved from
 	/// this group's own retained per-epoch history and never reach the
 	/// closure.
+	///
+	/// `lifetimeCheck` opts into §7.3's RECOMMENDED receive-side check of each
+	/// Add's KeyPackage leaf (see `LifetimeCheck`). The default `.unchecked`
+	/// accepts leaves that expired in transit.
 	public func validating(
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.PendingCommit {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
@@ -404,7 +409,7 @@ extension MLS.RFC9420.Group {
 				verified: MLS.RFC9420.AuthenticatedContent(
 					wireFormat: .publicMessage, content: message.content,
 					auth: message.auth)),
-			proposals: proposals, psk: psk)
+			proposals: proposals, psk: psk, lifetimeCheck: lifetimeCheck)
 	}
 
 	/// D17 step 1 (validate) for a `PrivateMessage`-framed commit. Decrypting the
@@ -425,7 +430,8 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PrivateMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.CommitValidation> {
 		// Refuse a non-commit before decrypting (content type is in the cleartext
 		// header), so this throws with nothing consumed.
@@ -442,7 +448,7 @@ extension MLS.RFC9420.Group {
 			let pending = try group.validatedDelta(
 				provider,
 				commit: MLS.RFC9420.VerifiedCommit(verified: opened.authenticated),
-				proposals: proposals, psk: psk)
+				proposals: proposals, psk: psk, lifetimeCheck: lifetimeCheck)
 			output = .pending(pending)
 		} catch {
 			output = .rejected(
@@ -473,6 +479,7 @@ extension MLS.RFC9420.Group {
 	/// path-leaf refresh (`nil` for a pathless commit). A `removed` leaf that
 	/// names a local membership also emits `membershipRemoved`.
 	func commitMembershipEffects(
+		committer: MLS.LeafIndex,
 		epochAdvanced: MLS.RFC9420.CommitEffect?,
 		added: [(leaf: MLS.LeafIndex, presentation: MLS.RFC9420.CredentialPresentation)],
 		updateChanges: [(
@@ -506,7 +513,7 @@ extension MLS.RFC9420.Group {
 		for leaf in removedLeaves {
 			events.append(.removed(leaf: leaf))
 			if localMembershipLeaves.contains(leaf) {
-				events.append(.membershipRemoved(leaf: leaf))
+				events.append(.membershipRemoved(leaf: leaf, committer: committer))
 			}
 		}
 		for entry in added {
@@ -531,7 +538,8 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit verified: consuming MLS.RFC9420.VerifiedCommit,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.PendingCommit {
 		let message = verified.content
 		// slice 4a: the delta now installs path keys per local membership — each
@@ -595,7 +603,9 @@ extension MLS.RFC9420.Group {
 		}
 		let updateChanges = try validateProposalList(
 			resolved, committer: senderIndex,
-			provisionalExtensions: provisionalExtensions, provider: provider)
+			provisionalExtensions: provisionalExtensions,
+			currentTime: lifetimeCheck.unixSeconds,
+			provider: provider)
 
 		// §12.4.2 makes PSK *availability* its own step, five bullets
 		// before the tree is touched: "Verify that all PreSharedKey
@@ -738,7 +748,8 @@ extension MLS.RFC9420.Group {
 				core.exporterTrees[context.epoch]
 				?? MLS.Extensions.ExporterTree(restoringFrontier: [:])
 			let effects = commitMembershipEffects(
-				epochAdvanced: nil, added: [], updateChanges: [],
+				committer: senderIndex, epochAdvanced: nil, added: [],
+				updateChanges: [],
 				committerChange: nil, removedLeaves: removedLeaves,
 				localMembershipLeaves: localLeaves, appDataUpdates: [],
 				customProposals: [])
@@ -977,6 +988,7 @@ extension MLS.RFC9420.Group {
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
 		let effects = commitMembershipEffects(
+			committer: senderIndex,
 			epochAdvanced: .epochAdvanced(
 				from: context.epoch, to: newContext.epoch, committer: senderIndex),
 			added: applied.added, updateChanges: updateChanges,
@@ -1186,6 +1198,7 @@ extension MLS.RFC9420.Group {
 	func validateProposalList(
 		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex,
 		provisionalExtensions: [MLS.RFC9420.Extension],
+		currentTime: UInt64?,
 		provider: any MLS.CipherSuiteProvider
 	) throws -> [(
 		leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,

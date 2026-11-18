@@ -351,7 +351,8 @@ import Testing
 			proposals: [
 				.proposal(try attestation.proposal(componentID: Self.componentID))
 			],
-			signingKey: signingKey, randomness: .generate(Support.provider))
+			signingKey: signingKey, randomness: .generate(Support.provider),
+			lifetimeCheck: .unchecked)
 		let adopted = transition.group
 		let sent = transition.takeOutput()
 		let message = sent.message
@@ -377,6 +378,7 @@ import Testing
 				.proposal(try attestation.proposal(componentID: Self.componentID)),
 			],
 			signingKey: signingKey, randomness: .generate(Support.provider),
+			lifetimeCheck: .unchecked,
 			psk: resolver)
 		let adopted = transition.group
 		let sent = transition.takeOutput()

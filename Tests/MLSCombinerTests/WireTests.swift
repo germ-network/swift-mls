@@ -107,8 +107,9 @@ import Testing
 		let (_, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: try Support.halfCreation(founder: alice, peer: bob),
 			pq: try Support.halfCreation(founder: alice, peer: bob, half: .pq),
-			mode: 0, classicalProvider: Support.provider, pqProvider: Support.pqProvider
-		)
+			mode: 0, classicalProvider: Support.provider,
+			pqProvider: Support.pqProvider,
+			lifetimeCheck: .unchecked)
 
 		var reader = MLS.Reader(try welcome.mlsEncoded())
 		let decoded = try MLS.Combiner.APQWelcome(from: &reader)
@@ -147,7 +148,7 @@ import Testing
 	) throws -> MLS.RFC9420.PrivateMessage {
 		let transition = try group.committing(
 			Support.provider, proposals: [], signingKey: signingKey,
-			randomness: .generate(Support.provider))
+			randomness: .generate(Support.provider), lifetimeCheck: .unchecked)
 		let sent = transition.takeOutput()
 		guard case .privateMessage(let privateMessage) = sent.message else {
 			throw MLS.Combiner.Error.commitShapeMismatch

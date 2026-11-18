@@ -71,7 +71,8 @@ struct SelfInteropTests {
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: founder.keyPackage.leafNode,
 			leafSecretKey: founder.leafSecretKey,
-			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
+			lifetimeCheck: .unchecked)
 	}
 
 	/// The convergence assertion: everything two members' views must agree

@@ -55,6 +55,7 @@ struct CustomProposalTests {
 		let transition = try pair.groupA.committing(
 			Self.provider, proposals: [.proposal(.custom(type: type, body: body))],
 			signingKey: pair.alice.signingKey, randomness: .generate(Self.provider),
+			lifetimeCheck: .unchecked,
 			framing: framing)
 		return try transition.output.message.mlsEncoded()
 	}
@@ -144,7 +145,7 @@ struct CustomProposalTests {
 					.proposal(.custom(type: .init(.update), body: Self.body))
 				],
 				signingKey: pair.alice.signingKey,
-				randomness: .generate(Self.provider))
+				randomness: .generate(Self.provider), lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -164,7 +165,7 @@ struct CustomProposalTests {
 					.proposal(typed),
 				],
 				signingKey: pair.alice.signingKey,
-				randomness: .generate(Self.provider))
+				randomness: .generate(Self.provider), lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -252,6 +253,7 @@ struct CustomProposalTests {
 				.proposal(.custom(type: Self.typedPoint, body: Self.body)),
 			],
 			signingKey: pair.alice.signingKey, randomness: .generate(Self.provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		let bytes = try transition.output.message.mlsEncoded()
 		let received = try Self.receivePublic(
@@ -345,6 +347,7 @@ struct CustomProposalTests {
 			Self.provider,
 			proposals: [.proposal(.custom(type: Self.typedPoint, body: bodyPrime))],
 			signingKey: pair.alice.signingKey, randomness: .generate(Self.provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		guard case .publicMessage(let realMessage) = real.output.message,
 			case .commit(let realCommit) = realMessage.content.content,

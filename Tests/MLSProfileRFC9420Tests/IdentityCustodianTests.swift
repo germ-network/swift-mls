@@ -273,7 +273,8 @@ struct IdentityCustodianTests {
 			let before = ledger.snapshot.next
 			let transition = try group.committing(
 				custodial, proposals: proposals, signingKey: signingKey,
-				randomness: try .generate(custodial), includePath: includePath,
+				randomness: try .generate(custodial), lifetimeCheck: .unchecked,
+				includePath: includePath,
 				psk: psk)
 			let sealedGroup = transition.group
 			let sent = transition.takeOutput()
@@ -485,11 +486,13 @@ struct IdentityCustodianTests {
 		let g1 = try MLS.RFC9420.Group.create(
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: alice.keyPackage.leafNode, leafSecretKey: alice.leafSecretKey,
-			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
+			lifetimeCheck: .unchecked)
 		let g2 = try MLS.RFC9420.Group.create(
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: alice.keyPackage.leafNode, leafSecretKey: alice.leafSecretKey,
-			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
+			lifetimeCheck: .unchecked)
 
 		let operationCount = 8
 		let tickets = try await withThrowingTaskGroup(of: [Int].self) { taskGroup in

@@ -31,7 +31,8 @@ struct SentCommitTests {
 		// the transition's group.
 		let transition = try pair.groupA.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let commitMessage) = transition.output.message
 		else {
 			Issue.record("expected a privateMessage-framed commit")
@@ -82,7 +83,8 @@ struct SentCommitTests {
 
 		let transition = try pair.groupA.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		let adopted = transition.group
 		let advanced = try transition.takeOutput().takePending().apply(onto: adopted)
 			.group
@@ -92,7 +94,8 @@ struct SentCommitTests {
 		// pending is then stale against the already-advanced group.
 		let competitor = try adopted.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		let stalePending = competitor.takeOutput().takePending()
 		do {
 			_ = try stalePending.apply(onto: advanced)
@@ -120,7 +123,8 @@ struct SentCommitTests {
 
 		let transition = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let commitMessage) = transition.output.message
 		else {
 			Issue.record("expected a privateMessage-framed commit")
