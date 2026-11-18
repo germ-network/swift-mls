@@ -138,6 +138,20 @@ struct ParentHashCostTests {
 		try builder.tree.validateParentHashChain(HashCountingProvider())
 	}
 
+	@Test(
+		"a parent below a filtered subtree's root keeps its entries the ancestor does not list"
+	)
+	func descendantParentKeepsUnfilteredEntries() throws {
+		var builder = try ChainBuilder(log2LeafCount: 3)
+		try builder.setParent(3, unmerged: [1, 2])
+		try builder.setParent(7, unmerged: [])
+		try builder.commit(0)
+		for leaf in 5...7 { try builder.blankLeaf(UInt32(leaf)) }
+		try builder.setParent(7, unmerged: [2])
+		try builder.commit(4)
+		try builder.tree.validateParentHashChain(HashCountingProvider())
+	}
+
 	@Test("a parent whose two children both carry its matching parent_hash is rejected")
 	func parentCoveredByTwoChainsIsRejected() throws {
 		var builder = try ChainBuilder(log2LeafCount: 2)
