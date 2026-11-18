@@ -1,0 +1,2 @@
+# Must not gain a `packages:` key: changesets would then tag @germ-network/swift-mls@x.y.z instead of vX.Y.Z.
+minimumReleaseAge: 1440
