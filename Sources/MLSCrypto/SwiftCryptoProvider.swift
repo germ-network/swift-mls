@@ -318,6 +318,35 @@ struct SwiftCryptoCipherSuiteProvider: MLS.CipherSuiteProvider {
 		}
 	}
 
+	func validateHpkePublicKey(_ key: MLS.HpkePublicKey) throws {
+		do {
+			switch cipherSuite {
+			case .curve25519Aes128, .curve25519ChaCha:
+				// X25519 clamps the scalar to a multiple of 8, so every
+				// small-order u, canonical or not, yields the all-zero
+				// secret. CryptoKit throws on it; BoringSSL returns it.
+				let probe = try Curve25519.KeyAgreement.PrivateKey(
+					rawRepresentation: Data(repeating: 0x2a, count: 32))
+				let shared = try probe.sharedSecretFromKeyAgreement(
+					with: Curve25519.KeyAgreement.PublicKey(
+						rawRepresentation: key.data))
+				let allZero = shared.withUnsafeBytes { $0.allSatisfy { $0 == 0 } }
+				if allZero { throw MLS.CryptoError.invalidPublicKey }
+			case .p256Aes128:
+				_ = try P256.KeyAgreement.PublicKey(x963Representation: key.data)
+			case .p384Aes256:
+				_ = try P384.KeyAgreement.PublicKey(x963Representation: key.data)
+			case .p521Aes256:
+				_ = try P521.KeyAgreement.PublicKey(x963Representation: key.data)
+			default: throw MLS.CryptoError.unsupportedCipherSuite(cipherSuite)
+			}
+		} catch let error as MLS.CryptoError {
+			throw error
+		} catch {
+			throw MLS.CryptoError.invalidPublicKey
+		}
+	}
+
 	func hpkeSeal(publicKey: MLS.HpkePublicKey, info: Data, aad: Data?, plaintext: Data) throws
 		-> (enc: Data, ciphertext: Data)
 	{
