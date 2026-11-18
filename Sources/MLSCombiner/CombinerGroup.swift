@@ -169,6 +169,12 @@ extension MLS.Combiner.CombinerGroup {
 				pqCipherSuite: pqProvider.cipherSuite,
 				tEpoch: 1,
 				pqEpoch: 1)
+			guard info.namesDistinctHalves else {
+				throw MLS.Combiner.Error.halvesNotDistinct
+			}
+			try checkMembershipConsistent(
+				[classical.leafNode.credential, classical.peerKeyPackage.leafNode.credential],
+				[pq.leafNode.credential, pq.peerKeyPackage.leafNode.credential])
 			let infoExtension = try info.asExtension(
 				type: codepoints.apqInfoExtensionType)
 			// Compare by rawValue, not by ExtensionType itself: ExtensionType's
@@ -352,9 +358,10 @@ extension MLS.Combiner.CombinerGroup {
 extension MLS.Combiner.CombinerGroup {
 	/// draft §6 joiner verification for a full pair (both halves at their join epoch):
 	/// each half carries an `APQInfo`; the identity fields (group ids, mode, suites)
-	/// agree across halves; each names the actual joined group; and each epoch field
-	/// matches the observed epoch. Suite *validity* is not judged (a downstream,
-	/// Germ-suite concern) — only equality across the halves.
+	/// agree across halves; the halves are distinct sessions; each names the group
+	/// and cipher suite it actually rides in; and each epoch field matches the
+	/// observed epoch. Suite *validity* is not judged (a downstream, Germ-suite
+	/// concern) — only that the stated suites are the real, distinct ones.
 	public func verifyPair() throws {
 		guard
 			let classicalInfo = try MLS.Combiner.APQInfo.read(
@@ -378,10 +385,18 @@ extension MLS.Combiner.CombinerGroup {
 	}
 
 	/// The pure half of `verifyPair`: identity-fields agreement across the two decoded
-	/// `APQInfo` copies, each naming the group it actually rides in, and each epoch
-	/// field matching the half's observed epoch — split one clause per guard so a
-	/// single-field mismatch (e.g. a stale `pqEpoch`) is independently testable.
-	/// `observed` is `(groupID, epoch, cipherSuite)` read off each half's live
+	/// `APQInfo` copies, the halves being distinct sessions, each copy naming the
+	/// group and cipher suite it actually rides in, and each epoch field matching the
+	/// half's observed epoch — split one clause per guard so a single-field mismatch
+	/// (e.g. a stale `pqEpoch`) is independently testable.
+	///
+	/// The suite-truthfulness clauses are this module's enforcement of
+	/// draft-ietf-mls-combiner-02, not of a quoted MUST: §8.1 says the choice of
+	/// primitives "must be explicitly stated by the CipherSuite objects within
+	/// APQInfo", and §4.2.1 requires the `APQInfo` indicating "the GroupID and
+	/// ciphersuites of the two sessions" in the Welcome "in order to validate joining
+	/// the combined sessions". An `APQInfo` stating suites the groups do not run
+	/// states nothing true. `observed` is `(groupID, epoch, cipherSuite)` read off each half's live
 	/// `GroupContext`, so the check itself takes no `Group` and is exercisable
 	/// against hand-built values.
 	static func checkAPQInfoConsistent(
@@ -393,9 +408,18 @@ extension MLS.Combiner.CombinerGroup {
 		guard classicalInfo.identityFieldsMatch(pqInfo) else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
+		guard classicalInfo.namesDistinctHalves else {
+			throw MLS.Combiner.Error.halvesNotDistinct
+		}
 		guard classicalInfo.tSessionGroupID == classicalObserved.groupID,
 			classicalInfo.pqSessionGroupID == pqObserved.groupID
 		else {
+			throw MLS.Combiner.Error.apqInfoMismatch
+		}
+		guard classicalInfo.tCipherSuite == classicalObserved.cipherSuite else {
+			throw MLS.Combiner.Error.apqInfoMismatch
+		}
+		guard classicalInfo.pqCipherSuite == pqObserved.cipherSuite else {
 			throw MLS.Combiner.Error.apqInfoMismatch
 		}
 		guard classicalInfo.tEpoch == classicalObserved.epoch else {

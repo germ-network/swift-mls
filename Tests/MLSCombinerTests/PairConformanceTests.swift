@@ -33,24 +33,61 @@ private typealias Support = CombinerTestSupport
 
 	/// `establish` refuses a classical and a PQ provider of the same cipher suite.
 	@Test func establishRejectsEqualCipherSuites() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: bob),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.provider)
+		}
 	}
 
 	/// `establish` refuses two `HalfCreation`s carrying the same group id.
 	@Test func establishRejectsEqualGroupIDs() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let classical = try Support.halfCreation(founder: alice, peer: bob)
+		var pq = try Support.halfCreation(founder: alice, peer: bob, half: .pq)
+		pq.groupID = classical.groupID
+		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: classical, pq: pq, mode: 0,
+				classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+		}
 	}
 
 	/// The pure pair check rejects an `APQInfo` naming the same suite for both
 	/// halves, even when each half's observed suite agrees with it.
 	@Test func checkAPQInfoConsistentRejectsEqualCipherSuites() throws {
-		Issue.record("pending")
+		let (classicalID, pqID) = (Data([1, 2, 3]), Data([4, 5, 6]))
+		let suite = MLS.CipherSuite(id: 1)
+		let info = MLS.Combiner.APQInfo(
+			tSessionGroupID: classicalID, pqSessionGroupID: pqID, mode: 0,
+			tCipherSuite: suite, pqCipherSuite: suite, tEpoch: 1, pqEpoch: 1)
+		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info, pqInfo: info,
+				classicalObserved: (groupID: classicalID, epoch: 1, cipherSuite: suite),
+				pqObserved: (groupID: pqID, epoch: 1, cipherSuite: suite))
+		}
 	}
 
 	/// The pure pair check rejects an `APQInfo` naming the same group id for both
 	/// halves, even when each half's observed group id agrees with it.
 	@Test func checkAPQInfoConsistentRejectsEqualGroupIDs() throws {
-		Issue.record("pending")
+		let groupID = Data([1, 2, 3])
+		let (classicalSuite, pqSuite) = (MLS.CipherSuite(id: 1), MLS.CipherSuite(id: 3))
+		let info = MLS.Combiner.APQInfo(
+			tSessionGroupID: groupID, pqSessionGroupID: groupID, mode: 0,
+			tCipherSuite: classicalSuite, pqCipherSuite: pqSuite, tEpoch: 1, pqEpoch: 1)
+		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info, pqInfo: info,
+				classicalObserved: (
+					groupID: groupID, epoch: 1, cipherSuite: classicalSuite
+				),
+				pqObserved: (groupID: groupID, epoch: 1, cipherSuite: pqSuite))
+		}
 	}
 
 	// MARK: truthful suites
@@ -59,25 +96,85 @@ private typealias Support = CombinerTestSupport
 	/// `t_cipher_suite` against the classical group, `pq_cipher_suite` against the
 	/// PQ group, each clause rejecting on its own.
 	@Test func checkAPQInfoConsistentRejectsSuiteNotMatchingItsGroup() throws {
-		Issue.record("pending")
+		let (classicalID, pqID) = (Data([1, 2, 3]), Data([4, 5, 6]))
+		let (suite1, suite3) = (MLS.CipherSuite(id: 1), MLS.CipherSuite(id: 3))
+		let info = MLS.Combiner.APQInfo(
+			tSessionGroupID: classicalID, pqSessionGroupID: pqID, mode: 0,
+			tCipherSuite: suite1, pqCipherSuite: suite3, tEpoch: 1, pqEpoch: 1)
+		func check(classicalSuite: MLS.CipherSuite, pqSuite: MLS.CipherSuite) throws {
+			try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
+				classicalInfo: info, pqInfo: info,
+				classicalObserved: (
+					groupID: classicalID, epoch: 1, cipherSuite: classicalSuite
+				),
+				pqObserved: (groupID: pqID, epoch: 1, cipherSuite: pqSuite))
+		}
+
+		try check(classicalSuite: suite1, pqSuite: suite3)
+		// `t_cipher_suite` alone disagrees with the classical group.
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			try check(classicalSuite: suite3, pqSuite: suite3)
+		}
+		// `pq_cipher_suite` alone disagrees with the PQ group.
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) {
+			try check(classicalSuite: suite1, pqSuite: suite1)
+		}
 	}
 
 	/// A pair of real groups whose `APQInfo` misstates a half's cipher suite is
 	/// rejected by `verifyPair`, the check `join` runs on every Welcome pair.
 	@Test func verifyPairRejectsAPQInfoMisstatingASuite() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let classicalCreation = try Support.halfCreation(founder: alice, peer: bob)
+		let pqCreation = try Support.halfCreation(founder: alice, peer: bob, half: .pq)
+		let info = MLS.Combiner.APQInfo(
+			tSessionGroupID: classicalCreation.groupID,
+			pqSessionGroupID: pqCreation.groupID, mode: 0,
+			tCipherSuite: Support.pqProvider.cipherSuite,
+			pqCipherSuite: Support.provider.cipherSuite, tEpoch: 0, pqEpoch: 0)
+		let infoExtension = try info.asExtension(
+			type: MLS.Combiner.Codepoints.deployed.apqInfoExtensionType)
+		let classical = try MLS.RFC9420.Group.create(
+			Support.provider, groupID: classicalCreation.groupID,
+			leafNode: classicalCreation.leafNode,
+			leafSecretKey: classicalCreation.leafSecretKey,
+			extensions: [infoExtension], epochSecret: classicalCreation.epochSecret)
+		let pq = try MLS.RFC9420.Group.create(
+			Support.pqProvider, groupID: pqCreation.groupID,
+			leafNode: pqCreation.leafNode, leafSecretKey: pqCreation.leafSecretKey,
+			extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
+		let pair = MLS.Combiner.CombinerGroup(
+			classical: classical, pq: pq, pskStore: MLS.Combiner.PSKStore(),
+			codepoints: .deployed)
+		#expect(throws: MLS.Combiner.Error.apqInfoMismatch) { try pair.verifyPair() }
 	}
 
 	// MARK: establish membership
 
 	/// `establish` refuses halves that would add different peers.
 	@Test func establishRejectsDifferentPeerAcrossHalves() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let carol = try Support.member("carol")
+		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: alice, peer: carol, half: .pq),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.pqProvider)
+		}
 	}
 
 	/// `establish` refuses halves founded under different identities.
 	@Test func establishRejectsDifferentFounderAcrossHalves() throws {
-		Issue.record("pending")
+		let (alice, bob) = (try Support.member("alice"), try Support.member("bob"))
+		let carol = try Support.member("carol")
+		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
+			_ = try MLS.Combiner.CombinerGroup.establish(
+				classical: try Support.halfCreation(founder: alice, peer: bob),
+				pq: try Support.halfCreation(founder: carol, peer: bob, half: .pq),
+				mode: 0, classicalProvider: Support.provider,
+				pqProvider: Support.pqProvider)
+		}
 	}
 
 	// MARK: join adjudication

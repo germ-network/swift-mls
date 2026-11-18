@@ -7,8 +7,8 @@ extension MLS.Combiner {
 	public enum Error: Swift.Error, Sendable, Equatable {
 		/// An `APQInfo` GroupContext extension is missing where one is required, or is
 		/// present but inconsistent across a pair's halves — mismatched identity
-		/// fields, a group id that does not name the joined group, or an epoch field
-		/// that does not match the observed epoch. A missing `APQInfo` on a welcome is
+		/// fields, a group id or cipher suite that does not name the joined group, or
+		/// an epoch field that does not match the observed epoch. A missing `APQInfo` on a welcome is
 		/// a downgrade attempt and fails the same way.
 		case apqInfoMismatch
 
