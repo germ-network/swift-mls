@@ -14,6 +14,9 @@ extension MLS {
 		/// guards specifically against a decoder that could loop forever
 		/// on malformed input.
 		case vectorNotFullyConsumed(remaining: Int)
+		/// A vector held more than the caller's `maxCount` elements; decoding
+		/// stopped at the first element past it.
+		case vectorElementLimitExceeded(limit: Int)
 		/// Bytes remained after a top-level decode.
 		case trailingBytes(Int)
 		/// An `optional<T>` presence byte was neither 0 nor 1.

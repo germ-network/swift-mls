@@ -158,6 +158,8 @@ Core = {
   verification are **not** decode-time obligations — they run when the tree is
   used, exactly as on the wire path — so snapshot decode does not require a
   `CipherSuiteProvider`.
+- `group_context.epoch` MUST be below 2^63; a restore MUST reject a larger one. This is this format's own rule, not
+  an RFC 9420 one: RFC 9420 §8.1 declares `uint64 epoch` with no upper bound.
 - `resumption_psks` maps epoch → that epoch's resumption PSK (length `Nh`).
   Retained epochs MUST fall within the window `retention` describes, relative
   to `group_context.epoch`. Never empty: the current epoch's PSK is always

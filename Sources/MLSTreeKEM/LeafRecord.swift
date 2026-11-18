@@ -41,7 +41,11 @@ extension MLS.TreeKEM {
 	/// leaf_node; case parent: ParentNode parent_node; }; } TreeNode;` —
 	/// this component's own name for RFC 9420's `Node`, holding a leaf
 	/// projection instead of a `LeafNode` (see `LeafRecord`'s doc comment).
-	public enum TreeNode: Sendable, Equatable {
+	///
+	/// `indirect` so that an optional node is one word wide: a node array
+	/// then costs one word per slot, blank or not; each non-blank node lives in
+	/// its own heap box.
+	public indirect enum TreeNode: Sendable, Equatable {
 		case leaf(LeafRecord)
 		case parent(ParentNode)
 	}

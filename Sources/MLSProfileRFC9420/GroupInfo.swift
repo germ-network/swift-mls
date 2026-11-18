@@ -83,9 +83,6 @@ extension MLS.RFC9420.GroupInfo {
 				$0.type == MLS.RFC9420.ExtensionType(.ratchetTree)
 			})
 		else { return nil }
-		var reader = MLS.Reader(treeExtension.data)
-		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector()
-		try reader.finish()
-		return nodes
+		return try MLS.RFC9420.decodeRatchetTree(treeExtension.data)
 	}
 }

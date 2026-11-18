@@ -32,6 +32,24 @@ extension MLS.RFC9420 {
 		guard let last = nodes.last else { throw MLS.TreeKEM.TreeError.emptyTree }
 		guard last != nil else { throw MLS.TreeKEM.TreeError.trailingBlankLeaves }
 	}
+
+	/// The longest node array a ratchet tree may have: the largest tree
+	/// `MLS.LeafCount` admits (leaf count below `MLS.LeafIndex.ceiling`), in
+	/// full width. This library's own ceiling, not an RFC rule.
+	public static let maxRatchetTreeNodeCount = Int(MLS.LeafIndex.ceiling) - 1
+
+	/// Decodes a complete `optional<Node> ratchet_tree<V>` encoding. Decoding
+	/// stops with ``MLS/CodecError/vectorElementLimitExceeded(limit:)`` at
+	/// the first node past ``maxRatchetTreeNodeCount``. Trailing bytes are
+	/// rejected; the trailing-blank rule stays with
+	/// ``validateNoTrailingBlank(_:)``.
+	public static func decodeRatchetTree(_ bytes: Data) throws -> [MLS.RFC9420.Node?] {
+		var reader = MLS.Reader(bytes)
+		let nodes: [MLS.RFC9420.Node?] = try reader.decodeVector(
+			maxCount: maxRatchetTreeNodeCount)
+		try reader.finish()
+		return nodes
+	}
 }
 
 extension MLS.TreeKEM.RatchetTree {
@@ -39,10 +57,12 @@ extension MLS.TreeKEM.RatchetTree {
 	/// enum first (only it knows how to self-delimit a `LeafNode`, which
 	/// carries no length prefix on the wire), then converts to a
 	/// `RatchetTree` — `MLSTreeKEM` itself never sees a `Node` or a
-	/// `LeafNode`. `MLSTreeKEM`'s own `RatchetTree.init(nodes:)` is the
-	/// single place that validates the array length implies a legal
-	/// padded leaf count; this initializer adds nothing on top of that.
+	/// `LeafNode`. The node count is checked against the largest legal tree
+	/// before any node is converted, with the same rule and error as
+	/// `RatchetTree.init(nodes:)`, which checks it again on the converted
+	/// array.
 	public init(_ nodes: [MLS.RFC9420.Node?]) throws {
+		_ = try MLS.LeafCount(nodeArrayCount: nodes.count)
 		try self.init(
 			nodes: try nodes.map { node in
 				switch node {

@@ -19,7 +19,8 @@ extension MLS.TreeKEM.RatchetTree {
 	/// rather than mls-rs.)
 	///
 	/// Then §12.4.3.1's "verify the integrity of the ratchet tree", the
-	/// half `validateParentHashChain` doesn't cover: every entry must be
+	/// `unmerged_leaves` half (`validateParentHashChain` runs this check
+	/// first, before any hashing): every entry must be
 	/// justified by an actual leaf whose direct-path walk reaches that
 	/// parent through nothing but blanks and "yes, I'm unmerged here"
 	/// claims — this walk follows mls-rs's `validate_unmerged`, including
@@ -50,12 +51,7 @@ extension MLS.TreeKEM.RatchetTree {
 					n = ancestor
 					continue
 				}
-				guard let ancestorNode = parent(at: ancestor),
-					ancestorNode.unmergedLeaves.contains(leafIndex)
-				else {
-					break
-				}
-				remaining[ancestor]?.remove(leafIndex)
+				guard remaining[ancestor]?.remove(leafIndex) != nil else { break }
 				n = ancestor
 			}
 		}

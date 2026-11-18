@@ -103,6 +103,10 @@ extension MLS.RFC9420 {
 		case confirmationTagMismatch
 		/// S14: the commit's epoch isn't this group's current epoch.
 		case wrongEpoch(expected: UInt64, actual: UInt64)
+		/// A Welcome's group is at or above ``GroupContext/joinEpochLimit``,
+		/// or a restored snapshot's at or above
+		/// ``GroupContext/restoreEpochLimit``.
+		case epochOutOfRange(UInt64)
 		/// The commit's `group_id`, or a resumption PSK's `psk_group_id`,
 		/// names a different group.
 		case wrongGroup

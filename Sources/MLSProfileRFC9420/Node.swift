@@ -32,7 +32,11 @@ extension MLS.RFC9420 {
 	/// `LeafNode` has no length prefix on the wire, so it can't be skipped
 	/// without parsing it; only the profile, which knows `LeafNode`'s
 	/// shape, can do that.
-	public enum Node: Sendable, Equatable {
+	///
+	/// `indirect` so that an optional node is one word wide: a node array
+	/// then costs one word per slot, blank or not; each non-blank node lives in
+	/// its own heap box.
+	public indirect enum Node: Sendable, Equatable {
 		case leaf(LeafNode)
 		case parent(ParentNode)
 	}

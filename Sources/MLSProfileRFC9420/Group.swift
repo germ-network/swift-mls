@@ -346,6 +346,8 @@ extension MLS.RFC9420.Group {
 		// reaches this point.
 		let (groupInfo, epoch) = try welcome.decryptGroupInfo(
 			provider, joinerSecret: groupSecrets.joinerSecret, pskSecret: pskSecret)
+		try groupInfo.groupContext.requireEpoch(
+			below: MLS.RFC9420.GroupContext.joinEpochLimit)
 
 		// tree decode, ahead of the RFC's own ordering (see doc comment)
 		let nodes: [MLS.RFC9420.Node?]
@@ -368,7 +370,6 @@ extension MLS.RFC9420.Group {
 		// which aren't this function's job to adjudicate.
 		try tree.validateNodeKinds()
 		try tree.validateParentHashChain(provider)
-		try tree.validateUnmergedLeaves()
 		try tree.validateNoDuplicateEncryptionKeys()
 		guard try tree.treeHash(provider) == groupInfo.groupContext.treeHash else {
 			throw MLS.TreeKEM.TreeError.treeHashMismatch

@@ -76,14 +76,22 @@ extension MLS.TreeKEM.RatchetTree {
 	/// that's simply as far as the most recent committer through that
 	/// region got. What makes an unmatched node an error is the coverage
 	/// sweep at the end, not the mismatch itself.
+	///
+	/// ``validateUnmergedLeaves()`` runs first: it needs no hashing, so an
+	/// invalid `unmerged_leaves` list is rejected before any hash is computed,
+	/// and the filtered subtree hashes below can rely on every list being
+	/// ascending and naming only leaves under its own parent.
 	public func validateParentHashChain(_ provider: any MLS.CipherSuiteProvider) throws {
+		try validateUnmergedLeaves()
 		var toValidate = Set<UInt32>()
 		for i in stride(from: UInt32(1), to: serializedNodeCount, by: 2) {
 			if parent(at: i) != nil { toValidate.insert(i) }
 		}
+		var memo = ChainMemo()
 		for (leafIndex, _) in nonBlankLeaves() {
 			try validateChain(
-				from: 2 * leafIndex.value, provider, toValidate: &toValidate)
+				from: 2 * leafIndex.value, provider, toValidate: &toValidate,
+				memo: &memo)
 		}
 		guard toValidate.isEmpty else { throw MLS.TreeKEM.TreeError.parentHashMismatch }
 	}
@@ -94,7 +102,7 @@ extension MLS.TreeKEM.RatchetTree {
 	/// next non-blank parent to check.
 	private func validateChain(
 		from origin: UInt32, _ provider: any MLS.CipherSuiteProvider,
-		toValidate: inout Set<UInt32>
+		toValidate: inout Set<UInt32>, memo: inout ChainMemo
 	) throws {
 		var n = origin
 		while let immediateParent = MLS.TreeMath.parent(n, leafCount: leafCount) {
@@ -122,13 +130,23 @@ extension MLS.TreeKEM.RatchetTree {
 				claimed = parent(at: n)?.parentHash
 			}
 
-			let filter = Set(ancestorNode.unmergedLeaves)
-			let originalSiblingHash = try treeHash(
-				at: copathChild, filteredUnmergedLeaves: filter, provider)
-			let calculated = try MLS.TreeKEM.parentHash(
-				publicKey: ancestorNode.encryptionKey,
-				parentHash: ancestorNode.parentHash,
-				originalSiblingTreeHash: originalSiblingHash, provider)
+			// Depends only on the ancestor and which child is the copath
+			// child, so every chain through this ancestor's side shares one
+			// computation. Looked up before any work proportional to the
+			// ancestor's `unmerged_leaves` or the subtree's size.
+			let calculated: Data
+			if let cached = memo.calculated[copathChild] {
+				calculated = cached
+			} else {
+				let originalSiblingHash = try originalSiblingTreeHash(
+					copathChild, unmergedLeavesOf: ancestorNode, provider,
+					memo: &memo)
+				calculated = try MLS.TreeKEM.parentHash(
+					publicKey: ancestorNode.encryptionKey,
+					parentHash: ancestorNode.parentHash,
+					originalSiblingTreeHash: originalSiblingHash, provider)
+				memo.calculated[copathChild] = calculated
+			}
 
 			// A mismatch means the chain simply ends here -- not an error.
 			guard claimed == calculated else { return }
@@ -146,10 +164,11 @@ extension MLS.TreeKEM.RatchetTree {
 			guard cResolution.remove(n) != nil else {
 				throw MLS.TreeKEM.TreeError.parentHashMismatch
 			}
+			let subtreeSpan = (UInt32(1) << UInt32((~c).trailingZeroBitCount)) - 1
+			let subtree = (c - subtreeSpan)...(c + subtreeSpan)
 			let ancestorUnmergedInSubtree = Set(
-				ancestorNode.unmergedLeaves.map { 2 * $0.value }.filter {
-					isDescendant($0, ofSubtreeRootedAt: c)
-				})
+				ancestorNode.unmergedLeaves.map { 2 * $0.value }.filter(
+					subtree.contains))
 			guard cResolution == ancestorUnmergedInSubtree else {
 				throw MLS.TreeKEM.TreeError.parentHashMismatch
 			}
@@ -162,10 +181,89 @@ extension MLS.TreeKEM.RatchetTree {
 		}
 	}
 
-	private func isDescendant(_ node: UInt32, ofSubtreeRootedAt root: UInt32) -> Bool {
-		if node == root { return true }
-		guard !MLS.TreeMath.isLeaf(root) else { return false }
-		return isDescendant(node, ofSubtreeRootedAt: MLS.TreeMath.left(root))
-			|| isDescendant(node, ofSubtreeRootedAt: MLS.TreeMath.right(root))
+	/// Hashes memoised across one `validateParentHashChain` call.
+	private struct ChainMemo {
+		/// The parent hash an ancestor computes for the chain through the
+		/// given copath child, keyed by that child.
+		var calculated: [UInt32: Data] = [:]
+		/// Unfiltered subtree hashes of children of non-blank parents, so
+		/// memory stays proportional to the non-blank parents.
+		var subtreeHash: [UInt32: Data] = [:]
+	}
+
+	/// The tree hash of `index`'s subtree before the leaves its parent lists
+	/// as unmerged were added (RFC 9420 §7.9's `original_sibling_tree_hash`).
+	private func originalSiblingTreeHash(
+		_ index: UInt32, unmergedLeavesOf ancestor: MLS.TreeKEM.ParentNode,
+		_ provider: any MLS.CipherSuiteProvider, memo: inout ChainMemo
+	) throws -> Data {
+		let span = (UInt32(1) << UInt32((~index).trailingZeroBitCount)) - 1
+		let listed = ancestor.unmergedLeaves.map(\.value)[...]
+		let filter = listed.drop { $0 < (index - span) / 2 }.prefix {
+			$0 <= (index + span) / 2
+		}
+		return try subtreeHash(
+			at: index, withoutLeaves: filter, parentIsNonBlank: true, provider,
+			memo: &memo)
+	}
+
+	/// Tree hash of `index`'s subtree with `filter` (sorted leaf indices, all
+	/// inside the subtree) treated as blank and unlisted. Only subtrees that
+	/// contain a filtered leaf are rehashed; the rest are taken unfiltered.
+	/// Matches ``treeHash(at:filteredUnmergedLeaves:_:)`` for any tree that
+	/// passes ``validateUnmergedLeaves()``: every `unmerged_leaves` list is
+	/// ascending and names only leaves under its own parent, so a subtree
+	/// holding no filtered leaf hashes the same filtered or not.
+	private func subtreeHash(
+		at index: UInt32, withoutLeaves filter: ArraySlice<UInt32>, parentIsNonBlank: Bool,
+		_ provider: any MLS.CipherSuiteProvider, memo: inout ChainMemo
+	) throws -> Data {
+		if filter.isEmpty, let cached = memo.subtreeHash[index] { return cached }
+		let hash: Data
+		if MLS.TreeMath.isLeaf(index) {
+			let leafIndex = MLS.LeafIndex(value: index / 2)
+			hash = try Self.leafHash(
+				leafIndex, record: filter.isEmpty ? leaf(at: leafIndex) : nil,
+				provider)
+		} else {
+			var parentNode = parent(at: index)
+			if !filter.isEmpty {
+				parentNode?.unmergedLeaves.removeAll {
+					filter.binarySearchContains($0.value)
+				}
+			}
+			let firstRightLeaf = (index + 1) / 2
+			let split = filter.partitionPoint { $0 >= firstRightLeaf }
+			let isNonBlank = parentNode != nil
+			let left = try subtreeHash(
+				at: MLS.TreeMath.left(index), withoutLeaves: filter[..<split],
+				parentIsNonBlank: isNonBlank, provider, memo: &memo)
+			let right = try subtreeHash(
+				at: MLS.TreeMath.right(index), withoutLeaves: filter[split...],
+				parentIsNonBlank: isNonBlank, provider, memo: &memo)
+			hash = try Self.parentNodeHash(parentNode, left, right, provider)
+		}
+		if filter.isEmpty && parentIsNonBlank { memo.subtreeHash[index] = hash }
+		return hash
+	}
+}
+
+extension ArraySlice where Element == UInt32 {
+	/// Whether `value` is in this ascending slice.
+	fileprivate func binarySearchContains(_ value: UInt32) -> Bool {
+		let point = partitionPoint { $0 >= value }
+		return point < endIndex && self[point] == value
+	}
+
+	/// The first index whose element satisfies `predicate`, given that the
+	/// predicate is false then true across the ascending slice.
+	fileprivate func partitionPoint(_ predicate: (UInt32) -> Bool) -> Index {
+		var low = startIndex
+		var high = endIndex
+		while low < high {
+			let mid = low + (high - low) / 2
+			if predicate(self[mid]) { high = mid } else { low = mid + 1 }
+		}
+		return low
 	}
 }

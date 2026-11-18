@@ -111,6 +111,29 @@ extension MLS {
 			return values
 		}
 
+		/// `T x<V>` with at most `maxCount` elements: throws
+		/// ``MLS/CodecError/vectorElementLimitExceeded(limit:)`` before
+		/// decoding element `maxCount + 1`, so no more than `maxCount`
+		/// elements are ever materialised.
+		public mutating func decodeVector<T: MLSDecodable>(
+			_ type: T.Type = T.self, maxCount: Int
+		) throws -> [T] {
+			var contents = Reader(try readOpaque())
+			var values: [T] = []
+			while !contents.isEmpty {
+				guard values.count < maxCount else {
+					throw CodecError.vectorElementLimitExceeded(limit: maxCount)
+				}
+				let before = contents.bytesRemaining
+				values.append(try T(from: &contents))
+				guard contents.bytesRemaining < before else {
+					throw CodecError.vectorNotFullyConsumed(
+						remaining: contents.bytesRemaining)
+				}
+			}
+			return values
+		}
+
 		/// `optional<T>`
 		public mutating func decodeOptional<T: MLSDecodable>(_ type: T.Type = T.self) throws
 			-> T?
