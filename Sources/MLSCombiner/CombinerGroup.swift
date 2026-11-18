@@ -156,12 +156,17 @@ extension MLS.Combiner.CombinerGroup {
 	/// or group ids) and carry the same members (`membershipInconsistent`: the
 	/// founder and peer identities differ across halves, or any of those credentials
 	/// is not Basic); both are checked before either half is built.
+	///
+	/// `lifetimeCheck` is passed to both halves' `Group.create` and
+	/// `committing`, which apply it to each creator leaf and peer KeyPackage
+	/// (see `MLS.RFC9420.LifetimeCheck`).
 	public static func establish(
 		classical: MLS.Combiner.HalfCreation,
 		pq: MLS.Combiner.HalfCreation,
 		mode: UInt8,
 		classicalProvider: any MLS.CipherSuiteProvider,
 		pqProvider: any MLS.CipherSuiteProvider,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck,
 		classicalExtraExtensions: [MLS.RFC9420.Extension] = [],
 		codepoints: MLS.Combiner.Codepoints = .deployed
 	) throws -> (group: MLS.Combiner.CombinerGroup, welcome: MLS.Combiner.APQWelcome) {
@@ -210,7 +215,7 @@ extension MLS.Combiner.CombinerGroup {
 			let (pqGroup, pqWelcome) = try createAndAdd(
 				pqProvider, creation: pq, extensions: [infoExtension],
 				extraProposals: [attestationProposal],
-				pskStore: MLS.Combiner.PSKStore())
+				pskStore: MLS.Combiner.PSKStore(), lifetimeCheck: lifetimeCheck)
 
 			// apq_psk: export from the PQ half, inject into the classical half.
 			var pqGroupForExport = pqGroup
@@ -228,7 +233,7 @@ extension MLS.Combiner.CombinerGroup {
 					.proposal(apqPsk.proposal(nonce: nonce)),
 					attestationProposal,
 				],
-				pskStore: store)
+				pskStore: store, lifetimeCheck: lifetimeCheck)
 
 			guard let pqWelcome, let classicalWelcome else {
 				throw MLS.Combiner.Error.missingWelcome
@@ -265,17 +270,18 @@ extension MLS.Combiner.CombinerGroup {
 		creation: MLS.Combiner.HalfCreation,
 		extensions: [MLS.RFC9420.Extension],
 		extraProposals: [MLS.RFC9420.ProposalOrRef],
-		pskStore: MLS.Combiner.PSKStore
+		pskStore: MLS.Combiner.PSKStore,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck
 	) throws -> (group: MLS.RFC9420.Group, welcome: MLS.RFC9420.Welcome?) {
 		let epoch0 = try MLS.RFC9420.Group.create(
 			provider, groupID: creation.groupID, leafNode: creation.leafNode,
 			leafSecretKey: creation.leafSecretKey, extensions: extensions,
-			epochSecret: creation.epochSecret)
+			epochSecret: creation.epochSecret, lifetimeCheck: lifetimeCheck)
 		let transition = try epoch0.committing(
 			provider,
 			proposals: [.proposal(.add(creation.peerKeyPackage))] + extraProposals,
 			signingKey: creation.signingKey, randomness: creation.randomness,
-			includePath: false,
+			lifetimeCheck: lifetimeCheck, includePath: false,
 			psk: pskStore.resolver())
 		let adopted = transition.group
 		let sent = transition.takeOutput()

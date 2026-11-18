@@ -8,11 +8,11 @@ extension MLS.TreeKEM.RatchetTree {
 	/// sender's fresh leaf and every unfiltered direct-path node's new
 	/// public key into the local tree, then recomputes and verifies the
 	/// resulting parent-hash chain against what the sender's own new leaf
-	/// claims (`leaf.parentHash`). This is `parentHashForLeaf` run in its
-	/// other direction — mls-rs's `apply_update_path`/`update_parent_hashes`
-	/// use the exact same recursive computation to *build* a chain
-	/// (committer's own side) or *verify* one (every other member merging
-	/// somebody else's path); RFC 9420 §7.9 defines it once.
+	/// claims (`leaf.parentHash`). Every node on the sender's direct path
+	/// is blanked first (RFC 9420 §7.5), so a filtered node ends up blank
+	/// rather than keeping a stale key. `parentHashForLeaf` is the same
+	/// computation that *builds* a chain on the committer's side and
+	/// *verifies* one here; RFC 9420 §7.9 defines it once.
 	///
 	/// Every unfiltered node's `unmergedLeaves` is cleared here too — RFC
 	/// 9420's commit-construction rule the committer already applied to
@@ -38,6 +38,7 @@ extension MLS.TreeKEM.RatchetTree {
 		}
 
 		try setLeaf(sender, to: leaf)
+		try blankDirectPath(of: sender)
 
 		var pathIndex = 0
 		for (step, isFiltered) in zip(path, filtered) where !isFiltered {

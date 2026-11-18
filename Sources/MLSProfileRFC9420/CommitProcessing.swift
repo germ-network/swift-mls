@@ -364,11 +364,16 @@ extension MLS.RFC9420.Group {
 	/// `psk` resolves *external* PSK ids. Resumption ids are resolved from
 	/// this group's own retained per-epoch history and never reach the
 	/// closure.
+	///
+	/// `lifetimeCheck` opts into §7.3's RECOMMENDED receive-side check of each
+	/// Add's KeyPackage leaf (see `LifetimeCheck`). The default `.unchecked`
+	/// accepts leaves that expired in transit.
 	public func validating(
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PublicMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.PendingCommit {
 		guard message.content.epoch == context.epoch else {
 			throw MLS.RFC9420.GroupError.wrongEpoch(
@@ -404,7 +409,7 @@ extension MLS.RFC9420.Group {
 				verified: MLS.RFC9420.AuthenticatedContent(
 					wireFormat: .publicMessage, content: message.content,
 					auth: message.auth)),
-			proposals: proposals, psk: psk)
+			proposals: proposals, psk: psk, lifetimeCheck: lifetimeCheck)
 	}
 
 	/// D17 step 1 (validate) for a `PrivateMessage`-framed commit. Decrypting the
@@ -425,7 +430,8 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit message: MLS.RFC9420.PrivateMessage,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.Transition<MLS.RFC9420.CommitValidation> {
 		// Refuse a non-commit before decrypting (content type is in the cleartext
 		// header), so this throws with nothing consumed.
@@ -442,7 +448,7 @@ extension MLS.RFC9420.Group {
 			let pending = try group.validatedDelta(
 				provider,
 				commit: MLS.RFC9420.VerifiedCommit(verified: opened.authenticated),
-				proposals: proposals, psk: psk)
+				proposals: proposals, psk: psk, lifetimeCheck: lifetimeCheck)
 			output = .pending(pending)
 		} catch {
 			output = .rejected(
@@ -473,6 +479,7 @@ extension MLS.RFC9420.Group {
 	/// path-leaf refresh (`nil` for a pathless commit). A `removed` leaf that
 	/// names a local membership also emits `membershipRemoved`.
 	func commitMembershipEffects(
+		committer: MLS.LeafIndex,
 		epochAdvanced: MLS.RFC9420.CommitEffect?,
 		added: [(leaf: MLS.LeafIndex, presentation: MLS.RFC9420.CredentialPresentation)],
 		updateChanges: [(
@@ -506,7 +513,7 @@ extension MLS.RFC9420.Group {
 		for leaf in removedLeaves {
 			events.append(.removed(leaf: leaf))
 			if localMembershipLeaves.contains(leaf) {
-				events.append(.membershipRemoved(leaf: leaf))
+				events.append(.membershipRemoved(leaf: leaf, committer: committer))
 			}
 		}
 		for entry in added {
@@ -531,7 +538,8 @@ extension MLS.RFC9420.Group {
 		_ provider: any MLS.CipherSuiteProvider,
 		commit verified: consuming MLS.RFC9420.VerifiedCommit,
 		proposals: MLS.RFC9420.ProposalStore,
-		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?
+		psk: (MLS.RFC9420.PreSharedKeyIdentifier) throws -> SecretBytes?,
+		lifetimeCheck: MLS.RFC9420.LifetimeCheck = .unchecked
 	) throws -> MLS.RFC9420.PendingCommit {
 		let message = verified.content
 		// slice 4a: the delta now installs path keys per local membership — each
@@ -595,7 +603,9 @@ extension MLS.RFC9420.Group {
 		}
 		let updateChanges = try validateProposalList(
 			resolved, committer: senderIndex,
-			provisionalExtensions: provisionalExtensions, provider: provider)
+			provisionalExtensions: provisionalExtensions,
+			currentTime: lifetimeCheck.unixSeconds,
+			provider: provider)
 
 		// §12.4.2 makes PSK *availability* its own step, five bullets
 		// before the tree is touched: "Verify that all PreSharedKey
@@ -738,7 +748,8 @@ extension MLS.RFC9420.Group {
 				core.exporterTrees[context.epoch]
 				?? MLS.Extensions.ExporterTree(restoringFrontier: [:])
 			let effects = commitMembershipEffects(
-				epochAdvanced: nil, added: [], updateChanges: [],
+				committer: senderIndex, epochAdvanced: nil, added: [],
+				updateChanges: [],
 				committerChange: nil, removedLeaves: removedLeaves,
 				localMembershipLeaves: localLeaves, appDataUpdates: [],
 				customProposals: [])
@@ -817,7 +828,9 @@ extension MLS.RFC9420.Group {
 			// merged -- both halves matter. Against the pre-proposal tree
 			// this misses a key a Remove just freed; after the merge it is
 			// vacuous, since merging is what puts these keys in the tree.
-			try checkUpdatePathKeysAreFresh(path, in: provisionalTree)
+			try checkUpdatePathKeysAreFresh(
+				[path.leafNode.encryptionKey] + path.nodes.map(\.encryptionKey),
+				in: provisionalTree)
 
 			// The committer's own leaf is refreshed by its path; report the
 			// presentation change (slice 4b). Usually an encryption-key-only
@@ -864,7 +877,7 @@ extension MLS.RFC9420.Group {
 			// silent decap failure rather than a useful error.
 			let provisionalContext = MLS.RFC9420.GroupContext(
 				version: context.version, cipherSuite: context.cipherSuite,
-				groupID: context.groupID, epoch: context.epoch + 1,
+				groupID: context.groupID, epoch: try context.nextEpoch(),
 				treeHash: try provisionalTree.treeHash(provider),
 				confirmedTranscriptHash: context.confirmedTranscriptHash,
 				extensions: provisionalExtensions)
@@ -940,7 +953,7 @@ extension MLS.RFC9420.Group {
 		// 12
 		let newContext = MLS.RFC9420.GroupContext(
 			version: context.version, cipherSuite: context.cipherSuite,
-			groupID: context.groupID, epoch: context.epoch + 1,
+			groupID: context.groupID, epoch: try context.nextEpoch(),
 			treeHash: try provisionalTree.treeHash(provider),
 			confirmedTranscriptHash: confirmedTranscriptHash,
 			extensions: provisionalExtensions)
@@ -977,6 +990,7 @@ extension MLS.RFC9420.Group {
 			provider, confirmed: confirmedTranscriptHash,
 			confirmationTag: confirmationTag)
 		let effects = commitMembershipEffects(
+			committer: senderIndex,
 			epochAdvanced: .epochAdvanced(
 				from: context.epoch, to: newContext.epoch, committer: senderIndex),
 			added: applied.added, updateChanges: updateChanges,
@@ -1111,22 +1125,17 @@ extension MLS.RFC9420.Group {
 		// a signature key. Join-side validation never sees this: it runs
 		// once, at join.
 		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
-		var postCommitEncryptionKeys: Set<MLS.HpkePublicKey> = []
 		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
 			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
 			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
 			else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}
-			// §7.3 names both fields; the earlier sweep checked only the
-			// signature half, so two Adds sharing an encryption key --
-			// each valid alone, distinct signature keys -- slid through.
-			guard postCommitEncryptionKeys.insert(leafNode.encryptionKey).inserted
-			else {
-				throw MLS.TreeKEM.TreeError.duplicateEncryptionKey(
-					node: 2 * leafIndex.value)
-			}
 		}
+		// §7.3 names both leaf fields, but §12.4.2's checks do not catch an Add
+		// leaf equal to a parent key. Enforcing §16.7's distinctness on the whole
+		// tree here is this implementation's choice, made before any path merges.
+		try provisionalTree.validateNoDuplicateEncryptionKeys()
 
 		return AppliedProposals(
 			tree: provisionalTree, blankedNodes: blankedNodes, added: added)
@@ -1186,6 +1195,7 @@ extension MLS.RFC9420.Group {
 	func validateProposalList(
 		_ resolved: [MLS.RFC9420.StoredProposal], committer: MLS.LeafIndex,
 		provisionalExtensions: [MLS.RFC9420.Extension],
+		currentTime: UInt64?,
 		provider: any MLS.CipherSuiteProvider
 	) throws -> [(
 		leaf: MLS.LeafIndex, old: MLS.RFC9420.CredentialPresentation,
@@ -1236,7 +1246,8 @@ extension MLS.RFC9420.Group {
 					provider, groupContext: context,
 					groupRequirements: groupRequirements,
 					memberCredentialTypes: memberCredentialTypes,
-					memberCapabilities: memberCapabilities)
+					memberCapabilities: memberCapabilities,
+					currentTime: currentTime)
 
 			case .update(let leafNode):
 				guard case .member(let updateSender) = stored.sender else {
@@ -1595,8 +1606,11 @@ extension MLS.RFC9420.Group {
 
 	/// §12.4.2: "Verify that none of the public keys in the UpdatePath
 	/// appear in any node of the new ratchet tree."
+	///
+	/// `keys` are the UpdatePath's leaf and node encryption keys; the sender checks
+	/// the keys it is about to send with the same function the receiver runs.
 	func checkUpdatePathKeysAreFresh(
-		_ path: MLS.RFC9420.UpdatePath, in tree: MLS.TreeKEM.RatchetTree
+		_ keys: [MLS.HpkePublicKey], in tree: MLS.TreeKEM.RatchetTree
 	) throws {
 		var existing: Set<MLS.HpkePublicKey> = []
 		for i in 0..<tree.serializedNodeCount {
@@ -1609,9 +1623,11 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
-		var pathKeys = [path.leafNode.encryptionKey]
-		pathKeys.append(contentsOf: path.nodes.map(\.encryptionKey))
-		for key in pathKeys where existing.contains(key) {
+		// A key repeated within the path itself is refused with the same error.
+		// This is this implementation's choice (§16.7's distinctness), checked
+		// here because it must be refused before the path is signed or merged.
+		var seen = Set<MLS.HpkePublicKey>()
+		for key in keys where existing.contains(key) || !seen.insert(key).inserted {
 			throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
 		}
 	}

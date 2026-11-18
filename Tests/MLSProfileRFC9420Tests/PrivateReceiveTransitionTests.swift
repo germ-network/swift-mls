@@ -28,7 +28,8 @@ struct PrivateReceiveTransitionTests {
 
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
@@ -60,7 +61,8 @@ struct PrivateReceiveTransitionTests {
 
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
@@ -105,6 +107,7 @@ struct PrivateReceiveTransitionTests {
 		let commitOut = try alice.committing(
 			provider, proposals: [.reference(ref)], proposalStore: aliceStore,
 			signingKey: pair.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .privateMessage)
 		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
@@ -179,7 +182,8 @@ struct PrivateReceiveTransitionTests {
 
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return
@@ -249,7 +253,8 @@ struct PrivateReceiveTransitionTests {
 		// A handshake cannot be peeked (M5: no applicable handshake from a peek).
 		let commitOut = try alice.committing(
 			provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(provider), framing: .privateMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .privateMessage)
 		guard case .privateMessage(let privateCommit) = commitOut.output.message else {
 			Issue.record("expected a privateMessage-framed commit")
 			return

@@ -37,3 +37,37 @@ extension MLS.RFC9420 {
 		}
 	}
 }
+
+extension MLS.Reader {
+	/// Decodes an `Extension extensions<V>` field, enforcing §13.4's
+	/// one-extension-per-type rule (`checkUniqueTypes`).
+	mutating func decodeExtensionList() throws -> [MLS.RFC9420.Extension] {
+		let extensions: [MLS.RFC9420.Extension] = try decodeVector()
+		try extensions.checkUniqueTypes()
+		return extensions
+	}
+}
+
+extension MLS.Writer {
+	/// Encodes an `Extension extensions<V>` field, refusing to write one that
+	/// breaks §13.4's one-extension-per-type rule (`checkUniqueTypes`), so
+	/// nothing this library encodes fails to decode.
+	mutating func encodeExtensionList(_ extensions: [MLS.RFC9420.Extension]) throws {
+		try extensions.checkUniqueTypes()
+		try encodeVector(extensions)
+	}
+}
+
+extension [MLS.RFC9420.Extension] {
+	/// Throws `WireError.duplicateExtensionType` if two entries share a type.
+	/// RFC 9420 §13.4: "Any field containing a list of extensions MUST NOT have
+	/// more than one extension of any given type." Compares wire values, since a
+	/// hand-built `.unknown(raw)` is unequal to the `.known` case with the same
+	/// raw value.
+	func checkUniqueTypes() throws {
+		var seen = Set<UInt16>()
+		for ext in self where !seen.insert(ext.type.rawValue).inserted {
+			throw MLS.RFC9420.WireError.duplicateExtensionType(ext.type)
+		}
+	}
+}

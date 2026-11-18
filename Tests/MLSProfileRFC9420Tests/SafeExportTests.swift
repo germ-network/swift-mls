@@ -26,7 +26,8 @@ struct SafeExportTests {
 		return try MLS.RFC9420.Group.create(
 			provider, groupID: provider.randomBytes(provider.hashSize),
 			leafNode: founder.keyPackage.leafNode,
-			leafSecretKey: founder.leafSecretKey, epochSecret: epochSecret)
+			leafSecretKey: founder.leafSecretKey, epochSecret: epochSecret,
+			lifetimeCheck: .unchecked)
 	}
 
 	/// The independent oracle: derive the exporter root from `epochSecret` via

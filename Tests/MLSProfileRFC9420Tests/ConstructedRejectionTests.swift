@@ -127,7 +127,7 @@ struct ConstructedRejectionTests {
 			_ = try pair.groupA.committing(
 				Self.provider, proposals: [.proposal(externalInit)],
 				signingKey: pair.alice.signingKey,
-				randomness: .generate(Self.provider))
+				randomness: .generate(Self.provider), lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -233,7 +233,8 @@ struct ConstructedRejectionTests {
 			leafNode: alice.keyPackage.leafNode,
 			leafSecretKey: alice.leafSecretKey,
 			extensions: [requirement],
-			epochSecret: SecretBytes(randomByteCount: provider.hashSize))
+			epochSecret: SecretBytes(randomByteCount: provider.hashSize),
+			lifetimeCheck: .unchecked)
 		let add = try groupA.commit(
 			provider, proposals: [.proposal(.add(bob.keyPackage))],
 			signingKey: alice.signingKey, randomness: .generate(provider))
@@ -289,7 +290,8 @@ struct ConstructedRejectionTests {
 		let pair = try Self.pair()
 		let out = try pair.groupA.committing(
 			Self.provider, proposals: [], signingKey: pair.alice.signingKey,
-			randomness: .generate(Self.provider), framing: .publicMessage)
+			randomness: .generate(Self.provider), lifetimeCheck: .unchecked,
+			framing: .publicMessage)
 		guard case .publicMessage(var message) = out.output.message else {
 			Issue.record("expected a publicMessage-framed commit")
 			return

@@ -41,7 +41,8 @@ struct GroupMembershipTests {
 		#expect(throws: MLS.RFC9420.GroupError.ambiguousMembership(count: 1)) {
 			_ = try pair.groupA.committing(
 				as: MLS.LeafIndex(value: 999), provider, proposals: [],
-				signingKey: pair.alice.signingKey, randomness: .generate(provider))
+				signingKey: pair.alice.signingKey, randomness: .generate(provider),
+				lifetimeCheck: .unchecked)
 		}
 	}
 

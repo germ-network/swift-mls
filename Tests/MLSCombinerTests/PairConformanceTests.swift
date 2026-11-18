@@ -39,7 +39,7 @@ private typealias Support = CombinerTestSupport
 				classical: try Support.halfCreation(founder: alice, peer: bob),
 				pq: try Support.halfCreation(founder: alice, peer: bob),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.provider)
+				pqProvider: Support.provider, lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -52,7 +52,8 @@ private typealias Support = CombinerTestSupport
 		#expect(throws: MLS.Combiner.Error.halvesNotDistinct) {
 			_ = try MLS.Combiner.CombinerGroup.establish(
 				classical: classical, pq: pq, mode: 0,
-				classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+				classicalProvider: Support.provider, pqProvider: Support.pqProvider,
+				lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -140,11 +141,13 @@ private typealias Support = CombinerTestSupport
 			Support.provider, groupID: classicalCreation.groupID,
 			leafNode: classicalCreation.leafNode,
 			leafSecretKey: classicalCreation.leafSecretKey,
-			extensions: [infoExtension], epochSecret: classicalCreation.epochSecret)
+			extensions: [infoExtension], epochSecret: classicalCreation.epochSecret,
+			lifetimeCheck: .unchecked)
 		let pq = try MLS.RFC9420.Group.create(
 			Support.pqProvider, groupID: pqCreation.groupID,
 			leafNode: pqCreation.leafNode, leafSecretKey: pqCreation.leafSecretKey,
-			extensions: [infoExtension], epochSecret: pqCreation.epochSecret)
+			extensions: [infoExtension], epochSecret: pqCreation.epochSecret,
+			lifetimeCheck: .unchecked)
 		let pair = MLS.Combiner.CombinerGroup(
 			classical: classical, pq: pq, pskStore: MLS.Combiner.PSKStore(),
 			codepoints: .deployed)
@@ -163,7 +166,7 @@ private typealias Support = CombinerTestSupport
 				pq: try Support.halfCreation(
 					founder: alice, peer: carol, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.pqProvider)
+				pqProvider: Support.pqProvider, lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -176,7 +179,7 @@ private typealias Support = CombinerTestSupport
 				classical: try Support.halfCreation(founder: alice, peer: bob),
 				pq: try Support.halfCreation(founder: carol, peer: bob, half: .pq),
 				mode: 0, classicalProvider: Support.provider,
-				pqProvider: Support.pqProvider)
+				pqProvider: Support.pqProvider, lifetimeCheck: .unchecked)
 		}
 	}
 
@@ -231,7 +234,8 @@ private typealias Support = CombinerTestSupport
 		let pqCreation = try Support.halfCreation(founder: alice, peer: bob, half: .pq)
 		let (founder, welcome) = try MLS.Combiner.CombinerGroup.establish(
 			classical: classicalCreation, pq: pqCreation, mode: 0,
-			classicalProvider: Support.provider, pqProvider: Support.pqProvider)
+			classicalProvider: Support.provider, pqProvider: Support.pqProvider,
+			lifetimeCheck: .unchecked)
 		let joined = try MLS.Combiner.CombinerGroup.joining(
 			welcome: welcome, classicalCredentials: bob.joinCredentials,
 			pqCredentials: bob.pqJoinCredentials, classicalProvider: Support.provider,

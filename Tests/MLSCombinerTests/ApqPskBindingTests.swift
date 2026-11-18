@@ -236,11 +236,13 @@ import Testing
 		let creation = try Support.halfCreation(founder: founder, peer: peer)
 		let epoch0 = try MLS.RFC9420.Group.create(
 			Support.provider, groupID: creation.groupID, leafNode: creation.leafNode,
-			leafSecretKey: creation.leafSecretKey, epochSecret: creation.epochSecret)
+			leafSecretKey: creation.leafSecretKey, epochSecret: creation.epochSecret,
+			lifetimeCheck: .unchecked)
 		let transition = try epoch0.committing(
 			Support.provider,
 			proposals: [.proposal(.add(creation.peerKeyPackage))],
 			signingKey: creation.signingKey, randomness: creation.randomness,
+			lifetimeCheck: .unchecked,
 			psk: { _ in nil })
 		let adopted = transition.group
 		let sent = transition.takeOutput()
@@ -269,7 +271,8 @@ import Testing
 			proposals: [
 				.proposal(try attestation.proposal(componentID: Self.componentID))
 			],
-			signingKey: signingKey, randomness: .generate(Support.provider))
+			signingKey: signingKey, randomness: .generate(Support.provider),
+			lifetimeCheck: .unchecked)
 		let adopted = transition.group
 		let sent = transition.takeOutput()
 		let message = sent.message
@@ -295,6 +298,7 @@ import Testing
 				.proposal(try attestation.proposal(componentID: Self.componentID)),
 			],
 			signingKey: signingKey, randomness: .generate(Support.provider),
+			lifetimeCheck: .unchecked,
 			psk: resolver)
 		let adopted = transition.group
 		let sent = transition.takeOutput()

@@ -76,11 +76,11 @@ extension MLS.TreeKEM {
 }
 
 extension MLS.TreeKEM.RatchetTree {
-	/// Encap, steps 1-2: derive fresh path secrets and node key pairs for
+	/// Encap, steps 1-2: blank every node on the sender's direct path
+	/// (RFC 9420 §7.5), derive fresh path secrets and node key pairs for
 	/// every *unfiltered* direct-path entry, install the new public keys
-	/// into the tree (clearing each parent's `unmergedLeaves` — RFC 9420's
-	/// commit-construction rule), and compute the committer's leaf's new
-	/// `parent_hash` — which also installs every ancestor's own
+	/// into the tree (with empty `unmergedLeaves`), and compute the
+	/// committer's leaf's new `parent_hash` — which also installs every ancestor's own
 	/// `parent_hash` field along the way (`parentHashForLeaf`'s own doc
 	/// comment). Steps 3-4 (sign the new `LeafNode`, compute the tree hash
 	/// for `GroupContext`) are the profile's job, done between this call
@@ -98,6 +98,8 @@ extension MLS.TreeKEM.RatchetTree {
 	) throws -> MLS.TreeKEM.CommitPathStage {
 		let path = MLS.TreeMath.directPath(from: 2 * sender.value, leafCount: leafCount)
 		let filtered = try filteredDirectPath(from: sender)
+
+		try blankDirectPath(of: sender)
 
 		var secret = firstPathSecret
 		var pathSecrets: [SecretBytes] = []

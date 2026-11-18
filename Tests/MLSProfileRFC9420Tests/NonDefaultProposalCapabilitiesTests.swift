@@ -239,7 +239,8 @@ struct NonDefaultProposalCapabilitiesTests {
 					.reference(ref), .proposal(.custom(type: type, body: body)),
 				],
 				proposalStore: store,
-				signingKey: alice.signingKey, randomness: .generate(Self.provider))
+				signingKey: alice.signingKey, randomness: .generate(Self.provider),
+				lifetimeCheck: .unchecked)
 		}
 	}
 

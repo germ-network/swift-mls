@@ -94,6 +94,7 @@ struct CredentialRotationAuthoringTests {
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		t.aliceView = transition.group
 		let sent = transition.takeOutput()
@@ -204,7 +205,8 @@ struct CredentialRotationAuthoringTests {
 			provider, proposals: addingProposals,
 			sign: MLS.RFC9420.signingClosure(
 				provider, current: t.alice.signingKey, new: target.signingKey),
-			randomness: .generate(provider), framing: .publicMessage,
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage,
 			newIdentity: target.identity)
 		t.aliceView = transition.group
 		let sent = transition.takeOutput()
@@ -339,6 +341,7 @@ struct CredentialRotationAuthoringTests {
 		let updateTransition = try t.aliceView.committing(
 			provider, proposals: [.reference(ref)], proposalStore: store,
 			signingKey: t.alice.signingKey, randomness: .generate(provider),
+			lifetimeCheck: .unchecked,
 			framing: .publicMessage)
 		let updateEvents = updateTransition.takeOutput().pending.effects.events
 		#expect(updateEvents.contains(.updated(leaf: bobLeaf)))
@@ -349,7 +352,8 @@ struct CredentialRotationAuthoringTests {
 
 		let commitTransition = try t.aliceView.committing(
 			provider, proposals: [], signingKey: t.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage)
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage)
 		let commitEvents = commitTransition.takeOutput().pending.effects.events
 		#expect(commitEvents.contains(.updated(leaf: aliceLeaf)))
 		#expect(
@@ -382,7 +386,8 @@ struct CredentialRotationAuthoringTests {
 
 		let transition = try t.aliceView.committing(
 			provider, proposals: [], signingKey: t.alice.signingKey,
-			randomness: .generate(provider), framing: .publicMessage,
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage,
 			newIdentity: newIdentity)
 		t.aliceView = transition.group
 		let sent = transition.takeOutput()
@@ -434,7 +439,8 @@ struct CredentialRotationAuthoringTests {
 		#expect {
 			_ = try t.aliceView.committing(
 				provider, proposals: [], sign: misrouted,
-				randomness: .generate(provider), newIdentity: target.identity)
+				randomness: .generate(provider), lifetimeCheck: .unchecked,
+				newIdentity: target.identity)
 		} throws: { error in
 			guard case MLS.CryptoError.signatureVerificationFailed = error else {
 				return false
@@ -502,7 +508,7 @@ struct CredentialRotationAuthoringTests {
 		#expect {
 			_ = try t.aliceView.committing(
 				provider, proposals: [], sign: misrouted,
-				randomness: .generate(provider))
+				randomness: .generate(provider), lifetimeCheck: .unchecked)
 		} throws: { error in
 			guard case MLS.CryptoError.signatureVerificationFailed = error else {
 				return false
@@ -575,6 +581,7 @@ struct CredentialRotationAuthoringTests {
 			_ = try t.aliceView.committing(
 				provider, proposals: [.proposal(.add(dave.keyPackage))],
 				sign: misrouted, randomness: .generate(provider),
+				lifetimeCheck: .unchecked,
 				includePath: false)
 		} throws: { error in
 			guard case MLS.CryptoError.signatureVerificationFailed = error else {
@@ -626,7 +633,8 @@ struct CredentialRotationAuthoringTests {
 			provider: provider, current: t.alice.signingKey, new: target.signingKey)
 		let transition = try t.aliceView.committing(
 			provider, proposals: [.proposal(.add(dave.keyPackage))], sign: ring.sign,
-			randomness: .generate(provider), framing: .publicMessage,
+			randomness: .generate(provider),
+			lifetimeCheck: .unchecked, framing: .publicMessage,
 			newIdentity: target.identity)
 
 		guard case .publicMessage(let pub) = transition.output.message,
@@ -691,7 +699,8 @@ struct CredentialRotationAuthoringTests {
 		#expect(throws: MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: bobLeaf)) {
 			_ = try t.aliceView.committing(
 				provider, proposals: [], sign: recorder.sign,
-				randomness: .generate(provider), newIdentity: collidingIdentity)
+				randomness: .generate(provider), lifetimeCheck: .unchecked,
+				newIdentity: collidingIdentity)
 		}
 		// The reorder (S1): policy + uniqueness run BEFORE signing, so a
 		// rejected rotation never burns a `.leafNode` ticket -- the closure
@@ -718,6 +727,7 @@ struct CredentialRotationAuthoringTests {
 			_ = try t.aliceView.committing(
 				provider, proposals: [.proposal(.add(dave.keyPackage))],
 				signingKey: t.alice.signingKey, randomness: .generate(provider),
+				lifetimeCheck: .unchecked,
 				newIdentity: collidingIdentity)
 		} throws: { error in
 			guard case MLS.RFC9420.GroupError.duplicateSignatureKey = error else {
@@ -743,6 +753,7 @@ struct CredentialRotationAuthoringTests {
 			_ = try t.aliceView.committing(
 				provider, proposals: [.proposal(.add(dave.keyPackage))],
 				signingKey: t.alice.signingKey, randomness: .generate(provider),
+				lifetimeCheck: .unchecked,
 				includePath: false, newIdentity: target.identity)
 		}
 	}
@@ -907,7 +918,8 @@ struct CredentialRotationAuthoringTests {
 		#expect {
 			_ = try t.aliceView.committing(
 				provider, proposals: [], signingKey: t.alice.signingKey,
-				randomness: .generate(provider), newIdentity: target.identity)
+				randomness: .generate(provider), lifetimeCheck: .unchecked,
+				newIdentity: target.identity)
 		} throws: { error in
 			guard case MLS.CryptoError.signatureVerificationFailed = error else {
 				return false
