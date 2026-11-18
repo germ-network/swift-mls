@@ -374,9 +374,23 @@ extension MLS.RFC9420.Group {
 			unfilteredNodeIndices = zip(directPath, filtered)
 				.filter { !$0.1 }.map(\.0.path)
 
+			let treeBeforePath = newTree
 			let pathStage = try newTree.beginCommitPath(
 				sender: committerLeaf,
 				firstPathSecret: randomness.firstPathSecret, provider)
+
+			// §12.4.2's two pre-merge key checks, run here as the receiver
+			// runs them so a commit this library builds is one it accepts —
+			// and before the leaf signature is requested.
+			guard randomness.leafEncryptionPublicKey != senderLeaf.encryptionKey else {
+				throw MLS.RFC9420.GroupError.updatePathReusesCommitterKey
+			}
+			try checkUpdatePathKeysAreFresh(
+				[randomness.leafEncryptionPublicKey]
+					+ unfilteredNodeIndices.compactMap {
+						newTree.parent(at: $0)?.encryptionKey
+					},
+				in: treeBeforePath)
 
 			var newLeaf = MLS.RFC9420.LeafNode(
 				encryptionKey: randomness.leafEncryptionPublicKey,

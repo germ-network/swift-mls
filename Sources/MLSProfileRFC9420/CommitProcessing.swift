@@ -828,7 +828,9 @@ extension MLS.RFC9420.Group {
 			// merged -- both halves matter. Against the pre-proposal tree
 			// this misses a key a Remove just freed; after the merge it is
 			// vacuous, since merging is what puts these keys in the tree.
-			try checkUpdatePathKeysAreFresh(path, in: provisionalTree)
+			try checkUpdatePathKeysAreFresh(
+				[path.leafNode.encryptionKey] + path.nodes.map(\.encryptionKey),
+				in: provisionalTree)
 
 			// The committer's own leaf is refreshed by its path; report the
 			// presentation change (slice 4b). Usually an encryption-key-only
@@ -1609,8 +1611,11 @@ extension MLS.RFC9420.Group {
 
 	/// §12.4.2: "Verify that none of the public keys in the UpdatePath
 	/// appear in any node of the new ratchet tree."
+	///
+	/// `keys` are the UpdatePath's leaf and node encryption keys; the sender checks
+	/// the keys it is about to send with the same function the receiver runs.
 	func checkUpdatePathKeysAreFresh(
-		_ path: MLS.RFC9420.UpdatePath, in tree: MLS.TreeKEM.RatchetTree
+		_ keys: [MLS.HpkePublicKey], in tree: MLS.TreeKEM.RatchetTree
 	) throws {
 		var existing: Set<MLS.HpkePublicKey> = []
 		for i in 0..<tree.serializedNodeCount {
@@ -1623,9 +1628,7 @@ extension MLS.RFC9420.Group {
 			}
 		}
 
-		var pathKeys = [path.leafNode.encryptionKey]
-		pathKeys.append(contentsOf: path.nodes.map(\.encryptionKey))
-		for key in pathKeys where existing.contains(key) {
+		for key in keys where existing.contains(key) {
 			throw MLS.RFC9420.GroupError.updatePathReusesEncryptionKey
 		}
 	}
