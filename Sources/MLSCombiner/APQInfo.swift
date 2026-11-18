@@ -30,9 +30,10 @@ extension MLS.Combiner {
 	/// is silent on rewriting; write-once is this module's resolution of that
 	/// underspecified point, matching the deployed consumer.
 	///
-	/// The suite fields are carried and compared for cross-half equality; their
-	/// *validity* (which PQ suites form a coherent APQ pair, and mode-from-suite) is
-	/// not checked here — that is Germ-suite policy in twomlspq-swift.
+	/// The suite fields must equal the suites of the groups they describe and name
+	/// two different suites (see `CombinerGroup.verifyPair`); their *validity*
+	/// (which PQ suites form a coherent APQ pair, and mode-from-suite) is not checked
+	/// here — that is Germ-suite policy in twomlspq-swift.
 	public struct APQInfo: Sendable, Equatable, MLSCodable {
 		public var tSessionGroupID: Data
 		public var pqSessionGroupID: Data
@@ -92,6 +93,12 @@ extension MLS.Combiner.APQInfo {
 			&& mode == other.mode
 			&& tCipherSuite == other.tCipherSuite
 			&& pqCipherSuite == other.pqCipherSuite
+	}
+
+	/// Whether the two halves this `APQInfo` names are distinct sessions: different
+	/// group ids and different cipher suites (see `Error.halvesNotDistinct`).
+	var namesDistinctHalves: Bool {
+		tCipherSuite != pqCipherSuite && tSessionGroupID != pqSessionGroupID
 	}
 
 	/// Wrap as an `MLS.RFC9420.Extension` of the given type (the code point from
