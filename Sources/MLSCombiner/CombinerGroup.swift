@@ -2,7 +2,9 @@ import Foundation
 import MLSCodec
 import MLSCrypto
 import MLSExtensions
+import MLSFraming
 import MLSProfileRFC9420
+import MLSTreeMath
 import SecretBytes
 
 extension MLS.Combiner {
@@ -57,6 +59,41 @@ extension MLS.Combiner {
 		public init(classical: SecretArchive, pq: SecretArchive) {
 			self.classical = classical
 			self.pq = pq
+		}
+	}
+
+	/// What one half of a validated combiner join presents for the application to
+	/// adjudicate before adopting the pair — the facts of that half's
+	/// `MLS.RFC9420.Group.PendingJoin`, which `CombinerGroup.joining` consumes.
+	public struct HalfJoin: Sendable {
+		/// The half's members as the Welcome presents them.
+		public let roster: [MLS.RFC9420.RosterEntry]
+		/// The leaf that signed the half's Welcome (the committer).
+		public let signer: MLS.LeafIndex
+		/// The one-time KeyPackage this half's join used. Reported whether or not
+		/// the application adopts the pair, so a declined join still deletes it.
+		public let consumedKeyPackage: MLS.HashReference
+		/// The joined half's context — `groupID`, `epoch`, `cipherSuite` — for the
+		/// caller-side checks RFC 9420 §12.4.3.1 leaves to the application, such as
+		/// `group_id` uniqueness among the client's other groups.
+		public let context: MLS.RFC9420.GroupContext
+		/// The joiner's own leaf in this half.
+		public let myLeafIndex: MLS.LeafIndex
+	}
+
+	/// A combiner join that passed every check the draft and RFC 9420 place on the
+	/// library but is not yet adopted: the application reads `classical` and `pq`
+	/// — the rosters and signers it is about to trust — and adopts with `apply()`
+	/// or drops the value to decline. Single-use, like the `PendingJoin`s it
+	/// replaces.
+	public struct PendingJoinPair: ~Copyable, Sendable {
+		public let classical: HalfJoin
+		public let pq: HalfJoin
+		let group: CombinerGroup
+
+		/// Adopt the pair. Non-throwing: all validation happened in `joining`.
+		public consuming func apply() -> CombinerGroup {
+			group
 		}
 	}
 
@@ -233,11 +270,32 @@ extension MLS.Combiner.CombinerGroup {
 		return (advanced.group, welcome)
 	}
 
-	/// Join both halves of a combiner group from an `APQWelcome` (PQ-first, draft §4 /
-	/// §4.2.1): join the PQ half, re-derive and register the same `apq_psk` off it,
-	/// join the classical half bound by that PSK, then verify the `APQInfo` pair and
-	/// that both halves' rosters carry the same members. `JoinerCredentials` are the
-	/// joiner's own key material per half (never on the wire).
+	/// Validate a combiner join from an `APQWelcome` without adopting it (PQ-first,
+	/// draft §4 / §4.2.1): join the PQ half, re-derive and register the same
+	/// `apq_psk` off it, join the classical half bound by that PSK, then verify the
+	/// `APQInfo` pair and that both halves' rosters carry the same members. The
+	/// result is a `PendingJoinPair`, so the application can adjudicate both halves'
+	/// rosters and signers before `apply()`. `JoinerCredentials` are the joiner's own
+	/// key material per half (never on the wire).
+	///
+	/// A throw reports neither consumed KeyPackage, yet either half's Welcome may
+	/// already have been opened with its KeyPackage — the PQ half's is opened before
+	/// the classical half or any pair check can fail. The caller supplied both and
+	/// decides whether to burn them.
+	public static func joining(
+		welcome: MLS.Combiner.APQWelcome,
+		classicalCredentials: MLS.RFC9420.Group.JoinerCredentials,
+		pqCredentials: MLS.RFC9420.Group.JoinerCredentials,
+		classicalProvider: any MLS.CipherSuiteProvider,
+		pqProvider: any MLS.CipherSuiteProvider,
+		codepoints: MLS.Combiner.Codepoints = .deployed
+	) throws -> MLS.Combiner.PendingJoinPair {
+		throw MLS.Combiner.Error.internalInconsistency
+	}
+
+	/// Join both halves of a combiner group and adopt them at once:
+	/// `joining(...)` followed by `apply()`, for callers that do no adjudication of
+	/// their own.
 	public static func join(
 		welcome: MLS.Combiner.APQWelcome,
 		classicalCredentials: MLS.RFC9420.Group.JoinerCredentials,
@@ -284,7 +342,8 @@ extension MLS.Combiner.CombinerGroup {
 				codepoints: codepoints)
 			try group.verifyPair()
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(
-				classicalRoster, pqRoster)
+				classicalRoster.map(\.presentation.credential),
+				pqRoster.map(\.presentation.credential))
 			return group
 		}
 	}
@@ -309,22 +368,27 @@ extension MLS.Combiner.CombinerGroup {
 		try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
 			classicalInfo: classicalInfo, pqInfo: pqInfo,
 			classicalObserved: (
-				groupID: classical.context.groupID, epoch: classical.context.epoch
+				groupID: classical.context.groupID, epoch: classical.context.epoch,
+				cipherSuite: classical.context.cipherSuite
 			),
-			pqObserved: (groupID: pq.context.groupID, epoch: pq.context.epoch))
+			pqObserved: (
+				groupID: pq.context.groupID, epoch: pq.context.epoch,
+				cipherSuite: pq.context.cipherSuite
+			))
 	}
 
 	/// The pure half of `verifyPair`: identity-fields agreement across the two decoded
 	/// `APQInfo` copies, each naming the group it actually rides in, and each epoch
 	/// field matching the half's observed epoch — split one clause per guard so a
 	/// single-field mismatch (e.g. a stale `pqEpoch`) is independently testable.
-	/// `observed` is `(groupID, epoch)` read off each half's live `GroupContext`, so
-	/// the check itself takes no `Group` and is exercisable against hand-built values.
+	/// `observed` is `(groupID, epoch, cipherSuite)` read off each half's live
+	/// `GroupContext`, so the check itself takes no `Group` and is exercisable
+	/// against hand-built values.
 	static func checkAPQInfoConsistent(
 		classicalInfo: MLS.Combiner.APQInfo,
 		pqInfo: MLS.Combiner.APQInfo,
-		classicalObserved: (groupID: Data, epoch: UInt64),
-		pqObserved: (groupID: Data, epoch: UInt64)
+		classicalObserved: (groupID: Data, epoch: UInt64, cipherSuite: MLS.CipherSuite),
+		pqObserved: (groupID: Data, epoch: UInt64, cipherSuite: MLS.CipherSuite)
 	) throws {
 		guard classicalInfo.identityFieldsMatch(pqInfo) else {
 			throw MLS.Combiner.Error.apqInfoMismatch
@@ -348,15 +412,16 @@ extension MLS.Combiner.CombinerGroup {
 	/// draft §4.2.1: both halves' member sets — each member's Basic-credential
 	/// identifier — must be equal. Deliberately no roster-*size* constraint: the
 	/// `== 2` two-party restriction is downstream policy, not the draft's consistency
-	/// requirement, which is about equality of the two sessions' membership. Rosters
-	/// are captured at join (the profile surfaces members only at join / per commit),
-	/// which is where §4.2.1's "after a join" check belongs.
+	/// requirement, which is about equality of the two sessions' membership. Takes
+	/// credentials rather than roster entries so `establish` can check the members
+	/// it is about to create (from its `HalfCreation`s) and `join` the members its
+	/// Welcomes present.
 	static func checkMembershipConsistent(
-		_ a: [MLS.RFC9420.RosterEntry], _ b: [MLS.RFC9420.RosterEntry]
+		_ a: [MLS.RFC9420.Credential], _ b: [MLS.RFC9420.Credential]
 	) throws {
-		func basicIdentifiers(_ roster: [MLS.RFC9420.RosterEntry]) throws -> [Data] {
-			try roster.map { entry in
-				guard case .basic(let identity) = entry.presentation.credential
+		func basicIdentifiers(_ credentials: [MLS.RFC9420.Credential]) throws -> [Data] {
+			try credentials.map { credential in
+				guard case .basic(let identity) = credential
 				else {
 					throw MLS.Combiner.Error.membershipInconsistent
 				}

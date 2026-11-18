@@ -23,6 +23,22 @@ extension MLS.Combiner {
 		/// carry a Basic credential.
 		case membershipInconsistent
 
+		/// The two halves are not two distinct sessions: they were given, or a
+		/// Welcome pair names, the same cipher suite id or the same group id.
+		///
+		/// Suites: draft-ietf-mls-combiner-02 §8.1 says "Clients MUST reject a
+		/// APQ-MLS session with invalid or duplicate cipher suites (e.g. two
+		/// traditional cipher suites)". Equal suite ids is the instance this module
+		/// rejects; judging whether two different suites are of the same class stays
+		/// downstream policy.
+		///
+		/// Group ids: -02 states no rule. By inference from RFC 9420 §12.4.3, "New
+		/// members MUST verify that group_id is unique among the groups they are
+		/// currently participating in", a joiner of both halves must reject equal
+		/// ids. `establish` applies the same rule to its caller's input, so a founder
+		/// cannot build a pair that a conforming joiner would reject.
+		case halvesNotDistinct
+
 		/// A commit that must be FULL (carry an attestation) carried none, or a commit
 		/// that must be PARTIAL carried one — a shape the combiner cannot reconcile.
 		case commitShapeMismatch

@@ -94,6 +94,12 @@ extension MLS.Combiner.APQInfo {
 			&& pqCipherSuite == other.pqCipherSuite
 	}
 
+	/// Whether the two halves this `APQInfo` names are distinct sessions: different
+	/// group ids and different cipher suites (see `Error.halvesNotDistinct`).
+	var namesDistinctHalves: Bool {
+		true
+	}
+
 	/// Wrap as an `MLS.RFC9420.Extension` of the given type (the code point from
 	/// [`MLS.Combiner.Codepoints`], `0xF0A1` by default) — the GroupContext
 	/// extension every combiner group is created with.

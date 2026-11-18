@@ -272,11 +272,16 @@ import Testing
 			MLS.Combiner.APQInfo(
 				tSessionGroupID: classicalGroupID, pqSessionGroupID: pqGroupID,
 				mode: 0, tCipherSuite: MLS.CipherSuite(id: 1),
-				pqCipherSuite: MLS.CipherSuite(id: 1), tEpoch: tEpoch,
+				pqCipherSuite: MLS.CipherSuite(id: 3), tEpoch: tEpoch,
 				pqEpoch: pqEpoch)
 		}
-		let classicalObserved = (groupID: classicalGroupID, epoch: UInt64(1))
-		let pqObserved = (groupID: pqGroupID, epoch: UInt64(1))
+		let classicalObserved = (
+			groupID: classicalGroupID, epoch: UInt64(1),
+			cipherSuite: MLS.CipherSuite(id: 1)
+		)
+		let pqObserved = (
+			groupID: pqGroupID, epoch: UInt64(1), cipherSuite: MLS.CipherSuite(id: 3)
+		)
 
 		// A fully-agreeing pair passes.
 		try MLS.Combiner.CombinerGroup.checkAPQInfoConsistent(
@@ -315,26 +320,26 @@ import Testing
 	/// is downstream policy, deliberately absent here).
 	@Test func membershipConsistentIsSetEqualityWithoutCount() throws {
 		let a2 = [
-			try Support.rosterEntry("alice", leaf: 0),
-			try Support.rosterEntry("bob", leaf: 1),
+			Support.credential("alice"),
+			Support.credential("bob"),
 		]
 		let b2 = [
-			try Support.rosterEntry("bob", leaf: 3),
-			try Support.rosterEntry("alice", leaf: 7),
+			Support.credential("bob"),
+			Support.credential("alice"),
 		]
-		// Equal sets, shuffled order and different leaf indices — consistent.
+		// Equal sets in shuffled order — consistent.
 		try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a2, b2)
 
 		// Three equal members — passes (no ==2 restriction).
 		let a3 = [
-			try Support.rosterEntry("alice", leaf: 0),
-			try Support.rosterEntry("bob", leaf: 1),
-			try Support.rosterEntry("carol", leaf: 2),
+			Support.credential("alice"),
+			Support.credential("bob"),
+			Support.credential("carol"),
 		]
 		let b3 = [
-			try Support.rosterEntry("carol", leaf: 5),
-			try Support.rosterEntry("alice", leaf: 6),
-			try Support.rosterEntry("bob", leaf: 9),
+			Support.credential("carol"),
+			Support.credential("alice"),
+			Support.credential("bob"),
 		]
 		try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a3, b3)
 	}
@@ -342,17 +347,17 @@ import Testing
 	/// Divergent rosters (different identity sets, or different sizes) are rejected.
 	@Test func membershipInconsistentRejects() throws {
 		let a = [
-			try Support.rosterEntry("alice", leaf: 0),
-			try Support.rosterEntry("bob", leaf: 1),
+			Support.credential("alice"),
+			Support.credential("bob"),
 		]
 		let bDifferent = [
-			try Support.rosterEntry("alice", leaf: 0),
-			try Support.rosterEntry("mallory", leaf: 1),
+			Support.credential("alice"),
+			Support.credential("mallory"),
 		]
 		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a, bDifferent)
 		}
-		let bShorter = [try Support.rosterEntry("alice", leaf: 0)]
+		let bShorter = [Support.credential("alice")]
 		#expect(throws: MLS.Combiner.Error.membershipInconsistent) {
 			try MLS.Combiner.CombinerGroup.checkMembershipConsistent(a, bShorter)
 		}

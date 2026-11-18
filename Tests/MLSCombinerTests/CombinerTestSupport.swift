@@ -103,15 +103,9 @@ enum CombinerTestSupport {
 		return (group, joined)
 	}
 
-	/// A minimal `RosterEntry` for a Basic identity — for the membership-consistency
-	/// checks, which read only `presentation.credential`.
-	static func rosterEntry(_ identity: String, leaf: UInt32) throws -> MLS.RFC9420.RosterEntry
-	{
-		let (_, signatureKey) = try signingKeyPair()
-		return MLS.RFC9420.RosterEntry(
-			leaf: MLS.LeafIndex(value: leaf),
-			presentation: MLS.RFC9420.CredentialPresentation(
-				credential: .basic(identity: Data(identity.utf8)),
-				signatureKey: signatureKey))
+	/// A Basic credential for `identity` — the membership-consistency checks
+	/// compare only these.
+	static func credential(_ identity: String) -> MLS.RFC9420.Credential {
+		.basic(identity: Data(identity.utf8))
 	}
 }
