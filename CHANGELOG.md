@@ -1,5 +1,44 @@
 # @germ-network/swift-mls
 
+## 0.2.0
+
+### Minor Changes
+
+- [#119](https://github.com/germ-network/swift-mls/pull/119) [`ddb3b68`](https://github.com/germ-network/swift-mls/commit/ddb3b6801cc8e5cdd745e68527438d65aa91b39b) Thanks [@germ-mark](https://github.com/germ-mark)! - `MLSCombiner`: `establish` now rejects halves that share a cipher suite or group id (new `Error.halvesNotDistinct`) or have different members; `verifyPair`, and so `join`, reject the same shared suite or id and an `APQInfo` whose suite fields differ from the groups' own. New `CombinerGroup.joining` returns a `PendingJoinPair` reporting both halves' roster, signer, consumed KeyPackage, context and own leaf before adoption; `join` is now `joining(...).apply()`.
+
+- [#123](https://github.com/germ-network/swift-mls/pull/123) [`c4968cd`](https://github.com/germ-network/swift-mls/commit/c4968cd67ea43ca4a783bba9ff3d94e692879850) Thanks [@germ-mark](https://github.com/germ-mark)! - Epoch limits at join and restore. `Group.joining` rejects a GroupInfo at epoch 2^62 or above, and snapshot restore rejects a group context at epoch 2^63 or above, each with the new `GroupError.epochOutOfRange`. The limits are this library's choice, exposed as `GroupContext.joinEpochLimit` and `GroupContext.restoreEpochLimit`.
+
+  Tree validation checks `unmerged_leaves` (sortedness and reachability) before any parent-hash computation, and `RatchetTree.validateParentHashChain` now includes that check. A tree invalid on both counts reports the `unmerged_leaves` error first.
+
+  `RatchetTree.validateParentHashChain` makes at most `nodeCount × (depth + 1) + 2 × (non-blank parents)` hash calls on any tree, and at most `3 × nodeCount` when no parent lists an unmerged leaf. Its verdicts and errors are unchanged for any tree that passes the `unmerged_leaves` check, and `treeHash(at:filteredUnmergedLeaves:_:)` is byte-identical.
+
+  Ratchet-tree decoding is capped. `MLS.RFC9420.decodeRatchetTree(_:)` (new) throws the new `CodecError.vectorElementLimitExceeded(limit:)` at the first node past `MLS.RFC9420.maxRatchetTreeNodeCount` (2^24 − 1) and is used by `GroupInfo.ratchetTreeExtension()` and snapshot restore; `Reader.decodeVector(_:maxCount:)` (new) is the underlying bounded decode. `RatchetTree.init(_:)` rejects an over-long node array with `invalidLeafCount` before converting any node. `MLS.RFC9420.Node` and `MLS.TreeKEM.TreeNode` are now `indirect`, so an optional node is one machine word wide.
+
+- [#121](https://github.com/germ-network/swift-mls/pull/121) [`8f05525`](https://github.com/germ-network/swift-mls/commit/8f0552569fd57e4568983173408b0e6069c845d5) Thanks [@germ-mark](https://github.com/germ-mark)! - Close RFC 9420 MUST gaps in tree and commit processing, and harden commit construction.
+
+  RFC 9420 MUSTs:
+
+  - §7.5: building and merging an `UpdatePath` blanks every node on the sender's direct path, including filtered ones.
+  - §13.4: an extension list that repeats a type fails to decode and refuses to encode (`WireError.duplicateExtensionType`); `Group.create` refuses one too. A snapshot or live group already holding a duplicate can no longer restore, commit or sign.
+  - §7.3: `committing` rejects an Add whose KeyPackage lifetime excludes the caller's time (`GroupError.leafNodeLifetimeOutOfRange`). The receive-side check is RECOMMENDED; `validating` can opt into it.
+
+  This implementation's choices, beyond what the RFC requires:
+
+  - By-reference Adds and a `key_package` creator leaf in `Group.create` get the same lifetime check.
+  - `committing` runs the receive side's §12.4.2 key checks before requesting any signature, and a key repeated within one path is refused. Every commit's final tree is rejected if two nodes share an encryption key (`TreeError.duplicateEncryptionKey`); a tree that already holds a duplicate fails every later commit.
+  - The epoch increment throws `GroupError.epochExhausted` instead of trapping.
+  - `CommitEffect.membershipRemoved` names the committing leaf, including on a full eviction.
+
+  Source-breaking:
+
+  - New required parameter `lifetimeCheck: MLS.RFC9420.LifetimeCheck` (`.at(unixSeconds:)` or `.unchecked`) on `Group.create`, all `committing` overloads and `CombinerGroup.establish`; it defaults to `.unchecked` on `validating`. `establish` takes it after `pqProvider:`, which breaks twomlspq-swift's `establishFull`.
+  - `CommitEffect.membershipRemoved` gains `committer:`.
+  - New cases `WireError.duplicateExtensionType` and `GroupError.epochExhausted` break exhaustive `switch`es over those enums.
+
+  Additive: `KeyPackage.validate(currentTime:)`, defaulting to nil.
+
+- [#122](https://github.com/germ-network/swift-mls/pull/122) [`d670c35`](https://github.com/germ-network/swift-mls/commit/d670c35b0b7ba0796b86dc91597a0f9a92ff70ac) Thanks [@germ-mark](https://github.com/germ-mark)! - `CipherSuiteProvider` gains `validateHpkePublicKey(_:)`, with a default that probe-seals the key. `SwiftCryptoProvider` rejects malformed and small-order HPKE public keys, and `hpkeSeal` now reports an invalid key as `CryptoError.invalidPublicKey`. Ed25519 `verify` throws `CryptoError.invalidPublicKey` for non-canonical or small-order public keys, and returns false for a signature whose R is small-order.
+
 ## 0.1.8
 
 ### Patch Changes
