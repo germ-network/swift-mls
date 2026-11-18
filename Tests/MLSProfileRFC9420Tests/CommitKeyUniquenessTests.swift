@@ -1,6 +1,7 @@
 import Foundation
 import MLSCodec
 import MLSCrypto
+import MLSTreeKEM
 import SecretBytes
 import Testing
 
@@ -40,6 +41,20 @@ struct CommitKeyUniquenessTests {
 		}
 	}
 
+	@Test("a refused key reuse never requests a leaf signature")
+	func refusedKeyReuseRequestsNoLeafSignature() throws {
+		let used = try MLS.RFC9420.Group.CommitRandomness.generate(Self.provider)
+		let (alice, group) = try Self.afterCommit(using: used)
+		let recorder = SignerSeamTests.RoleRecorder(
+			provider: Self.provider, key: alice.signingKey)
+		#expect(throws: MLS.RFC9420.GroupError.updatePathReusesCommitterKey) {
+			_ = try group.committing(
+				Self.provider, proposals: [], sign: recorder.sign, randomness: used,
+				lifetimeCheck: .unchecked)
+		}
+		#expect(recorder.roles.isEmpty)
+	}
+
 	@Test("committing with a reused path secret and a fresh leaf key is refused")
 	func committingRefusesReusedPathSecretWithFreshLeafKey() throws {
 		let used = try MLS.RFC9420.Group.CommitRandomness.generate(Self.provider)
@@ -53,23 +68,130 @@ struct CommitKeyUniquenessTests {
 		}
 	}
 
-	@Test(
-		"committing with a path whose leaf key equals one of its node keys throws",
-		.disabled("not yet implemented"))
-	func committingRefusesPathWhoseLeafKeyEqualsANodeKey() throws {}
+	/// A member whose KeyPackage leaf carries `encryptionKey`, correctly signed.
+	private static func member(
+		_ name: String, encryptionKey: MLS.HpkePublicKey
+	) throws -> SelfInteropTests.Member {
+		let base = try SelfInteropTests.member(name)
+		var leaf = base.keyPackage.leafNode
+		leaf.encryptionKey = encryptionKey
+		leaf.signature = try MLS.signWithLabel(
+			provider, privateKey: base.signingKey, label: "LeafNodeTBS",
+			content: try leaf.toBeSigned(placement: .keyPackage))
+		var keyPackage = base.keyPackage
+		keyPackage.leafNode = leaf
+		keyPackage.signature = try MLS.signWithLabel(
+			provider, privateKey: base.signingKey, label: "KeyPackageTBS",
+			content: try keyPackage.toBeSigned())
+		return .init(
+			identity: base.identity, signingKey: base.signingKey,
+			signatureKey: base.signatureKey, leafSecretKey: base.leafSecretKey,
+			initSecretKey: base.initSecretKey, keyPackage: keyPackage)
+	}
+
+	@Test("committing with a path whose leaf key equals one of its node keys throws")
+	func committingRefusesPathWhoseLeafKeyEqualsANodeKey() throws {
+		let pair = try ProposalValidationTests.pair()
+		var randomness = try MLS.RFC9420.Group.CommitRandomness.generate(Self.provider)
+		randomness.leafEncryptionPublicKey = try MLS.TreeKEM.nodeKeyPair(
+			Self.provider, pathSecret: randomness.firstPathSecret
+		).1
+		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 1)) {
+			_ = try pair.groupA.committing(
+				Self.provider, proposals: [], signingKey: pair.alice.signingKey,
+				randomness: randomness, lifetimeCheck: .unchecked)
+		}
+	}
+
+	@Test("receiving a commit whose path repeats a node key is rejected")
+	func receivingRejectsPathWithDuplicateNodeKeys() throws {
+		let provider = Self.provider
+		let trio = try ProposalValidationTests.trio()
+		let senderIndex = trio.groupA.myLeafIndex
+		let nodeKey = try provider.hpkeGenerateKeyPair().1
+		let (_, leafKey) = try provider.hpkeGenerateKeyPair()
+
+		// Alice's direct path in a four-leaf tree is nodes 1 and 3, both with
+		// non-empty copath resolutions. Give both the same key, with a
+		// parent-hash chain that is consistent for that tree.
+		var tree = trio.groupA.tree
+		try tree.blankDirectPath(of: senderIndex)
+		for node in [UInt32(1), 3] {
+			try tree.setParent(
+				node,
+				to: .init(
+					encryptionKey: nodeKey, parentHash: Data(),
+					unmergedLeaves: []))
+		}
+		let parentHash = try tree.parentHashForLeaf(senderIndex, provider)
+
+		var leaf = try MLS.RFC9420.LeafNode(
+			mlsEncoded: try #require(trio.groupA.tree.leaf(at: senderIndex)).encoded)
+		leaf.encryptionKey = leafKey
+		leaf.source = .commit(parentHash: parentHash)
+		leaf.signature = try MLS.signWithLabel(
+			provider, privateKey: trio.alice.signingKey, label: "LeafNodeTBS",
+			content: try leaf.toBeSigned(
+				placement: .inGroup(
+					groupID: trio.groupA.context.groupID, leafIndex: senderIndex
+				)))
+		let ciphertext = MLS.HpkeCiphertext(
+			kemOutput: Data(repeating: 1, count: 32),
+			ciphertext: Data(repeating: 2, count: 32))
+		let path = MLS.RFC9420.UpdatePath(
+			leafNode: leaf,
+			nodes: [
+				.init(encryptionKey: nodeKey, encryptedPathSecret: [ciphertext]),
+				.init(encryptionKey: nodeKey, encryptedPathSecret: [ciphertext]),
+			])
+
+		let message = try ConstructedRejectionTests.craftedCommit(
+			.init(alice: trio.alice, groupA: trio.groupA, groupB: trio.groupB),
+			proposals: [], path: path)
+		var receiver = trio.groupB
+		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 3)) {
+			try receiver.process(
+				provider, commit: message, proposals: .init(), psk: { _ in nil })
+		}
+	}
+
+	private static func pairAndParentKeyAdd() throws -> (
+		pair: ProposalValidationTests.Pair, add: MLS.RFC9420.KeyPackage
+	) {
+		let pair = try ProposalValidationTests.pair()
+		let parentKey = try #require(pair.groupA.tree.parent(at: 1)).encryptionKey
+		let carol = try member("carol", encryptionKey: parentKey)
+		return (pair, carol.keyPackage)
+	}
 
 	@Test(
-		"receiving a commit whose path repeats a node key is rejected",
-		.disabled("not yet implemented"))
-	func receivingRejectsPathWithDuplicateNodeKeys() throws {}
+		"receiving a pathless commit that Adds a leaf whose key equals a parent key is rejected"
+	)
+	func pathlessCommitRejectsAddWhoseLeafKeyEqualsAParentKey() throws {
+		let (pair, add) = try Self.pairAndParentKeyAdd()
+		let message = try ConstructedRejectionTests.craftedCommit(
+			.init(alice: pair.alice, groupA: pair.groupA, groupB: pair.groupB),
+			proposals: [.proposal(.add(add))], path: nil)
+		var receiver = pair.groupB
+		#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 4)) {
+			try receiver.process(
+				Self.provider, commit: message, proposals: .init(),
+				psk: { _ in nil })
+		}
+	}
 
-	@Test(
-		"receiving a pathless commit that Adds a leaf whose key equals a parent key is rejected",
-		.disabled("not yet implemented"))
-	func pathlessCommitRejectsAddWhoseLeafKeyEqualsAParentKey() throws {}
-
-	@Test(
-		"committing an Add whose leaf key equals a parent key throws",
-		.disabled("not yet implemented"))
-	func committingRefusesAddWhoseLeafKeyEqualsAParentKey() throws {}
+	@Test("committing an Add whose leaf key equals a parent key throws")
+	func committingRefusesAddWhoseLeafKeyEqualsAParentKey() throws {
+		let (pair, add) = try Self.pairAndParentKeyAdd()
+		for includePath in [true, false] {
+			#expect(throws: MLS.TreeKEM.TreeError.duplicateEncryptionKey(node: 4)) {
+				_ = try pair.groupA.committing(
+					Self.provider, proposals: [.proposal(.add(add))],
+					signingKey: pair.alice.signingKey,
+					randomness: .generate(Self.provider),
+					lifetimeCheck: .unchecked,
+					includePath: includePath)
+			}
+		}
+	}
 }

@@ -380,8 +380,8 @@ extension MLS.RFC9420.Group {
 				firstPathSecret: randomness.firstPathSecret, provider)
 
 			// §12.4.2's two pre-merge key checks, run here as the receiver
-			// runs them so a commit this library builds is one it accepts —
-			// and before the leaf signature is requested.
+			// runs them so a commit this library builds is one it accepts, and
+			// before the leaf signature is requested.
 			guard randomness.leafEncryptionPublicKey != senderLeaf.encryptionKey else {
 				throw MLS.RFC9420.GroupError.updatePathReusesCommitterKey
 			}
@@ -467,6 +467,9 @@ extension MLS.RFC9420.Group {
 				placement: .inGroup(
 					groupID: context.groupID, leafIndex: committerLeaf))
 			try newTree.setLeaf(committerLeaf, to: newLeaf.record)
+			// The same whole-tree check the receiver runs; it also catches a key
+			// repeated within the new path, which the checks above cannot see.
+			try newTree.validateNoDuplicateEncryptionKeys()
 			committerChange = (
 				leaf: committerLeaf,
 				old: MLS.RFC9420.CredentialPresentation(

@@ -849,6 +849,10 @@ extension MLS.RFC9420.Group {
 			try provisionalTree.applyUpdatePath(
 				sender: senderIndex, leaf: try path.leafNode.record,
 				pathNodes: path.nodes.map(\.pathNode), provider)
+			// This implementation's choice (§16.7's distinctness on the merged
+			// tree): the pre-merge freshness check cannot see a key repeated
+			// within one path.
+			try provisionalTree.validateNoDuplicateEncryptionKeys()
 
 			// §12.4.2/§7.6: "Verify that the following fields are unique among the
 			// members of the group: signature_key" -- the whole-tree half of that
@@ -1125,22 +1129,17 @@ extension MLS.RFC9420.Group {
 		// a signature key. Join-side validation never sees this: it runs
 		// once, at join.
 		var postCommitSignatureKeys: Set<MLS.SignaturePublicKey> = []
-		var postCommitEncryptionKeys: Set<MLS.HpkePublicKey> = []
 		for (leafIndex, record) in provisionalTree.nonBlankLeaves() {
 			let leafNode = try MLS.RFC9420.LeafNode(mlsEncoded: record.encoded)
 			guard postCommitSignatureKeys.insert(leafNode.signatureKey).inserted
 			else {
 				throw MLS.RFC9420.GroupError.duplicateSignatureKey(leaf: leafIndex)
 			}
-			// §7.3 names both fields; the earlier sweep checked only the
-			// signature half, so two Adds sharing an encryption key --
-			// each valid alone, distinct signature keys -- slid through.
-			guard postCommitEncryptionKeys.insert(leafNode.encryptionKey).inserted
-			else {
-				throw MLS.TreeKEM.TreeError.duplicateEncryptionKey(
-					node: 2 * leafIndex.value)
-			}
 		}
+		// §7.3 names both leaf fields, but §12.4.2's checks do not catch an Add
+		// leaf equal to a parent key. Enforcing §16.7's distinctness on the whole
+		// tree here is this implementation's choice, made before any path merges.
+		try provisionalTree.validateNoDuplicateEncryptionKeys()
 
 		return AppliedProposals(
 			tree: provisionalTree, blankedNodes: blankedNodes, added: added)
